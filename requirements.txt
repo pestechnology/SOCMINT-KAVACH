@@ -24,7 +24,7 @@ imagehash==4.3.1
 pillow==11.1.0
 
 # ---- Report (BSA-63 PDF) ----
-reportlab==4.2.5
+reportlab>=4.4.3,<5.0.0
 
 # ---- OSINT scrapers (used live; wrappers fail-safe if missing) ----
 maigret==0.5.0

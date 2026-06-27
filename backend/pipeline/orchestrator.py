@@ -34,6 +34,7 @@ from backend.ingestion.mock_scraper import MockScraper
 from backend.ingestion.phone_scrapers import IgnorantScraper, PhoneInfogaScraper
 from backend.ingestion.serper_scraper import SerperScraper
 from backend.ingestion.upi_module import UPIScraper
+from backend.ingestion.url_scraper import URLScraper
 from backend.ledger.audit_ledger import log_action, save_artifact
 from backend.llm.llm_client import LLMClient
 from backend.scoring.scoring_engine import score
@@ -49,13 +50,14 @@ def _seed_tool_map() -> dict:
                      SerperScraper('site:instagram.com "{q}"'),
                      SerperScraper('site:twitter.com "{q}"')],
         "face":     [],   # handled separately (pHash against collected photos)
+        "url":      [URLScraper()],
     }
     if config.DATA_MODE == "mock":
         # development only: every seed type yields the fixed mock dataset so the full
         # pipeline (correlate/score/ledger/PDF) can run offline. UPI still parses for real.
         mock = MockScraper()
         for k in live:
-            live[k] = [mock] + ([UPIScraper()] if k == "upi" else [])
+            live[k] = [mock] + ([UPIScraper()] if k == "upi" else []) + ([URLScraper()] if k == "url" else [])
     return live
 
 
@@ -76,14 +78,34 @@ async def _scrape_seed(seed_type: str, value: str, tool_map: dict) -> list[RawPr
 
 
 def _dedup(profiles: list[RawProfile]) -> list[RawProfile]:
-    seen: set = set()
     out: list[RawProfile] = []
+    seen_social: dict[tuple[str, str], RawProfile] = {}
+    seen_other: dict[tuple[str, str, str], RawProfile] = {}
+
     for p in profiles:
-        key = (p.platform.lower(), (p.value or "").lower(), p.source_url)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(p)
+        plat = p.platform.lower()
+        val = (p.value or "").lower()
+
+        if p.type == "social_account":
+            key = (plat, val)
+            if key in seen_social:
+                existing = seen_social[key]
+                # Merge metadata
+                existing.metadata = {**p.metadata, **existing.metadata}
+                if not existing.source_url and p.source_url:
+                    existing.source_url = p.source_url
+            else:
+                seen_social[key] = p
+                out.append(p)
+        else:
+            url = (p.source_url or "").lower().rstrip("/")
+            key_other = (plat, val, url)
+            if key_other in seen_other:
+                existing = seen_other[key_other]
+                existing.metadata = {**p.metadata, **existing.metadata}
+            else:
+                seen_other[key_other] = p
+                out.append(p)
     return out
 
 

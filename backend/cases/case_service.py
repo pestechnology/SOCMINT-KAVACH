@@ -18,7 +18,7 @@ import uuid
 
 from backend.database import get_db
 
-VALID_SEED_TYPES = {"name", "email", "phone", "username", "upi", "face"}
+VALID_SEED_TYPES = {"name", "email", "phone", "username", "upi", "face", "url"}
 
 
 def _now() -> str:

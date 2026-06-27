@@ -14,6 +14,7 @@ const SEED_TYPES = [
   { value: "phone", label: "PHONE", placeholder: "e.g. +91 98765 43210" },
   { value: "upi", label: "UPI", placeholder: "e.g. subject@oksbi" },
   { value: "name", label: "NAME", placeholder: "e.g. Arjun Mehta" },
+  { value: "url", label: "URL", placeholder: "e.g. https://instagram.com/subject" },
 ]; // NOTE: FACE intentionally excluded
 
 function fmtTime(iso) {
