@@ -1,0 +1,94 @@
+/* app/globals.css
+   CHANGED: dropped old .card/.btn/.input/.badge; added the Case Room utility classes,
+   tier color helpers, login-graph keyframes, and dark vis-timeline overrides.
+   DECISION: zero border-radius, hairline edges, no glow/blur — utilities only, layout
+   lives in the component JSX with Tailwind tokens. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+
+html, body {
+  background: #0E1117;
+  color: #CBD5E0;
+  font-family: var(--font-display), "Space Grotesk", system-ui, sans-serif;
+}
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: #0E1117; }
+::-webkit-scrollbar-thumb { background: #2A3148; }
+::-webkit-scrollbar-thumb:hover { background: #4A5568; }
+
+.mono { font-family: var(--font-mono), "JetBrains Mono", monospace; }
+.display { font-family: var(--font-display), "Space Grotesk", sans-serif; }
+
+.tier-high { color: #D4900A; }
+.tier-medium { color: #4A7FA5; }
+.tier-low { color: #8A4A2E; }
+.tier-reject { color: #4A5568; }
+.tier-complete { color: #27AE60; }
+.tier-error { color: #C0392B; }
+
+.panel-label {
+  font-family: var(--font-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: #4A5568;
+}
+
+.status-dot-running {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #D4900A;
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.case-row:hover { background: #1E2235; }
+
+.hash-val {
+  font-family: var(--font-mono), monospace;
+  font-size: 9px;
+  color: #4A5568;
+  opacity: 0.7;
+}
+
+/* login left-panel animated correlation graph (pure CSS, no library) */
+.lg-edge {
+  stroke: #D4900A;
+  stroke-width: 1;
+  stroke-opacity: 0.3;
+  stroke-dasharray: 140;
+  animation: lg-draw 7s ease-in-out infinite;
+}
+.lg-node {
+  fill: #D4900A;
+  animation: lg-pulse 7s ease-in-out infinite;
+}
+@keyframes lg-draw {
+  0% { stroke-dashoffset: 140; }
+  45% { stroke-dashoffset: 0; }
+  90%, 100% { stroke-dashoffset: 0; }
+}
+@keyframes lg-pulse {
+  0% { opacity: 0.2; }
+  50% { opacity: 1; }
+  100% { opacity: 0.25; }
+}
+
+/* dark overrides for vis-timeline */
+.vis-timeline { border-color: #2A3148 !important; font-family: var(--font-mono), monospace; }
+.vis-panel.vis-center, .vis-panel.vis-left, .vis-panel.vis-right,
+.vis-panel.vis-top, .vis-panel.vis-bottom { border-color: #2A3148 !important; }
+.vis-time-axis .vis-text { color: #4A5568 !important; }
+.vis-time-axis .vis-grid.vis-minor { border-color: #1E2235 !important; }
+.vis-time-axis .vis-grid.vis-major { border-color: #2A3148 !important; }
+.vis-item { border-width: 1px; border-radius: 2px; }
+.vis-item .vis-item-content { padding: 2px 4px; }

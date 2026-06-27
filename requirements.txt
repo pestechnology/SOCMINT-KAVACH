@@ -1,0 +1,37 @@
+# ============================================================
+# VERTEX / CIDECODE — Python dependencies
+# Install:  pip install -r requirements.txt
+# (Python 3.10+)
+# ============================================================
+
+# ---- Backend / API ----
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+
+# ---- Auth ----
+python-jose[cryptography]==3.3.0
+bcrypt==4.2.1
+
+# ---- Correlation / scoring ----
+thefuzz==0.22.1
+python-Levenshtein==0.26.1
+scikit-learn==1.6.1
+imagehash==4.3.1
+pillow==11.1.0
+
+# ---- Report (BSA-63 PDF) ----
+reportlab==4.2.5
+
+# ---- OSINT scrapers (used live; wrappers fail-safe if missing) ----
+maigret==0.5.0
+socialscan==1.4.2
+waybackpy==3.0.6
+telethon==1.38.1
+# ignorant + PhoneInfoga + Blackbird are installed separately (see SETUP.md)
+
+# ---- NER pre-pass (optional; orchestrator degrades gracefully if absent) ----
+# spacy==3.8.4   # then: python -m spacy download en_core_web_sm
