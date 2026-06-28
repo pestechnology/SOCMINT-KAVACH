@@ -74,6 +74,7 @@ _SIGNAL_PHRASES = {
     "breach_co_occurrence": "appear together in the same data breaches",
     "bio_keyword_overlap": "use the same distinctive phrases in their bios",
     "reciprocal_mention": "mention each other",
+    "llm_holistic_match": "semantically match based on holistic LLM evaluation",
 }
 
 
@@ -117,9 +118,9 @@ def score(profiles: list[RawProfile], pairs: list[CandidatePair]) -> list[Cluste
     n = len(profiles)
     uf = _UnionFind(n)
 
-    # Link only on MEDIUM+ pairs (>=2 signals, >=50 pts) — never on a lone signal.
+    # Link only on MEDIUM+ pairs (>=2 signals, >=50 pts) OR a holistic LLM match.
     for p in pairs:
-        if p.num_signals >= LINK_MIN_SIGNALS and p.raw_points >= LINK_MIN_POINTS:
+        if (p.num_signals >= LINK_MIN_SIGNALS or "llm_holistic_match" in p.signals) and p.raw_points >= LINK_MIN_POINTS:
             uf.union(p.i, p.j)
 
     # Group member indices by union-find root.
@@ -147,7 +148,7 @@ def score(profiles: list[RawProfile], pairs: list[CandidatePair]) -> list[Cluste
 
         if len(members) > 1:
             confidence = min(100.0, float(sum(agg.values())))
-            single_signal = len(agg) == 1
+            single_signal = len(agg) == 1 and "llm_holistic_match" not in agg
             tier = _tier(confidence)
             if single_signal:
                 tier = _cap_tier(tier, "LOW")

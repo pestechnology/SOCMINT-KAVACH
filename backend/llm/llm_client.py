@@ -154,3 +154,27 @@ class LLMClient:
         except Exception as e:  # noqa: BLE001
             print(f"[llm] summarize_case fallback (empty): {e}")
             return ""
+
+    def evaluate_match(self, prof_a: dict, prof_b: dict) -> int:
+        """
+        Holistic LLM evaluation for ambiguous matches. 
+        Returns an integer confidence score from 0 to 50.
+        """
+        try:
+            content = self._chat(
+                config.LLM_EXTRACT_MODEL,
+                [
+                    {"role": "system", "content":
+                     "You are an expert OSINT analyst. Evaluate if Profile A and Profile B belong to the same human entity. "
+                     "Analyze semantic overlap in bios, locations, names, and handles. "
+                     "Return ONLY an integer between 0 and 50 representing your confidence. "
+                     "0 = completely different people. 50 = mathematically certain it's the same person. No prose."},
+                    {"role": "user", "content": f"Profile A:\n{json.dumps(prof_a)}\n\nProfile B:\n{json.dumps(prof_b)}"},
+                ],
+                temperature=0.1, max_tokens=10,
+            )
+            score = int(content.strip().replace("`", ""))
+            return max(0, min(50, score))
+        except Exception as e:
+            print(f"[llm] evaluate_match fallback: {e}")
+            return 0

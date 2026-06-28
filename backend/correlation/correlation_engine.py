@@ -78,6 +78,44 @@ def _phone(s) -> str:
     return "".join(ch for ch in (s or "") if ch.isdigit())[-10:]
 
 
+def jaro_winkler(s1: str, s2: str) -> float:
+    if not s1 or not s2: return 0.0
+    if s1 == s2: return 1.0
+    
+    # Jaro
+    match_distance = max(len(s1), len(s2)) // 2 - 1
+    matches1 = [False] * len(s1)
+    matches2 = [False] * len(s2)
+    m = 0
+    for i in range(len(s1)):
+        start = max(0, i - match_distance)
+        end = min(i + match_distance + 1, len(s2))
+        for j in range(start, end):
+            if not matches2[j] and s1[i] == s2[j]:
+                matches1[i], matches2[j] = True, True
+                m += 1
+                break
+    if m == 0: return 0.0
+    
+    t = 0
+    k = 0
+    for i in range(len(s1)):
+        if matches1[i]:
+            while not matches2[k]: k += 1
+            if s1[i] != s2[k]: t += 1
+            k += 1
+    t /= 2.0
+    
+    jaro = (m / len(s1) + m / len(s2) + (m - t) / m) / 3.0
+    
+    # Winkler
+    prefix = 0
+    for i in range(min(4, len(s1), len(s2))):
+        if s1[i] == s2[i]: prefix += 1
+        else: break
+    return jaro + (prefix * 0.1 * (1.0 - jaro))
+
+
 def _username_signal(a: str, b: str) -> tuple[str, int] | None:
     a, b = _norm(a), _norm(b)
     if not a or not b:
@@ -86,9 +124,13 @@ def _username_signal(a: str, b: str) -> tuple[str, int] | None:
         return "username_exact_match", SIGNAL_WEIGHTS["username_exact_match"]
     if a in b or b in a:
         return "username_substring_match", SIGNAL_WEIGHTS["username_substring_match"]
+    
+    # Advanced Fuzzy Matching using Jaro-Winkler (better for typological/phonetic errors)
+    jw_score = jaro_winkler(a, b) * 100
     ratio = (_fuzz.ratio(a, b) if _HAVE_FUZZ
              else int(difflib.SequenceMatcher(None, a, b).ratio() * 100))
-    if ratio >= 80:
+             
+    if jw_score >= 85 or ratio >= 80:
         return "username_fuzzy_match", SIGNAL_WEIGHTS["username_fuzzy_match"]
     return None
 
@@ -184,12 +226,25 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
     return fired
 
 
+from backend.llm.llm_client import LLMClient
+
 def correlate(profiles: list[RawProfile]) -> list[CandidatePair]:
     """Compare every profile against every other; return pairs that share >=1 signal."""
     pairs: list[CandidatePair] = []
+    llm = LLMClient()
+    
     for i in range(len(profiles)):
         for j in range(i + 1, len(profiles)):
             fired = _pair_signals(profiles[i], profiles[j])
             if fired:
                 pairs.append(CandidatePair(i=i, j=j, signals=fired))
+            else:
+                # If rule-based rules failed to find any exact match, let's try fuzzy holistic correlation
+                # Only run this if we have rich metadata for both
+                ma, mb = profiles[i].metadata or {}, profiles[j].metadata or {}
+                if len(str(ma)) > 50 and len(str(mb)) > 50:
+                    llm_score = llm.evaluate_match(ma, mb)
+                    if llm_score >= 35:
+                        fired["llm_holistic_match"] = llm_score
+                        pairs.append(CandidatePair(i=i, j=j, signals=fired))
     return pairs

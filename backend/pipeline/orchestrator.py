@@ -127,6 +127,25 @@ async def run_investigation(case_id: str) -> dict:
         return {"status": "error", "reason": "case not found"}
 
     seeds = json.loads(row["seeds_json"] or "[]")
+
+    # 1. Username Permutation Engine
+    expanded_seeds = []
+    for s in seeds:
+        expanded_seeds.append(s)
+        if s.get("type") in ("name", "username") and isinstance(s.get("value"), str):
+            val = s["value"].lower().strip()
+            parts = [p for p in val.replace(".", " ").replace("_", " ").split() if p]
+            if len(parts) >= 2:
+                first, last = parts[0], parts[-1]
+                perms = [
+                    f"{first}{last}", f"{first}_{last}", f"{first}.{last}",
+                    f"{first[0]}{last}", f"{first}{last[0]}", "".join(parts)
+                ]
+                for p in set(perms):
+                    if p != val:
+                        expanded_seeds.append({"type": "username", "value": p})
+    seeds = expanded_seeds
+
     set_status(case_id, "running")
 
     # idempotent re-runs: clear prior findings (ledger stays append-only by design)
