@@ -55,7 +55,7 @@ class MaigretScraper(BaseDataSource):
                 "social_account", ids.get("username", username),
                 platform_name.lower(), status.get("url", ""),
                 metadata={
-                    "fullname": ids.get("fullname"),
+                    "name": ids.get("fullname"),
                     "bio": ids.get("bio"),
                     "photo_url": ids.get("image"),
                     "follower_count": ids.get("follower_count"),

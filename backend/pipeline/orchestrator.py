@@ -31,10 +31,18 @@ from backend.ingestion.github_scraper import GitHubScraper
 from backend.ingestion.hibp_scraper import HIBPScraper
 from backend.ingestion.maigret_scraper import MaigretScraper
 from backend.ingestion.mock_scraper import MockScraper
-from backend.ingestion.phone_scrapers import IgnorantScraper, PhoneInfogaScraper
+from backend.ingestion.phone_scrapers import IgnorantScraper, PhoneInfogaScraper, NumVerifyScraper
 from backend.ingestion.serper_scraper import SerperScraper
 from backend.ingestion.upi_module import UPIScraper
 from backend.ingestion.url_scraper import URLScraper
+from backend.ingestion.blackbird_scraper import BlackbirdUsernameScraper, BlackbirdEmailScraper
+from backend.ingestion.socialscan_scraper import SocialscanScraper
+from backend.ingestion.wayback_scraper import WaybackScraper
+from backend.ingestion.reddit_scraper import RedditScraper
+from backend.ingestion.telethon_scraper import TelethonScraper
+from backend.ingestion.user_scanner_scraper import UserScannerScraper
+from backend.ingestion.epieos_scraper import EpieosScraper
+from backend.ingestion.facebook_scraper import FacebookPhoneChecker
 from backend.ledger.audit_ledger import log_action, save_artifact
 from backend.llm.llm_client import LLMClient
 from backend.scoring.scoring_engine import score
@@ -42,15 +50,15 @@ from backend.scoring.scoring_engine import score
 # Seed type -> scraper instances (Section 11.1). SerperScraper templates vary per seed.
 def _seed_tool_map() -> dict:
     live = {
-        "email":    [HIBPScraper(), GitHubScraper(), SerperScraper('"{q}"')],
-        "phone":    [PhoneInfogaScraper(), IgnorantScraper(), SerperScraper('site:truecaller.com "{q}"')],
-        "username": [MaigretScraper(), GitHubScraper(), SerperScraper('"{q}"')],
+        "email":    [HIBPScraper(), BlackbirdEmailScraper(), UserScannerScraper(), EpieosScraper(), GitHubScraper(), SerperScraper('"{q}"')],
+        "phone":    [HIBPScraper(), PhoneInfogaScraper(), NumVerifyScraper(), IgnorantScraper(), EpieosScraper(), FacebookPhoneChecker(), SerperScraper('site:truecaller.com "{q}"')],
+        "username": [MaigretScraper(), BlackbirdUsernameScraper(), SocialscanScraper(), RedditScraper(), TelethonScraper(), GitHubScraper(), SerperScraper('"{q}"')],
         "upi":      [UPIScraper(), SerperScraper('"{q}"')],
         "name":     [SerperScraper('site:linkedin.com/in "{q}"'),
                      SerperScraper('site:instagram.com "{q}"'),
                      SerperScraper('site:twitter.com "{q}"')],
         "face":     [],   # handled separately (pHash against collected photos)
-        "url":      [URLScraper()],
+        "url":      [URLScraper(), WaybackScraper()],
     }
     if config.DATA_MODE == "mock":
         # development only: every seed type yields the fixed mock dataset so the full
@@ -143,12 +151,28 @@ async def run_investigation(case_id: str) -> dict:
         all_profiles.extend(ps)
 
     # 3: one-level cascade for derived seeds (e.g. UPI -> username/phone)
+    # plus trigger URL scrapers on every discovered profile URL
     derived = [p for p in all_profiles if p.platform == "derived"
                and p.metadata.get("cascade")]
+    # Extract URLs for wayback machine checking
+    urls = {p.source_url for p in all_profiles if p.source_url and p.source_url.startswith("http")}
+    
     for d in derived:
         ps = await _scrape_seed(d.type, d.value, tool_map)
         log_action(case_id, f"cascade:{d.type}", {"value": d.value}, {"found": len(ps)}, "system")
         all_profiles.extend(ps)
+        
+    # Run URL cascade in parallel to avoid 100s delays on large profiles
+    async def _process_url(url):
+        res = await _scrape_seed("url", url, tool_map)
+        log_action(case_id, "cascade:url", {"value": url}, {"found": len(res)}, "system")
+        return res
+        
+    if urls:
+        url_results = await asyncio.gather(*[_process_url(u) for u in urls], return_exceptions=True)
+        for res in url_results:
+            if isinstance(res, list):
+                all_profiles.extend(res)
 
     # 4: LLM entity-extraction over free-text blobs -> extra username/email seeds
     llm = LLMClient()
@@ -159,10 +183,21 @@ async def run_investigation(case_id: str) -> dict:
             if v and isinstance(v, str) and len(v) > 10:
                 blobs.append(v)
     extracted_seeds = []
-    for blob in blobs[:10]:           # cap to keep it fast
-        for ent in llm.extract_entities(blob):
-            if ent.get("type") in ("username", "email") and ent.get("value"):
-                extracted_seeds.append(ent)
+    
+    # Run LLM extractions in parallel
+    async def _extract(b):
+        # LLMClient is synchronous, run in thread
+        return await asyncio.to_thread(llm.extract_entities, b)
+        
+    if blobs:
+        extract_tasks = [_extract(b) for b in blobs[:10]]
+        extract_results = await asyncio.gather(*extract_tasks, return_exceptions=True)
+        for res in extract_results:
+            if isinstance(res, list):
+                for ent in res:
+                    if ent.get("type") in ("username", "email") and ent.get("value"):
+                        extracted_seeds.append(ent)
+                        
     if extracted_seeds:
         log_action(case_id, "llm_entity_extraction", {"blobs": len(blobs)},
                    {"new_seeds": len(extracted_seeds)}, "system")
@@ -171,6 +206,8 @@ async def run_investigation(case_id: str) -> dict:
     # skipping ones we've already searched. Bounded to avoid runaway expansion.
     seen_seeds = {(s.get("type"), str(s.get("value")).lower()) for s in seeds}
     seen_seeds |= {(d.type, (d.value or "").lower()) for d in derived}
+    
+    tasks_expand = []
     expansions = 0
     for ent in extracted_seeds:
         key = (ent["type"], str(ent["value"]).lower())
@@ -180,10 +217,20 @@ async def run_investigation(case_id: str) -> dict:
         expansions += 1
         if expansions > 5:            # hard cap (Section: max iterations)
             break
-        ps = await _scrape_seed(ent["type"], ent["value"], tool_map)
-        log_action(case_id, f"expand:{ent['type']}", {"value": ent["value"]},
-                   {"found": len(ps)}, "system")
-        all_profiles.extend(ps)
+            
+        async def _run_expand(e):
+            res = await _scrape_seed(e["type"], e["value"], tool_map)
+            log_action(case_id, f"expand:{e['type']}", {"value": e["value"]},
+                       {"found": len(res)}, "system")
+            return res
+            
+        tasks_expand.append(_run_expand(ent))
+        
+    if tasks_expand:
+        expand_results = await asyncio.gather(*tasks_expand, return_exceptions=True)
+        for res in expand_results:
+            if isinstance(res, list):
+                all_profiles.extend(res)
 
     # 5: dedup + persist entities (streaming write)
     profiles = _dedup(all_profiles)
@@ -249,6 +296,10 @@ def run_investigation_sync(case_id: str) -> dict:
     try:
         return asyncio.run(run_investigation(case_id))
     except Exception as e:  # noqa: BLE001
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[orchestrator] INVESTIGATION FAILED for case {case_id}:\n{tb}")
         set_status(case_id, "error")
-        log_action(case_id, "investigation_error", None, {"error": str(e)}, "system")
+        log_action(case_id, "investigation_error", None,
+                   {"error": str(e), "traceback": tb}, "system")
         return {"status": "error", "reason": str(e)}

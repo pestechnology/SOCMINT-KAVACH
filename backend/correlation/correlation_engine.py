@@ -32,17 +32,20 @@ except Exception:
 
 # Signal weights (Section 7.1) ----------------------------------------------
 SIGNAL_WEIGHTS = {
-    "exact_phone_match": 40,
-    "exact_email_match": 35,
-    "exact_upi_match": 40,
-    "username_exact_match": 30,
-    "username_substring_match": 15,
-    "username_fuzzy_match": 10,
-    "profile_photo_phash": 25,
+    "exact_phone_match": 60,
+    "exact_email_match": 60,
+    "exact_upi_match": 60,
+    "username_exact_match": 45,
+    "username_substring_match": 20,
+    "username_fuzzy_match": 15,
+    "exact_name_match": 35,
+    "fuzzy_name_match": 20,
+    "location_overlap": 15,
+    "profile_photo_phash": 35,
     "posting_hours_overlap": 15,
     "stylometry_cosine": 20,
     "breach_co_occurrence": 18,
-    "bio_keyword_overlap": 8,
+    "bio_keyword_overlap": 12,
     "reciprocal_mention": 15,
 }
 
@@ -117,12 +120,15 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
     ma, mb = a.metadata or {}, b.metadata or {}
     fired: dict = {}
 
-    # exact identifier matches
-    if _phone(ma.get("phone")) and _phone(ma.get("phone")) == _phone(mb.get("phone")):
+    # exact identifier matches — use `or ""` to guard against explicit None values
+    pa, pb = _phone(ma.get("phone") or ""), _phone(mb.get("phone") or "")
+    if pa and pa == pb:
         fired["exact_phone_match"] = SIGNAL_WEIGHTS["exact_phone_match"]
-    if _norm(ma.get("email")) and _norm(ma.get("email")) == _norm(mb.get("email")):
+    ea, eb = _norm(ma.get("email") or ""), _norm(mb.get("email") or "")
+    if ea and ea == eb:
         fired["exact_email_match"] = SIGNAL_WEIGHTS["exact_email_match"]
-    if _norm(ma.get("upi")) and _norm(ma.get("upi")) == _norm(mb.get("upi")):
+    ua, ub = _norm(ma.get("upi") or ""), _norm(mb.get("upi") or "")
+    if ua and ua == ub:
         fired["exact_upi_match"] = SIGNAL_WEIGHTS["exact_upi_match"]
 
     # username similarity (best single tier)
@@ -138,14 +144,14 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
     if _hours_jaccard(ma.get("posting_hours"), mb.get("posting_hours")) > 0.6:
         fired["posting_hours_overlap"] = SIGNAL_WEIGHTS["posting_hours_overlap"]
 
-    # bio keyword overlap
-    ka, kb = _keywords(ma.get("bio", "")), _keywords(mb.get("bio", ""))
+    # bio keyword overlap — guard against None bios from maigret
+    ka, kb = _keywords(str(ma.get("bio") or "")), _keywords(str(mb.get("bio") or ""))
     if ka and kb and len(ka & kb) >= 2:
         fired["bio_keyword_overlap"] = SIGNAL_WEIGHTS["bio_keyword_overlap"]
 
     # stylometry (optional, needs sklearn + enough text)
     if _HAVE_SKLEARN:
-        ta, tb = ma.get("bio", ""), mb.get("bio", "")
+        ta, tb = str(ma.get("bio") or ""), str(mb.get("bio") or "")
         if len(ta) > 15 and len(tb) > 15:
             try:
                 m = TfidfVectorizer().fit_transform([ta, tb])
@@ -155,9 +161,25 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
                 pass
 
     # breach co-occurrence
-    bra, brb = set(ma.get("breaches", []) or []), set(mb.get("breaches", []) or [])
+    bra, brb = set(ma.get("breaches") or []), set(mb.get("breaches") or [])
     if bra and brb and bra & brb:
         fired["breach_co_occurrence"] = SIGNAL_WEIGHTS["breach_co_occurrence"]
+
+    # real name overlap
+    na, nb = _norm(ma.get("name") or ""), _norm(mb.get("name") or "")
+    if na and nb:
+        if na == nb:
+            fired["exact_name_match"] = SIGNAL_WEIGHTS["exact_name_match"]
+        else:
+            ratio = (_fuzz.ratio(na, nb) if _HAVE_FUZZ else int(difflib.SequenceMatcher(None, na, nb).ratio() * 100))
+            if ratio >= 80:
+                fired["fuzzy_name_match"] = SIGNAL_WEIGHTS["fuzzy_name_match"]
+
+    # location overlap
+    la, lb = _norm(ma.get("location") or ""), _norm(mb.get("location") or "")
+    if la and lb:
+        if la == lb or la in lb or lb in la:
+            fired["location_overlap"] = SIGNAL_WEIGHTS["location_overlap"]
 
     return fired
 

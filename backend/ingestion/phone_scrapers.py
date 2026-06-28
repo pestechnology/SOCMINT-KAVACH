@@ -76,3 +76,41 @@ class PhoneInfogaScraper(BaseDataSource):
                 "valid": d.get("valid", d.get("Valid")),
             },
         )]
+
+
+class NumVerifyScraper(BaseDataSource):
+    name = "numverify"
+
+    async def _run_live(self, number: str) -> list[RawProfile]:
+        from backend import config
+        import os
+        api_key = os.environ.get("NUMVERIFY_KEY") or getattr(config, "NUMVERIFY_KEY", None)
+        if not api_key:
+            return []
+            
+        digits = re.sub(r"\D", "", number)
+        url = f"http://apilayer.net/api/validate?access_key={api_key}&number={digits}"
+        
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get(url)
+                if r.status_code != 200:
+                    return []
+                data = r.json()
+                
+                if data.get("valid") is False and not data.get("country_code"):
+                    # API error or invalid number format
+                    return []
+                    
+                return [make_profile(
+                    "phone_intel", number, "numverify", "",
+                    metadata={
+                        "country": data.get("country_name"),
+                        "location": data.get("location"),
+                        "carrier": data.get("carrier"),
+                        "line_type": data.get("line_type"),
+                        "valid": data.get("valid"),
+                    },
+                )]
+        except Exception:
+            return []

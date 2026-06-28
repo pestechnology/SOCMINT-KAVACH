@@ -30,14 +30,15 @@ def _profile_from_user(user: dict) -> RawProfile:
         "social_account", user.get("login", ""), "github",
         user.get("html_url", ""),
         metadata={
-            "fullname": user.get("name"),
-            "bio": user.get("bio"),
-            "photo_url": user.get("avatar_url"),
+            "name": user.get("name"),
             "location": user.get("location"),
-            "follower_count": user.get("followers"),
+            "bio": user.get("bio"),
+            "followers": user.get("followers"),
+            "public_repos": user.get("public_repos"),
+            "photo_url": user.get("avatar_url"),
             "email": user.get("email"),
             "blog": user.get("blog"),
-            "created_at": user.get("created_at"),
+            "created_at": user.get("created_at")
         },
     )
 
