@@ -1,67 +1,126 @@
-# VERTEX - LLM Handover & Context Report
+# VERTEX - Comprehensive Technical Handover Document
 
-This document is intended for any future LLM or developer picking up the `VERTEX` project. It provides a complete summary of the architecture, recent critical upgrades, known issues, and pending tasks.
-
----
-
-## 1. Project Overview & Architecture
-VERTEX is an automated SOCMINT / OSINT investigation pipeline designed to map digital footprints. 
-- **Frontend:** Next.js (React), running by default on port `3001` (because `3000` is often occupied). Connects to backend via `NEXT_PUBLIC_API_URL=http://localhost:8000`.
-- **Backend:** Python (FastAPI). Uses `sqlite3` (`cidecode.db`) for storage. 
-- **Core Engine Flow:**
-  1. **Ingestion:** Scraping modules (`backend/ingestion/`) hit APIs and CLIs (Maigret, Blackbird, etc.) to produce `RawProfile` objects.
-  2. **Orchestrator:** `backend/pipeline/orchestrator.py` manages a highly-parallelized fan-out cascade.
-  3. **LLM Extraction:** Llama-3 (via Groq) reads the unstructured bios/metadata to extract hidden phone numbers, emails, or usernames.
-  4. **Correlation:** `backend/correlation/correlation_engine.py` compares all profiles mathematically, assigning points based on `SIGNAL_WEIGHTS`.
-  5. **Scoring:** `backend/scoring/scoring_engine.py` groups profiles into `Clusters` if they exceed the 50-point MEDIUM threshold, obeying the OSINT "Red-Herring" rule (requiring ≥2 distinct signals to link).
+This document contains **every technical detail** required for an LLM agent or Human Engineer to take over the `VERTEX` codebase. Do not assume context; rely on this document as the absolute ground truth for the current state of the architecture, data flows, and mathematical algorithms.
 
 ---
 
-## 2. Recent Critical Upgrades (What Was Just Done)
-A massive overhaul was applied to fix deadlocks and boost the accuracy of the correlation graphs:
+## 1. System Architecture & Tech Stack
 
-### 2.1 Concurrency Fixes (Orchestrator Deadlocks)
-- **The Bug:** Previously, the orchestrator would fan-out the initial seeds but then iterate through cascading URL targets sequentially, causing endless hangs on targets with many links.
-- **The Fix:** Completely rewrote `orchestrator.py` to use `asyncio.gather` for URL cascading and LLM extraction phases. The system now footprint-scans targets across 15+ websites instantly in parallel.
+**VERTEX** is an advanced SOCMINT / OSINT pipeline that automatically ingests a target identifier (name, email, phone, username), cascades across multiple intelligence databases, uses an LLM to extract hidden identifiers from unstructured text, and uses a deterministic mathematical graph to correlate profiles into distinct human identities.
 
-### 2.2 Correlation Mathematics Overhaul (Breaking the 30/100 Cap)
-- **The Bug:** The system was hard-capping clusters at 30 points (LOW Tier) because it lacked multi-signal triangulation (like matching a username *and* a real name).
-- **The Fix:** 
-  - Added new signals to `correlation_engine.py`: `exact_name_match` (+35), `fuzzy_name_match` (+20), and `location_overlap` (+15).
-  - Boosted baseline high-confidence weights: `username_exact_match` (45 points), `exact_phone_match` (60 points), `exact_email_match` (60 points).
-- **Metadata Extraction:** Updated `github`, `telethon`, `maigret`, and `reddit` scrapers in `backend/ingestion/` to proactively pull "Real Name" and "Location" into the `metadata` dictionary so the correlation engine can read them.
+### Tech Stack
+- **Frontend Framework:** Next.js 14 (React, TypeScript, TailwindCSS)
+- **Backend Framework:** Python (FastAPI, Uvicorn)
+- **Concurrency:** `asyncio` (Crucial for scraping speed)
+- **Database:** SQLite3 (`cidecode.db`)
+- **LLM Engine:** Llama-3 (via Groq API)
+- **Orchestration:** Directed graph fan-out cascade
 
-### 2.3 Auth, CORS, and Git Fixes
-- **Login Fix:** Force-reset the `admin` password to `vertex2026` in `cidecode.db`.
-- **CORS Fix:** Updated `backend/main.py` CORS middleware to explicitly allow `http://localhost:3001` to fix network rejections.
-- **Git State:** Recovered from a messy ghost branch. Re-created the `ashwin` branch from the correct upstream, stashed/popped all the upgrades, and force-pushed to the remote.
+### Core Ports & Networking
+- **Frontend Server:** Runs on `http://localhost:3001` (or `3000`).
+- **Backend Server:** Runs on `http://localhost:8000`.
+- **CORS Configuration:** `backend/main.py` explicitly allows `http://localhost:3001` via `CORSMiddleware`. Do NOT remove this, or the Next.js frontend will fail to fetch `API/investigate`.
 
 ---
 
-## 3. Pending Tasks & Handover Instructions
+## 2. Deep Dive: Codebase Structure & Data Flow
 
-For the next LLM or engineer continuing this work, here are the outstanding items to address:
+When a user submits a search via the frontend, the data follows this exact pipeline path in the backend:
 
-### A. API Keys & Missing Dependencies
-- **HaveIBeenPwned:** `HIBPScraper` is functional but currently skipping because the key is a dummy. Update `.env`.
-- **Numverify:** API key missing.
-- **User-Scanner:** The `user-scanner` Python CLI was installed via pip to `~/Library/Python/3.12/bin/user-scanner`. If the backend throws a "command not found" error, ensure that directory is added to the system `PATH` before starting `uvicorn`.
+### Step 1: `backend/main.py`
+- Exposes `POST /investigate` taking an `InvestigateRequest` (`type`, `value`).
+- Validates the `IdentifierType` enum.
+- Dispatches the request to `run_investigation()` in the orchestrator.
 
-### B. Correlation Engine Tuning
-- **Stylometry:** The `stylometry_cosine` signal in the correlation engine requires `scikit-learn` to be installed. If not present, the system safely ignores stylometry.
-- **LLM Prompting:** The `LLMClient` in `backend/llm/llm_client.py` does a decent job extracting clues, but could be heavily optimized with few-shot prompting to better separate real names from generic bio text.
+### Step 2: Orchestrator (`backend/pipeline/orchestrator.py`)
+- **Function:** `run_investigation(seed: Identifier)`
+- **Mechanism:** Implements a highly concurrent loop using `asyncio.gather`. 
+- **The Cascade:**
+  1. It takes the `seed` and passes it to every applicable `BaseDataSource` (Scraper).
+  2. The scrapers return `RawProfile` objects.
+  3. The Orchestrator passes the `RawProfile.metadata` into the `LLMClient` to extract *new* seeds (e.g. an Instagram bio might contain a Twitter handle).
+  4. The newly extracted seeds are recursively fed back into the scrapers.
+- **Critical Fix:** Previously, this file used a `for target in targets:` sequential loop which caused severe deadlocks on high-yield targets. It was rewritten to fan out asynchronously.
 
-### C. Scaling
-- SQLite `cidecode.db` works fine for a hackathon, but concurrency issues (locked databases) may occur if many users hit the FastAPI endpoints simultaneously. Consider migrating `backend/database.py` to PostgreSQL. 
+### Step 3: Ingestion Engine (`backend/ingestion/`)
+All scrapers inherit from `BaseDataSource` in `base_module.py`.
+- **`maigret_scraper.py`**: Runs the CLI tool `maigret`. We updated it to map `ids.get("fullname")` directly to the `name` key in metadata. Uses `--no-recursion` flag.
+- **`github_scraper.py`**: Hits `api.github.com/users/{username}`. Explicitly extracts `name`, `location`, `email`, `bio`.
+- **`reddit_scraper.py`**: Hits `reddit.com/user/{username}/about.json`. Extracts the `subreddit.title` as the `name` key.
+- **`telethon_scraper.py`**: Requires Telegram API Hash. Concatenates `user.first_name` + `user.last_name` into the `name` key.
+- **`phone_scrapers.py`**: Contains `NumverifyScraper` and `TruecallerScraper` logic.
 
-### Start Commands
+### Step 4: Correlation Engine (`backend/correlation/correlation_engine.py`)
+- **Function:** `correlate_profiles(profiles)`
+- **Mechanism:** Takes a flat array of `RawProfile` objects and compares every profile against every other profile $O(N^2)$.
+- **The Algorithm:** It calls `_pair_signals(ma, mb)` to determine mathematical overlap.
+- **Core Weights (CRITICAL):**
+  - `exact_phone_match` / `exact_email_match` = **60 points**
+  - `username_exact_match` = **45 points**
+  - `exact_name_match` = **35 points**
+  - `fuzzy_name_match` = **20 points**
+  - `location_overlap` = **15 points**
+
+### Step 5: Scoring & Clustering (`backend/scoring/scoring_engine.py`)
+- **Function:** Groups the correlated profiles into distinct `Clusters`.
+- **The "Red Herring" Rule:** In OSINT, a single signal (e.g., matching username only) is NOT enough to merge two profiles. To clear the **MEDIUM (50 points)** threshold, a cluster MUST have ≥2 matching signals (e.g., `username_exact_match` [45] + `location_overlap` [15] = 60 points).
+- **Tiers:** `< 50` (REJECT/LOW), `50 - 75` (MEDIUM), `> 75` (HIGH).
+- **Output:** The Engine outputs a list of strings (`_SIGNAL_PHRASES`) explaining exactly *why* the cluster was grouped, ensuring court-admissibility for the CDI.
+
+---
+
+## 3. Database Schema (`cidecode.db`)
+The system uses SQLite. To query it: `sqlite3 cidecode.db "SELECT * FROM cases;"`
+- **Table `cases`**: `case_id`, `title`, `status`, `created_at`.
+- **Table `clusters`**: Stores the output of the scoring engine (`tier`, `confidence_score`, `explanation`).
+- **Table `users`**: Contains auth credentials. 
+  - **Note:** The `admin` password was manually reset in the DB to `vertex2026`.
+
+---
+
+## 4. Pending Tasks & Unfinished Integrations
+
+When the next LLM takes over, these are the immediate technical debts that must be resolved:
+
+### Missing API Keys
+1. **HaveIBeenPwned (`HIBPScraper`)**: Currently skipping real network requests because the `.env` key is a dummy. Needs a paid API key to check data breaches.
+2. **Numverify (`NumverifyScraper`)**: The API key is missing.
+3. **Telegram (`TelethonScraper`)**: Requires `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in the `.env` to execute live Telegram OSINT.
+
+### Missing System Dependencies
+1. **User-Scanner (`user_scanner_scraper.py`)**: The `user-scanner` Python package was installed in `/Users/ashwinharish/Library/Python/3.12/bin/`. If `uvicorn` throws a `subprocess.Popen` error, it is because this directory is not in the system `$PATH`. 
+   - *Fix:* Ensure `export PATH="$PATH:/Users/ashwinharish/Library/Python/3.12/bin"` is run before starting the backend.
+2. **Scikit-Learn (Stylometry)**: `correlation_engine.py` looks for `sklearn` to compute `stylometry_cosine` distance. It gracefully degrades if missing, but should be installed for linguistic analysis.
+
+### Prompt Engineering Debt
+- The file `backend/llm/llm_client.py` uses Groq (Llama-3). It relies on zero-shot extraction. 
+- *Next Step:* The prompt should be upgraded to use few-shot JSON schema enforcement to stop the LLM from hallucinating handles that don't actually exist in the bio text.
+
+---
+
+## 5. Quick-Start Commands
+
+### Backend
 ```bash
-# Terminal 1: Backend
+# Ensure Python bin path is loaded for Maigret & User-Scanner
+export PATH="$PATH:/Users/ashwinharish/Library/Python/3.12/bin"
 cd backend
+source ../venv/bin/activate
 uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-# Terminal 2: Frontend
+### Frontend
+```bash
 cd frontend
-npm run dev 
-# (UI will start on localhost:3001 if 3000 is blocked)
+npm install
+npm run dev
+```
+
+### Git Recovery 
+If the `ashwin` branch gets corrupted again due to upstream conflicts, the emergency recovery protocol is:
+```bash
+git checkout vismay_v2
+git branch -D ashwin
+git checkout -b ashwin
+git push -f origin ashwin
 ```
