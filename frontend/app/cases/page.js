@@ -48,7 +48,7 @@ export default function Cases() {
 
   async function refresh() {
     try { setCases((await api.listCases()).cases); }
-    catch (e) { if (String(e).includes("401")) { clearToken(); router.replace("/login"); } }
+    catch (e) { if (e.status === 401) { clearToken(); router.replace("/login"); } }
   }
 
   function signOut() {

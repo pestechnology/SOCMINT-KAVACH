@@ -238,7 +238,8 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
         seeds = json.loads(case.get("seeds_json") or "[]")
     except Exception:
         seeds = []
-    seed_str = ", ".join(f"{s.get('type')}: {s.get('value')}" for s in seeds) or "-"
+    seed_str = ", ".join(f"{s.get('type','?')}: {s.get('value','')}"
+                         for s in seeds if isinstance(s, dict)) or "-"
 
     # ===================== COVER =====================
     el += [Spacer(1, 30 * mm),
@@ -253,7 +254,7 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
            Spacer(1, 12 * mm)]
 
     cover_rows = [
-        [Paragraph("<b>Case reference</b>", ss["CellWrap"]), Paragraph(case.get("case_id", case_id), ss["Mono"])],
+        [Paragraph("<b>Case reference</b>", ss["CellWrap"]), Paragraph(_esc(str(case.get("case_id") or case_id)), ss["Mono"])],
         [Paragraph("<b>Case title</b>", ss["CellWrap"]), Paragraph(_esc(case.get("title", "-")), ss["CellWrap"])],
         [Paragraph("<b>Seed identifier(s)</b>", ss["CellWrap"]), Paragraph(_redact(seed_str, redact), ss["CellWrap"])],
         [Paragraph("<b>Investigating officer</b>", ss["CellWrap"]), Paragraph(_esc(officer), ss["CellWrap"])],
@@ -288,10 +289,10 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
         rows = [["#", "Action", "Search ID", "Input SHA-256", "Output SHA-256", "Timestamp (UTC)"]]
         for n, r in enumerate(ledger, 1):
             rows.append([str(n),
-                         Paragraph(r["action"], ss["CellWrap"]),
-                         Paragraph(r["search_id"][:10] + "…", ss["Mono"]),
-                         Paragraph(r["input_hash"][:20] + "…", ss["Mono"]),
-                         Paragraph(r["output_hash"][:20] + "…", ss["Mono"]),
+                         Paragraph(_esc(r["action"]), ss["CellWrap"]),
+                         Paragraph((r["search_id"] or "")[:10] + "…", ss["Mono"]),
+                         Paragraph((r["input_hash"] or "")[:20] + "…", ss["Mono"]),
+                         Paragraph((r["output_hash"] or "")[:20] + "…", ss["Mono"]),
                          Paragraph((r["timestamp"] or "")[:19], ss["CellWrap"])])
         el += [_table(rows, [8 * mm, 30 * mm, 22 * mm, 38 * mm, 38 * mm, 28 * mm])]
     else:
@@ -321,8 +322,8 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
             tc = TIER_COLOR.get(tier, MUTED)
             block = [
                 Paragraph(f'<b>Cluster {n}</b> &nbsp;'
-                          f'<font color="#{tc.hexval()[2:]}"><b>[{tier}]</b></font> &nbsp;'
-                          f'{conf}% confidence', ss["Body2"]),
+                          f'<font color="#{tc.hexval()[2:]}"><b>[{_esc(tier)}]</b></font> &nbsp;'
+                          f'{_esc(conf)}% confidence', ss["Body2"]),
                 Paragraph(f"<b>Accounts:</b> " + ("; ".join(members) or "-"), ss["Small"]),
                 Paragraph(f"<b>Reasoning:</b> " + _esc(cl.get("explanation") or "-"), ss["Body2"]),
                 HRFlowable(width="100%", thickness=0.3, color=LIGHT, spaceBefore=4, spaceAfter=4),
@@ -331,6 +332,129 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
     else:
         el += [Paragraph("No clusters recorded for this case.", ss["Body2"])]
     el += [PageBreak()]
+
+    # ===================== 2A. DIGITAL FOOTPRINT & EXPOSURE =====================
+    def _m(e):
+        try:
+            return json.loads(e.get("metadata_json") or "{}")
+        except Exception:
+            return {}
+
+    ents = data["entities"]
+    accounts      = [e for e in ents if e.get("type") == "social_account"]
+    registrations = [e for e in ents if e.get("type") == "email_registration"]
+    breach_ents   = [e for e in ents if e.get("type") == "breach"]
+    phone_intel   = [e for e in ents if e.get("type") == "phone_intel"]
+
+    el += _section(ss, "2A.", "Digital Footprint & Exposure")
+    el += [Paragraph("Publicly observable accounts, service registrations, data-breach "
+                     "exposure, phone intelligence and activity patterns collected for the "
+                     "seed identifier(s). These are investigative leads; the confidence tiers "
+                     "in Section 2 indicate which are assessed as the same individual.",
+                     ss["Body2"]), Spacer(1, 3 * mm)]
+
+    # --- discovered accounts (capped) ---
+    if accounts:
+        CAP = 40
+        el += [Paragraph(f"<b>Discovered accounts</b> ({len(accounts)} total"
+                         + (f"; first {CAP} shown" if len(accounts) > CAP else "") + ")",
+                         ss["Body2"]), Spacer(1, 1.5 * mm)]
+        rows = [["#", "Platform", "Account", "Name", "Activity (UTC)"]]
+        for n, e in enumerate(accounts[:CAP], 1):
+            m = _m(e)
+            name = m.get("name") or m.get("fullname") or ""
+            act = m.get("most_active_time_utc") or ""
+            if m.get("posting_frequency_per_day"):
+                act = (act + f" · {m.get('posting_frequency_per_day')}/day").strip(" ·")
+            rows.append([str(n),
+                         Paragraph(_esc(e.get("platform")), ss["CellWrap"]),
+                         Paragraph(_redact(e.get("value", ""), redact), ss["CellWrap"]),
+                         Paragraph(_redact(name, redact) if name else "-", ss["CellWrap"]),
+                         Paragraph(_esc(act) if act else "-", ss["CellWrap"])])
+        el += [_table(rows, [8 * mm, 28 * mm, 50 * mm, 48 * mm, 40 * mm]), Spacer(1, 4 * mm)]
+
+    # --- email -> registered services (holehe) ---
+    if registrations:
+        by_email: dict = {}
+        for e in registrations:
+            by_email.setdefault(e.get("value", ""), []).append(_m(e).get("service") or e.get("platform"))
+        el += [Paragraph("<b>Service registrations</b> — services where an email address is "
+                         "registered (detected via password-reset / sign-up responses; no login):",
+                         ss["Body2"]), Spacer(1, 1.5 * mm)]
+        rows = [["Email", "Registered on"]]
+        for email, svcs in by_email.items():
+            svc_list = ", ".join(sorted({str(s) for s in svcs if s}))
+            rows.append([Paragraph(_redact(email, redact), ss["CellWrap"]),
+                         Paragraph(_esc(svc_list), ss["CellWrap"])])
+        el += [_table(rows, [50 * mm, 124 * mm]), Spacer(1, 4 * mm)]
+
+    # --- breach exposure ---
+    if breach_ents:
+        el += [Paragraph("<b>Data-breach exposure</b> — public breach corpora in which the "
+                         "identifier appears (breach NAMES only; no credentials are collected "
+                         "or stored):", ss["Body2"]), Spacer(1, 1.5 * mm)]
+        rows = [["Identifier", "Count", "Breaches (sample)"]]
+        for e in breach_ents:
+            m = _m(e)
+            names = m.get("breaches") or []
+            sample = ", ".join(str(x) for x in names[:12]) + ("…" if len(names) > 12 else "")
+            rows.append([Paragraph(_redact(e.get("value", ""), redact), ss["CellWrap"]),
+                         Paragraph(_esc(m.get("breach_count") or len(names)), ss["CellWrap"]),
+                         Paragraph(_esc(sample) if sample else "-", ss["CellWrap"])])
+        el += [_table(rows, [44 * mm, 18 * mm, 112 * mm]), Spacer(1, 4 * mm)]
+
+    # --- phone intelligence ---
+    if phone_intel:
+        el += [Paragraph("<b>Phone intelligence</b> (carrier / line-type lookup):", ss["Body2"]),
+               Spacer(1, 1.5 * mm)]
+        rows = [["Number", "Carrier", "Country", "Line type"]]
+        for e in phone_intel:
+            m = _m(e)
+            rows.append([Paragraph(_redact(e.get("value", ""), redact), ss["CellWrap"]),
+                         Paragraph(_esc(m.get("carrier") or "-"), ss["CellWrap"]),
+                         Paragraph(_esc(m.get("country") or "-"), ss["CellWrap"]),
+                         Paragraph(_esc(m.get("line_type") or "-"), ss["CellWrap"])])
+        el += [_table(rows, [44 * mm, 50 * mm, 40 * mm, 40 * mm]), Spacer(1, 4 * mm)]
+
+    if not (accounts or registrations or breach_ents or phone_intel):
+        el += [Paragraph("No public footprint data was collected for this case.", ss["Body2"])]
+    el += [PageBreak()]
+
+    # ===================== 2B. FORENSIC ANALYSIS =====================
+    try:
+        from backend.analysis.forensics import summarize as _forensics_summary
+        fx = _forensics_summary(data["entities"])
+    except Exception:
+        fx = {}
+    if fx:
+        tone = fx.get("tone", {})
+        act = fx.get("activity", {})
+        eng = fx.get("engagement", {})
+        el += _section(ss, "2B.", "Linguistic & Behavioural Forensics")
+        el += [Paragraph("Automated analysis of the collected public text and activity "
+                         "metadata. These are investigative indicators, not determinations of fact.",
+                         ss["Body2"]), Spacer(1, 3 * mm)]
+        tone_txt = (f"{tone.get('label', 'neutral')} "
+                    f"(compound {tone.get('compound', 0)}; {tone.get('samples_analyzed', 0)} text samples)")
+        if tone.get("flag_negative"):
+            tone_txt += "  [FLAGGED: predominantly negative / hostile tone]"
+        active = ", ".join(f"{int(h):02d}:00" for h in (act.get("active_hours_utc") or []))
+        active = (active + f"  ·  {act.get('posts_analyzed', 0)} posts analysed") if act.get("available") \
+            else "insufficient temporal data"
+        eng_txt = (f"{eng.get('followers_total', 0)} total followers across "
+                   f"{len(eng.get('top_accounts') or [])} measured account(s)") if eng.get("available") \
+            else "no public engagement metrics available"
+        rows = [
+            [Paragraph("<b>Indicator</b>", ss["CellWrap"]), Paragraph("<b>Finding</b>", ss["CellWrap"])],
+            [Paragraph("Overall tone (sentiment)", ss["CellWrap"]), Paragraph(_esc(tone_txt), ss["CellWrap"])],
+            [Paragraph("Top keywords", ss["CellWrap"]),
+             Paragraph(_esc(", ".join(fx.get("keywords") or []) or "-"), ss["CellWrap"])],
+            [Paragraph("Hashtags", ss["CellWrap"]),
+             Paragraph(_esc(", ".join("#" + h for h in (fx.get("hashtags") or [])) or "-"), ss["CellWrap"])],
+            [Paragraph("Most active hours (UTC)", ss["CellWrap"]), Paragraph(_esc(active), ss["CellWrap"])],
+            [Paragraph("Engagement", ss["CellWrap"]), Paragraph(_esc(eng_txt), ss["CellWrap"])],
+        ]
+        el += [_table(rows, [55 * mm, 119 * mm], header=False), PageBreak()]
 
     # ===================== ANNEXURE A =====================
     artifacts = get_artifacts(case_id)
@@ -342,9 +466,9 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
         rows = [["#", "Type", "File", "SHA-256 digest", "Captured (UTC)"]]
         for n, a in enumerate(artifacts, 1):
             rows.append([str(n),
-                         Paragraph(a["artifact_type"], ss["CellWrap"]),
-                         Paragraph(os.path.basename(a["file_path"] or ""), ss["Mono"]),
-                         Paragraph(a["sha256"], ss["Mono"]),
+                         Paragraph(_esc(a["artifact_type"] or ""), ss["CellWrap"]),
+                         Paragraph(_esc(os.path.basename(a["file_path"] or "")), ss["Mono"]),
+                         Paragraph((a["sha256"] or ""), ss["Mono"]),
                          Paragraph((a["captured_at"] or "")[:19], ss["CellWrap"])])
         el += [_table(rows, [8 * mm, 24 * mm, 38 * mm, 66 * mm, 28 * mm])]
     else:
@@ -384,8 +508,8 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
     if artifacts:
         for n, a in enumerate(artifacts, 1):
             hash_rows.append([str(n),
-                              Paragraph(os.path.basename(a["file_path"] or ""), ss["Mono"]),
-                              Paragraph(a["sha256"], ss["Mono"])])
+                              Paragraph(_esc(os.path.basename(a["file_path"] or "")), ss["Mono"]),
+                              Paragraph((a["sha256"] or ""), ss["Mono"])])
     else:
         hash_rows.append(["-", "(no artifacts)", "-"])
     el += [_table(hash_rows, [8 * mm, 56 * mm, 110 * mm]), Spacer(1, 4 * mm)]
@@ -409,8 +533,8 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
         rows = [["#", "Action", "Actor", "Timestamp (UTC)", "Chain link (prev. hash)"]]
         for n, r in enumerate(ledger, 1):
             rows.append([str(n),
-                         Paragraph(r["action"], ss["CellWrap"]),
-                         Paragraph(r["actor"], ss["CellWrap"]),
+                         Paragraph(_esc(r["action"]), ss["CellWrap"]),
+                         Paragraph(_esc(r["actor"] or ""), ss["CellWrap"]),
                          Paragraph((r["timestamp"] or "")[:19], ss["CellWrap"]),
                          Paragraph((r["previous_hash"] or "")[:22] + "…", ss["Mono"])])
         el += [_table(rows, [8 * mm, 34 * mm, 22 * mm, 34 * mm, 50 * mm])]

@@ -284,3 +284,43 @@ That's the demo. That's what wins.
 ## Bottom line
 
 You will have a working SOCMINT tool that handles 5 input types, refuses false positives, and produces court-admissible evidence packages. You will not have a Maltego-killer. That's the right trade. Quality of evidence beats volume of results for the audience you're presenting to.
+
+---
+
+## ADDENDUM — Current state as of 2026-07-01 (supersedes the June 25 snapshot above)
+
+The "40–50% done" estimate above is **out of date**. Since then the project has been built out and hardened. Current reality:
+
+**Now DONE (was listed as not-built / missing above):**
+- ✅ **BSA-63 court PDF** — the moat. Built, polished, and now **tail-safe** (every ledger row self-seals via `chain_hash`, so even the last entry can't be edited undetected).
+- ✅ **Phone** (PhoneInfoga + ignorant, fail-safe), **UPI** (parser + bank map + username cascade), **full name** (Serper), **social URL** (parser → username flow). All wired into the orchestrator.
+- ✅ **Bio-link extraction + iterative seed expansion** (capped at 5).
+- ✅ **Graph view (sigma.js) + timeline (vis-timeline)**, streaming via 1.5 s polling.
+- ✅ **48 pytest tests passing.**
+
+**Architecture note:** the LLM engine is **NVIDIA Cloud** (`llama-3.3-70b`, `deepseek-v4-pro`), enhancement-only — *not* Groq, and *not* on the linking path. Caching described above is **not** part of the current design (the demo is live by design; `mock` mode exists for dev/tests only).
+
+**2026-07-01 hardening pass** fixed the ledger tail-row tamper hole, auth status codes (400 vs 409) + token-decode robustness + bcrypt 72-byte handling, subprocess reaping (maigret/ignorant), one un-escaped PDF field, and several frontend issues (graph refresh on score change, reliable 401 handling). Full details: **`context.md` Section 11**.
+
+### 2026-07-01 OSINT expansion (Sprint 1 & 2) — `context.md` Section 12
+Two infrastructure bugs were found that had been **silently crippling live collection** (every scraper is fail-safe, so failures returned `[]` with no error):
+- **Corporate-TLS failure** — httpx couldn't verify certs behind the TLS-inspection proxy, so archive.org/reddit/breach API **and the NVIDIA LLM** were dead. Fixed with `truststore` (uses the OS cert store; still verifies).
+- **CLI tools not on PATH** — `maigret` (the username backbone), holehe, sherlock, blackbird, ignorant all failed to launch (`FileNotFoundError`) → had **never actually run**. Fixed with a shared `resolve_tool()`. Verified live: maigret → 88, sherlock → 99 accounts.
+
+New/real capabilities now working & verified live:
+- **Profile-photo / face matching** (perceptual hash) — links the same photo across platforms.
+- **Posting-time + frequency / most-active-hours** from real Reddit timestamps (needs Reddit OAuth or a residential IP on this datacenter network).
+- **Breach exposure** via free XposedOrNot (no key; HIBP key is a dummy).
+- **Email → registered services** via holehe (replaces the dead Epieos/user-scanner stubs).
+- **Sherlock** as a 2nd username enumerator (corroborates Maigret) + **username-variant expansion** (`j.shankar`→`jshankar`/`j_shankar`/`shankarj`).
+- **Phone path fixed** — was effectively empty (the `site:truecaller.com` Serper dork returns 0 because Truecaller blocks indexing). Now uses **NumVerify** (carrier/line-type/country, key works) + a **plain Serper web search** (~10 web mentions incl. Truecaller/Facebook/Instagram hits) + PhoneInfoga/ignorant if available. Verified: ~11 results per number. (HIBP, which is email-only, and the Facebook-phone stub were removed from the phone path.)
+
+**Known-dead (do not present as working):** Epieos & Facebook-phone are stubs; Telethon uses a bot token and can't resolve arbitrary users; blackbird/ignorant aren't installed. **Deliberately NOT built (myth/inadmissible):** Telegram-IP-from-phone, password harvesting, private story/deleted-post scraping, WhatsApp DP, Truecaller name scraping.
+
+### 2026-07-01 Sprint 3 — forensics layer (`context.md` Section 13)
+- **Fixed entity bloat:** a username seed was producing ~170 redundant `url` entities (URL parser re-run on every discovered account URL). Discovered URLs now get a capped Wayback archive check only → `torvalds`+email dropped 379→196 entities, no junk nodes.
+- **Linguistic & behavioural forensics** (`backend/analysis/forensics.py`): real **stylometry** (char n-grams + function-word distribution; replaces the weak 2-bio TF-IDF), **sentiment/tone** (VADER, with a negative/hostile-tone flag), **keywords + hashtags**, **activity-hour profile**, **engagement**. Surfaced in a new frontend **Forensics panel** and a report **"2B. Linguistic & Behavioural Forensics"** section.
+- **UI contrast round 2:** muted `dim` text `#4A5568`→`#8693A8` (was unreadable on the near-black canvas).
+- Verified live; 48 tests pass.
+
+> The single source of truth for current architecture, data flows, and run instructions is **`context.md`** (read Sections 11 & 12 for the latest deltas). The June-25 "known bugs" list above (duplicate platform rows, holehe parsing) predates the current scraper set and no longer applies.

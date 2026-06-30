@@ -12,7 +12,32 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import os
+import shutil
+import sys
 from dataclasses import dataclass, field
+
+
+def resolve_tool(name: str) -> str | None:
+    """Find a CLI tool's executable path.
+
+    `asyncio.create_subprocess_exec("maigret", ...)` fails on Windows when the venv's
+    Scripts dir isn't on PATH (e.g. the backend is launched via venv\\Scripts\\python.exe
+    without activation) — so maigret/holehe/sherlock/blackbird/ignorant silently return
+    []. This resolves the tool against PATH first, then the running interpreter's
+    Scripts/bin dir, so CLI scrapers work regardless of how the server was started.
+    Returns None if the tool genuinely isn't installed.
+    """
+    found = shutil.which(name)
+    if found:
+        return found
+    ext = ".exe" if os.name == "nt" else ""
+    sub = "Scripts" if os.name == "nt" else "bin"
+    for base in (os.path.dirname(sys.executable), sys.prefix):
+        cand = os.path.join(base, sub, name + ext)
+        if os.path.exists(cand):
+            return cand
+    return None
 
 
 @dataclass

@@ -1386,3 +1386,22 @@ vertex/
 5. The BSA-63 package with verified legal claims — the moat
 
 *End of document.*
+
+---
+
+## Addendum (2026-07-01) — implementation deltas vs. this blueprint
+This file is the original **design blueprint**. The shipped implementation matches it, with these refinements (full detail in `context.md` Sections 11 & 12):
+- **Audit ledger:** each row now also stores a self-seal (`chain_hash`) alongside `previous_hash`, so the **last** ledger row is tamper-evident too (a forward-link-only chain leaves the tail row unprotected). `verify_chain` checks both.
+- **LLM engine:** NVIDIA Cloud (`llama-3.3-70b`, `deepseek-v4-pro`), enhancement-only — never on the linking path.
+- **Auth:** register returns 400 for validation errors / 409 only for duplicate username; token decode never escapes as a 500; passwords are bcrypt-safe past 72 bytes.
+- **DB file** is `cidecode.db` (not `vertex.db`). **Ports:** backend `:8000`, frontend `:3000` (or `:3001`). **Tests:** 48 passing.
+
+### Data-source layer — current scraper set & two infra fixes (Section 12)
+- **`resolve_tool()` (base_module):** CLI scrapers (maigret/holehe/sherlock/blackbird/ignorant) now resolve their executable via PATH + the interpreter's Scripts/bin dir. Before this they failed to launch when the venv wasn't activated — **maigret had never actually run**. Verified live: maigret 88 / sherlock 99 accounts.
+- **`truststore` (config):** outbound TLS now trusts the OS cert store, fixing `CERTIFICATE_VERIFY_FAILED` behind corporate TLS-inspection proxies (which had silently killed archive.org/reddit/breach API **and the LLM**).
+- **Signals made real:** profile-photo perceptual-hash matching (`photo_enrich`), posting-hours/frequency from Reddit timestamps, breach co-occurrence via free **XposedOrNot** (HIBP key is a dummy).
+- **New collectors:** **holehe** (email→registered services, replaces the Epieos stub), **Sherlock** (2nd username enumerator), **username-variant expansion** (`j.shankar`→variants), **Reddit app-only OAuth**.
+- **Seed→tool map (live):** username→{maigret, sherlock, blackbird, socialscan, reddit, telethon, github, serper}; email→{hibp, xposedornot, holehe, blackbird_email, github, serper}; **phone→{numverify, phoneinfoga, ignorant, plain-Serper}** (fixed: the old `site:truecaller.com` dork returned 0; HIBP/Facebook-stub removed from phone); upi→{upi parser, serper}; url→{url parser, wayback}; name→Serper dorks.
+- **Stubs / not-functional (don't present as working):** Epieos, Facebook-phone (stubs), Telethon (bot token can't resolve arbitrary users), blackbird/ignorant (not installed).
+- **Forensics layer (Sprint 3, `backend/analysis/forensics.py`):** real stylometry (char n-grams + function-word distribution), VADER sentiment/tone with a hostile-tone flag, keyword/hashtag extraction, activity-hour profile, and engagement — aggregated by `summarize(entities)` and surfaced in both the results API (`forensics` block → frontend panel) and the report (section "2B"). Discovered-URL handling was also de-bloated (Wayback-only, capped).
+- The current authoritative engineering doc is **`context.md`** (read Sections 11–13 for the latest state).

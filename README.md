@@ -15,7 +15,7 @@ Built for **CIDECODE 2026** · CCITR + CID Karnataka · PES University
 ## What it does
 
 An investigator enters **one** thing they know about a suspect — a username, email, phone
-number, UPI ID, or full name — and VERTEX:
+number, UPI ID, full name, or social-media URL — and VERTEX:
 
 1. **Collects** publicly available OSINT data for that identifier across many platforms.
 2. **Correlates** every account/trace it finds using a 12-signal engine.
@@ -39,7 +39,8 @@ rather refuse a link than over-claim one that couldn't survive in court.
 - **BSA-63 court PDF** — cover page, search manifest, findings, Annexure A (artifacts +
   SHA-256), Part A/B §63(4) certificate templates, chain-of-custody log. Hashes are
   independently verifiable.
-- **Tamper-evident audit ledger** — every step recorded in an append-only SHA-256 hash chain.
+- **Tamper-evident audit ledger** — every step recorded in an append-only SHA-256 hash chain;
+  each row is self-sealed (`chain_hash`) so even the final entry cannot be edited undetected.
 - **Fail-safe scrapers** — any failing tool returns empty; one broken source never stops a run.
 - **LLM enhancement (NVIDIA), never on the critical path** — used only to extract entities and
   phrase explanations, always with a deterministic fallback. It never decides linking.
@@ -69,22 +70,22 @@ rather refuse a link than over-claim one that couldn't survive in court.
 cp .env.example .env                 # fill SERPER_API_KEY, GITHUB_TOKEN, NVIDIA_API_KEY
 python -c "import secrets; print(secrets.token_hex(32))"   # paste into JWT_SECRET in .env
 
-# 2. Backend
+# 2. Backend  (use Python 3.10; don't reuse a venv from another machine)
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-pip install maigret                  # primary username scraper (separate install)
-python -m backend.database           # create cidecode.db (6 tables)
+pip install -r requirements.txt      # includes maigret
+pip install pytest pytest-asyncio    # test deps (NOT in requirements.txt)
+python -m backend.database           # create/upgrade cidecode.db (6 tables)
 python -m scripts.create_admin       # creates admin / vertex2026
 uvicorn backend.main:app --reload --port 8000      # API + docs at /docs
 
 # 3. Frontend
 cd frontend
-cp .env.local.example .env.local     # NEXT_PUBLIC_API_URL=http://localhost:8000
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local   # no .env.local.example exists
 npm install
-npm run dev                          # http://localhost:3000
+npm run dev                          # http://localhost:3000 (3001 if 3000 busy)
 
 # 4. Tests
-python -m pytest tests/ -q           # 44 tests
+python -m pytest tests/ -q           # 48 tests
 ```
 
 **Offline demo (no keys/network):** set `DATA_MODE=mock` in `.env`, restart the backend, then run
@@ -102,7 +103,10 @@ backend/
   database/            SQLite: 6 tables (users, cases, entities, clusters, audit_ledger, artifacts)
   auth/                JWT + bcrypt (register/login/middleware/routes)
   cases/               case CRUD + owner access control
-  ingestion/           BaseDataSource + scrapers (mock, github, serper, hibp, maigret, upi, phone)
+  ingestion/           BaseDataSource + scrapers: maigret, sherlock, github, serper, reddit,
+                       socialscan, blackbird, holehe, hibp, xposedornot, wayback, telethon,
+                       upi, phone, url, variants, photo_enrich (mock for dev)
+  analysis/            forensics.py — stylometry, sentiment/tone, keywords, activity, engagement
   correlation/         pairwise signal computation
   scoring/             clustering + tiers + red-herring rule
   llm/                 NVIDIA client with regex/template fallbacks
@@ -112,8 +116,8 @@ backend/
   main.py              FastAPI entrypoint
 frontend/              Next.js 14 + Tailwind dashboard (login, registry, 3-panel case view)
 scripts/               create_admin, seed_demo_case
-tests/                 pytest suite (44 tests)
-context.md             full engineering onboarding doc (read this to continue development)
+tests/                 pytest suite (48 tests)
+context.md             full engineering onboarding doc (read this to continue development; see §11 for the latest state)
 LEGAL_VERIFICATION.md  BSA-63 legal claims verified against primary sources
 SETUP.md               detailed run guide
 ```

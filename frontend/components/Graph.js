@@ -9,8 +9,10 @@ import Graph from "graphology";
 import Sigma from "sigma";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 
-const NODE_COLOR = { HIGH: "#D4900A", MEDIUM: "#4A7FA5", LOW: "#8A4A2E", REJECT: "#4A5568" };
-const EDGE_COLOR = { HIGH: "#D4900A", MEDIUM: "#4A7FA5", LOW: "#8A4A2E", REJECT: "#2A3148" };
+// Brightened for contrast against the near-black (#0E1117) canvas: the old LOW
+// (#8A4A2E) and UNLINKED (#4A5568) were nearly invisible, and most nodes are those.
+const NODE_COLOR = { HIGH: "#D4900A", MEDIUM: "#5B9BD5", LOW: "#E08A4A", REJECT: "#8A97AD" };
+const EDGE_COLOR = { HIGH: "#D4900A", MEDIUM: "#5B9BD5", LOW: "#E08A4A", REJECT: "#3A4358" };
 
 // entities: [{entity_id, platform, value}], clusters: [{tier, entity_ids, confidence_score}]
 export default function NetworkGraph({ entities, clusters, onSelect, onHover }) {
@@ -24,9 +26,14 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover }) 
   // rebuild only when nodes/clusters actually change, not on every poll
   const signature = useMemo(
     () =>
-      entities.map((e) => e.entity_id).join("|") +
+      (entities || []).map((e) => e.entity_id).join("|") +
       "::" +
-      clusters.map((c) => `${c.tier}:${(c.entity_ids || []).join(",")}`).join("|"),
+      // include confidence_score: node size / edge weight depend on it, so it
+      // must be part of the signature or the graph keeps stale sizes as scores
+      // firm up during polling.
+      (clusters || [])
+        .map((c) => `${c.tier}:${Math.round(c.confidence_score || 0)}:${(c.entity_ids || []).join(",")}`)
+        .join("|"),
     [entities, clusters]
   );
 
@@ -50,7 +57,7 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover }) 
         g.addNode(e.entity_id, {
           label: (e.platform || "").toUpperCase(),
           size,
-          color: NODE_COLOR[tier] || "#4A5568",
+          color: NODE_COLOR[tier] || "#8A97AD",
           x: Math.cos((i / Math.max(entities.length, 1)) * 2 * Math.PI),
           y: Math.sin((i / Math.max(entities.length, 1)) * 2 * Math.PI),
         });

@@ -18,17 +18,20 @@ import json
 import os
 
 from backend import config
-from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profile
+from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profile, resolve_tool
 
 
 class MaigretScraper(BaseDataSource):
     name = "maigret"
 
     async def _run_live(self, username: str) -> list[RawProfile]:
+        exe = resolve_tool("maigret")
+        if not exe:
+            return []  # maigret not installed
         outdir = os.path.join(config.REPORT_OUTPUT_DIR, "maigret")
         os.makedirs(outdir, exist_ok=True)
         proc = await asyncio.create_subprocess_exec(
-            "maigret", username, "--json", "simple", "--no-recursion",
+            exe, username, "--json", "simple", "--no-recursion",
             "--timeout", "10", "--no-progressbar", "--folderoutput", outdir,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
@@ -36,6 +39,7 @@ class MaigretScraper(BaseDataSource):
             await asyncio.wait_for(proc.communicate(), timeout=200)
         except asyncio.TimeoutError:
             proc.kill()
+            await proc.wait()  # reap the killed process so it isn't left as a zombie
             return self._parse(outdir, username)  # parse whatever was written
         return self._parse(outdir, username)
 

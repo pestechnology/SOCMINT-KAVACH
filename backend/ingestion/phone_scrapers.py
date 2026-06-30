@@ -16,7 +16,7 @@ import re
 
 import httpx
 
-from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profile
+from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profile, resolve_tool
 
 
 def _split_phone(number: str) -> tuple[str, str]:
@@ -34,11 +34,19 @@ class IgnorantScraper(BaseDataSource):
 
     async def _run_live(self, number: str) -> list[RawProfile]:
         cc, nat = _split_phone(number)
+        exe = resolve_tool("ignorant")
+        if not exe:
+            return []  # ignorant not installed
         proc = await asyncio.create_subprocess_exec(
-            "ignorant", cc, nat,
+            exe, cc, nat,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()  # kill + reap so a hung `ignorant` isn't orphaned
+            return []
         text = out.decode(errors="ignore")
         profiles = []
         for plat in ("instagram", "amazon", "snapchat"):

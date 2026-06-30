@@ -20,9 +20,20 @@ _ENDPOINT = "https://google.serper.dev/search"
 
 
 def _platform_from_url(url: str) -> str:
+    """Best-effort platform label from a URL host.
+
+    Use the second-level domain (the brand label), not the first sub-label —
+    otherwise country subdomains like `in.linkedin.com` / `uk.linkedin.com` get
+    mislabelled `in` / `uk` instead of `linkedin`.
+    """
     try:
-        host = urlparse(url).netloc.lower().replace("www.", "")
-        return host.split(".")[0] if host else "web"
+        host = urlparse(url).netloc.lower().split(":")[0]
+        labels = [p for p in host.split(".") if p]
+        if not labels:
+            return "web"
+        if len(labels) >= 2:
+            return labels[-2]   # x.linkedin.com -> linkedin ; instagram.com -> instagram
+        return labels[0]
     except Exception:
         return "web"
 

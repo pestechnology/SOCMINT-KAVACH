@@ -14,7 +14,7 @@ const NetworkGraph = dynamic(() => import("@/components/Graph"), { ssr: false })
 const Timeline = dynamic(() => import("@/components/Timeline"), { ssr: false });
 
 // ---------- helpers ----------
-const NODE_HEX = { HIGH: "#D4900A", MEDIUM: "#4A7FA5", LOW: "#8A4A2E", REJECT: "#4A5568" };
+const NODE_HEX = { HIGH: "#D4900A", MEDIUM: "#5B9BD5", LOW: "#E08A4A", REJECT: "#8A97AD" };
 const TIER_CLASS = { HIGH: "tier-high", MEDIUM: "tier-medium", LOW: "tier-low", REJECT: "tier-reject" };
 const TIER_SHORT = { HIGH: "HIGH", MEDIUM: "MED", LOW: "LOW", REJECT: "REJECT" };
 const FILTERS = [["ALL", "ALL"], ["HIGH", "HIGH"], ["MED", "MEDIUM"], ["LOW", "LOW"], ["REJECT", "REJECT"]];
@@ -41,7 +41,6 @@ export default function CaseView() {
   const router = useRouter();
   const { id } = useParams();
   const [data, setData] = useState(null);
-  const [tick, setTick] = useState(0);
   const [selected, setSelected] = useState(null);
   const [hovered, setHovered] = useState(null);
   const [mouse, setMouse] = useState({ x: 0, y: 0 });
@@ -55,7 +54,7 @@ export default function CaseView() {
   // ---------- POLLING (UNCHANGED) ----------
   const load = useCallback(async () => {
     try { setData(await api.getResults(id)); }
-    catch (e) { if (String(e).includes("401")) router.replace("/login"); }
+    catch (e) { if (e.status === 401) router.replace("/login"); }
   }, [id, router]);
 
   useEffect(() => {
@@ -66,7 +65,7 @@ export default function CaseView() {
   useEffect(() => {
     const status = data?.status;
     if (status === "running" || status === "pending") {
-      const t = setInterval(() => { setTick((x) => x + 1); load(); }, 1500);
+      const t = setInterval(() => { load(); }, 1500);
       return () => clearInterval(t);
     }
   }, [data?.status, load]);
@@ -114,6 +113,7 @@ export default function CaseView() {
 
   const hoveredEnt = hovered ? entById[hovered] : null;
   const hoveredInfo = hovered ? infoByEntity[hovered] : null;
+  const fx = data.forensics || {};
 
   return (
     <div className="h-screen flex flex-col bg-ink overflow-hidden">
@@ -201,7 +201,7 @@ export default function CaseView() {
             )}
           </div>
           <div className="flex border-t border-edge" style={{ gap: 16, padding: "10px 14px" }}>
-            {[["HIGH", "#D4900A"], ["MEDIUM", "#4A7FA5"], ["LOW", "#8A4A2E"], ["UNLINKED", "#4A5568"]].map(([t, c]) => (
+            {[["HIGH", "#D4900A"], ["MEDIUM", "#5B9BD5"], ["LOW", "#E08A4A"], ["UNLINKED", "#8A97AD"]].map(([t, c]) => (
               <span key={t} className="mono text-dim flex items-center" style={{ fontSize: 9, gap: 5 }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: c, display: "inline-block" }} />{t}
               </span>
@@ -245,6 +245,42 @@ export default function CaseView() {
         </div>
       </div>
 
+      {/* FORENSIC ANALYSIS */}
+      {!running && fx && (fx.tone || fx.activity) && (
+        <div className="border-t border-edge bg-surface">
+          <div className="panel-label" style={{ padding: "10px 16px" }}>LINGUISTIC &amp; BEHAVIOURAL FORENSICS</div>
+          <div className="flex flex-wrap border-t border-edge">
+            <FxCell label="TONE" flag={fx.tone?.flag_negative}
+              value={fx.tone?.samples_analyzed ? `${(fx.tone.label || "neutral").toUpperCase()} (${fx.tone.compound})` : "—"} />
+            <FxCell label="ACTIVE HOURS (UTC)"
+              value={fx.activity?.available ? (fx.activity.active_hours_utc || []).map((h) => String(h).padStart(2, "0") + ":00").join(" ") : "—"} />
+            <FxCell label="POSTS ANALYSED" value={fx.activity?.posts_analyzed || 0} />
+            <FxCell label="ENGAGEMENT" value={fx.engagement?.available ? `${fx.engagement.followers_total} followers` : "—"} />
+            <FxCell label="EXPOSURE" value={`${fx.footprint?.breach_exposures || 0} breaches · ${fx.footprint?.registered_services || 0} services`} />
+          </div>
+          {(fx.keywords?.length || fx.hashtags?.length) ? (
+            <div style={{ padding: "10px 16px" }}>
+              {fx.keywords?.length > 0 && (
+                <div className="flex flex-wrap items-center" style={{ gap: 5, marginBottom: 6 }}>
+                  <span className="mono text-dim" style={{ fontSize: 8, minWidth: 64 }}>KEYWORDS</span>
+                  {fx.keywords.map((k) => (
+                    <span key={k} className="mono text-body" style={{ fontSize: 9, background: "#2A3148", padding: "2px 7px", borderRadius: 2 }}>{k}</span>
+                  ))}
+                </div>
+              )}
+              {fx.hashtags?.length > 0 && (
+                <div className="flex flex-wrap items-center" style={{ gap: 5 }}>
+                  <span className="mono text-dim" style={{ fontSize: 8, minWidth: 64 }}>HASHTAGS</span>
+                  {fx.hashtags.map((h) => (
+                    <span key={h} className="mono tier-medium" style={{ fontSize: 9, background: "#1E2235", padding: "2px 7px", borderRadius: 2 }}>#{h}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      )}
+
       {/* TIMELINE */}
       <div className="border-t border-edge bg-surface">
         <div className="panel-label" style={{ padding: "10px 16px" }}>CROSS-PLATFORM ACTIVITY TIMELINE</div>
@@ -263,6 +299,17 @@ function Stat({ label, value, cls = "text-head" }) {
   return (
     <div style={{ padding: "8px 16px", borderRight: "1px solid #2A3148" }}>
       <div className={`mono ${cls}`} style={{ fontSize: 16, fontWeight: 500 }}>{value}</div>
+      <div className="mono text-dim" style={{ fontSize: 8, letterSpacing: "0.1em", marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+function FxCell({ label, value, flag }) {
+  return (
+    <div style={{ padding: "10px 16px", borderRight: "1px solid #2A3148", minWidth: 120 }}>
+      <div className={`mono ${flag ? "tier-error" : "text-head"}`} style={{ fontSize: 12, fontWeight: 500 }}>
+        {flag ? "⚠ " : ""}{value}
+      </div>
       <div className="mono text-dim" style={{ fontSize: 8, letterSpacing: "0.1em", marginTop: 2 }}>{label}</div>
     </div>
   );
@@ -297,7 +344,7 @@ function AccountCard({ e, info, onClick, active }) {
   const tier = info?.tier || "REJECT";
   const score = info?.score ?? 0;
   const isReject = tier === "REJECT";
-  const accent = { HIGH: "#D4900A", MEDIUM: "#4A7FA5", LOW: "#8A4A2E", REJECT: "#2A3148" }[tier];
+  const accent = { HIGH: "#D4900A", MEDIUM: "#5B9BD5", LOW: "#E08A4A", REJECT: "#3A4358" }[tier];
   const m = e.metadata || {};
   const followers = fmtFollowers(m.follower_count);
   const hours = activeHours(m.posting_hours);
@@ -346,7 +393,7 @@ function AccountCard({ e, info, onClick, active }) {
 
 function ClusterBlock({ c, entById }) {
   const tier = c.tier;
-  const accent = { HIGH: "#D4900A", MEDIUM: "#4A7FA5", LOW: "#8A4A2E", REJECT: "#4A5568" }[tier] || "#4A5568";
+  const accent = { HIGH: "#D4900A", MEDIUM: "#5B9BD5", LOW: "#E08A4A", REJECT: "#8A97AD" }[tier] || "#8A97AD";
   const cls = TIER_CLASS[tier] || "tier-reject";
   const label = { HIGH: "HIGH CONFIDENCE LINK", MEDIUM: "MEDIUM CONFIDENCE LINK", LOW: "LOW CONFIDENCE LINK", REJECT: "REJECTED" }[tier] || "LINK";
   const signals = c.signals || {};

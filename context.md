@@ -620,3 +620,238 @@ cd frontend && npm run dev
 ```
 
 **Default admin:** `admin` / `vertex2026` (change it). **Legal claims:** see `LEGAL_VERIFICATION.md`. **Original design:** `VERTEX_Master_Architecture (1).md`.
+
+---
+
+# 11. SESSION UPDATE — 2026-07-01 (environment rebuild + full code review & hardening)
+
+> Appended by Claude Opus 4.8 (1M context). Everything in Sections 1–10 still describes the
+> system accurately. This section records (a) the **current running state**, (b) **how the
+> environment was rebuilt** on this machine, (c) **every code change** made in the 2026-07-01
+> hardening pass, and (d) the **facts that now supersede** specific lines above. Where this
+> section conflicts with anything earlier, **this section is the current truth.**
+
+## 11.1 Current running state (verified)
+- **Backend:** `uvicorn backend.main:app --port 8000` → http://localhost:8000 (`/health` → `{"status":"ok","data_mode":"live"}`, docs at `/docs`).
+- **Frontend:** `npm run dev` → http://localhost:3000 (falls back to 3001 if 3000 is busy).
+- **Python venv:** `VERTEX/venv` (Python **3.10.0**). The old bundled `.venv` one level up was deleted (see 11.2).
+- **DB:** `cidecode.db` — the `audit_ledger` table now has a `chain_hash` column (migration auto-applied by `init_db()`).
+- **Tests:** `python -m pytest tests/ -q` → **48 passed** (was 44; +4 over time, +1 added this pass).
+- **`.env`:** gitignored, never committed (verified via `git ls-files` / `git log` — keys are NOT in the repo). `JWT_SECRET` rotated to a random 64-hex value.
+
+## 11.2 Environment setup — what actually had to happen on this machine
+The repo arrived pre-cloned at `vertex_Ash/ash/ash/VERTEX` (branch `ashwin`) but the **bundled virtualenv was unusable**: it had been created on a different machine (`C:\Users\LENOVO\...`, Python 3.14) and its interpreter path didn't exist here. Steps taken:
+1. Deleted the broken `ash/ash/.venv`; created a fresh venv with `C:\Python310\python.exe` at **`VERTEX/venv`** (Python 3.10 matches the project target).
+2. `pip install -r requirements.txt`, then **`pip install pytest pytest-asyncio`** — **pytest is NOT in `requirements.txt`** but the suite needs it. `maigret` installs fine from `requirements.txt` (no separate step needed here).
+3. Initialised the DB + admin (`python -m scripts.create_admin` → `admin` / `vertex2026`).
+4. Frontend: `node_modules` was present; ran `npm install` to reconcile, created **`frontend/.env.local`** (`NEXT_PUBLIC_API_URL=http://localhost:8000`) — there is **no `.env.local.example`** in the repo despite docs referencing one. `npm run build` and `npm run dev` both pass.
+
+> **Port gotcha (cost real time — document it):** `uvicorn --reload` runs as a **parent + multiprocessing child**. If the parent is hard-killed, the **child can be orphaned and keep holding the socket**, and `netstat -ano` still lists the socket under the **dead parent PID** — so `taskkill /PID <parent>` says "not found" while the port stays busy. Fix: find the live python child whose `parent_pid` is that dead PID and kill the child. To find a port owner on Windows: `netstat -ano | findstr :8000`.
+
+## 11.3 Code changes made in the 2026-07-01 hardening pass
+
+### A. Audit ledger — tail-row tamper hole CLOSED (most important)
+**Problem:** `verify_chain` sealed each row only via the *next* row's `previous_hash`. The **last** row had no successor, so its content (`input_hash`/`output_hash`/`action`/`actor`/`timestamp`) could be edited and `verify_chain` still returned `True` — a real hole in the court-evidence guarantee.
+**Fix (3 files):**
+- `backend/database/__init__.py` — added `chain_hash TEXT` to the `audit_ledger` schema **and** an idempotent migration in `init_db()` (`ALTER TABLE audit_ledger ADD COLUMN chain_hash` if absent, since `CREATE TABLE IF NOT EXISTS` never alters an existing table). Also fixed a non-ASCII em-dash in a startup `print` (cp1252 safety).
+- `backend/ledger/audit_ledger.py` — `log_action` now computes and stores each row's `chain_hash` (the self-seal). `_last_chain_value` prefers the stored `chain_hash` (falls back to recompute for pre-migration rows). `verify_chain` now checks **both** the forward link (`previous_hash` == prior row's chain value) **and** the self-seal (recomputed chain value == stored `chain_hash`) — so tampering the last row is now detected.
+- `tests/test_ledger.py` — added `test_tamper_last_row_detected` regression (edits the final row; expects the chain to break).
+
+### B. Auth correctness / hardening
+- `backend/auth/auth_routes.py` — `register` now maps **duplicate username → 409**, **validation errors (too-short username/password) → 400** (previously every `ValueError` → 409). Matches the now-passing `test_short_password_rejected` (accepts 400/409) and `test_duplicate_username_rejected` (409).
+- `backend/auth/auth_service.py` — `decode_token` broadened `except JWTError` → `except Exception` so a malformed token can never escape as a **500/stack trace** (always a clean 401). Removed the now-unused `JWTError` import. `_hash_pw`/`_check_pw` now truncate the password to **72 bytes** consistently (modern bcrypt raises on longer input → would otherwise crash register and cause inconsistent login).
+
+### C. Scraper resource leaks (fail-safe contract preserved, zombies removed)
+- `backend/ingestion/maigret_scraper.py` — added `await proc.wait()` after `proc.kill()` on timeout (reap the killed subprocess).
+- `backend/ingestion/phone_scrapers.py` — `IgnorantScraper` now wraps `asyncio.wait_for` in `try/except asyncio.TimeoutError`, does `kill()` + `await wait()` + returns `[]` (was leaking an orphaned `ignorant` process on timeout).
+
+### D. PDF generation (BSA-63)
+- `backend/report/bsa63_generator.py` — the **case-reference cover cell** now passes through `_esc(str(...))` (was the one dynamic Paragraph value not XML-escaped, and would crash on a `NULL` case_id). All other dynamic strings were already escaped.
+
+### E. main.py visibility
+- `backend/main.py` — router-load failures now `print` an ASCII warning instead of silently `pass`, so a broken `auth_routes`/`case_routes` import no longer produces a "healthy but 404 everything" app with no log line.
+
+### F. Frontend
+- `frontend/lib/api.js` — thrown errors now carry `err.status` (the HTTP status) in both `req()` and `downloadReport()`.
+- `frontend/components/Graph.js` — the rebuild **signature now includes `confidence_score`** (rounded) and has `|| []` guards. Previously node sizes/edge weights went stale during polling when a score changed but tier/membership didn't.
+- `frontend/app/cases/[id]/page.js` — removed the unused `tick` state (it forced an extra re-render every 1.5 s poll); expired-token detection now uses `e.status === 401` (was the unreliable `String(e).includes("401")`).
+- `frontend/app/cases/page.js` — same `e.status === 401` fix for the case-list refresh.
+
+### G. Setup / tooling / config
+- **Added `backend/database/__main__.py`** so the documented `python -m backend.database` works (the package had no `__main__`, so the command errored — see the corrected note in 11.4).
+- `.env` — `JWT_SECRET` rotated from the weak known string to a random 64-hex value.
+- `frontend/.env.local` — created (points the UI at `http://localhost:8000`).
+
+## 11.4 Facts that SUPERSEDE specific earlier lines
+- **§5 schema (`audit_ledger`):** the table now also has **`chain_hash TEXT`** (the per-row self-seal). The chain value is now both *recomputed* AND *stored*; `verify_chain` confirms they match.
+- **§4 / Flow A:** `POST /auth/register` returns **400** for too-short username/password and **409** only for a duplicate username (Section 1/4 said "409 for both" — that was the old behaviour).
+- **§4 `VALID_SEED_TYPES`:** the code set is `{name, email, phone, username, upi, face, url}` — i.e. it also includes **`url`** (the six-type lists above omit it). `face` still maps to `[]` (no matcher).
+- **Test count:** **48** passing (Sections 1/2/9 say 44).
+- **`python -m backend.database`:** now **works** (creates/upgrades the schema). The earlier setup blocks that show this command are now correct as written.
+- **pytest:** must be installed separately (`pip install pytest pytest-asyncio`) — it is not in `requirements.txt`.
+- **Frontend env template:** there is **no `frontend/.env.local.example`**; create `frontend/.env.local` with `NEXT_PUBLIC_API_URL` by hand (CORS already allows ports 3000 and 3001).
+
+## 11.5 End-to-end recap (one pass, current build)
+1. **Setup:** `VERTEX/venv` (py3.10) with `requirements.txt` + pytest installed; `cidecode.db` created via `python -m backend.database` (or `scripts.create_admin`); admin = `admin`/`vertex2026`; `.env` holds keys + a rotated `JWT_SECRET`; frontend `.env.local` → `:8000`.
+2. **Run:** backend `uvicorn backend.main:app --port 8000`; frontend `npm run dev` (`:3000`). `validate_keys()` warns (never crashes) on missing keys at startup.
+3. **Auth:** register/login → JWT (HS256, 8 h). Protected routes need `Authorization: Bearer <jwt>`; bad/expired/malformed → 401 (never 500).
+4. **Investigate:** `POST /cases` validates seeds, stores the case, and fires `run_investigation_sync` as a background task → orchestrator fans scrapers out in parallel (fail-safe), runs the UPI cascade + LLM entity extraction + bio-link expansion (cap 5), de-dupes, persists `entities`, then `correlate()` → `score()` (12 signals, tiers, **red-herring rule**) → persists `clusters`. Every step appends a **self-sealed** ledger row.
+5. **Stream:** the UI polls `GET /cases/{id}/results` every 1.5 s, growing the account list + sigma.js graph (now refreshing on score changes) until `complete`.
+6. **Evidence:** `GET /cases/{id}/report` builds the BSA-63 PDF (XML-escaped throughout) and `verify_chain` (now tail-safe) proves the ledger is intact. Hashes are independently recomputable.
+
+## 11.6 Keys / secrets status (current)
+- `.env` is **gitignored, untracked, and absent from git history** (verified) — the API keys are **not exposed via the GitHub repo**. They are the team's shared credentials for one project, which is normal; no rotation is required merely because they sit in a local `.env`.
+- Rotate a specific third-party key **only** if it was shared somewhere broader than the team (public chat/screenshot/public repo). `JWT_SECRET` (a local token-signing secret, not a third-party key) was rotated to a strong random value this session.
+
+## 11.7 Still open (after the hardening pass)
+- `face` seed type still has no matcher; true SSE/WebSocket streaming, rate limiting, JWT server-side revocation, and retry-with-backoff are still not implemented.
+- `reference/HANDOVER.md` describes an **older, divergent fork** (Groq LLM, `POST /investigate`, different signal weights, `reddit`/`telethon` scrapers, macOS paths). It is **superseded by this `context.md`**; do not treat it as current.
+
+---
+
+# 12. OSINT CAPABILITY EXPANSION — 2026-07-01 (Sprint 1 & 2)
+
+> Appended by Claude Opus 4.8. This section documents the OSINT collection/analysis
+> work done after the §11 hardening pass, in response to the CID requirement list
+> (cross-platform identity verification, photo matching, activity analytics, breach
+> exposure, email→services). **Audit-first principle:** before building, every existing
+> scraper was read; several "wired" scrapers were found to be **stubs or dead** and are
+> called out below so nobody mistakes them for working features.
+
+## 12.1 TWO infrastructure bugs that were silently crippling live collection
+Both made scrapers return `[]` *silently* (fail-safe contract), so the tool *looked* like it worked while collecting little. Both are FIXED:
+
+1. **Corporate-TLS failure (`backend/config.py`).** On this network (TLS-inspection proxy) httpx raised `CERTIFICATE_VERIFY_FAILED` for many hosts (archive.org, reddit, xposedornot, **and the NVIDIA LLM**) because Python's bundled certifi store didn't trust the proxy CA. Fix: `truststore.inject_into_ssl()` at config import — Python now uses the **OS certificate store** (still fully verifies). Added `truststore` to `requirements.txt`.
+2. **CLI tools not on PATH (`base_module.resolve_tool`).** When the backend is launched via `venv\Scripts\python.exe` *without activation*, the venv `Scripts/` dir isn't on PATH, so `create_subprocess_exec("maigret", ...)` failed with `FileNotFoundError` → `[]`. **This meant maigret (the username backbone), holehe, sherlock, blackbird, and ignorant had never actually executed.** Fix: a shared `resolve_tool(name)` resolves via PATH then the interpreter's `Scripts/bin` dir; every CLI scraper now resolves its exe (and returns `[]` only if genuinely not installed). **Verified live after the fix:** maigret → 88 accounts, sherlock → 99 accounts for `torvalds`.
+
+## 12.2 Sprint 1 — made three dead correlation signals REAL
+The signals existed in `correlation_engine.py` but no scraper populated their inputs:
+- **Profile-photo / face matching** — new `backend/ingestion/photo_enrich.py`: after dedup (live only), downloads each profile picture (keys: `photo_url`/`avatar`/`image`/…) and computes an `imagehash.phash`, written to `metadata["photo_phash"]`. The orchestrator calls `enrich_photos(profiles)` before correlation. The `profile_photo_phash` signal (Hamming<8) now links the **same photo reused across platforms**. *Verified:* identical image → identical hash → correlation fires the signal; different image → no match.
+- **Posting-time + frequency** — `reddit_scraper.py` now also fetches the user's recent comments and derives, from real timestamps: `posting_hours` (active-hour fingerprint = hours busier than the user's own average — feeds the `posting_hours_overlap` signal), `posting_frequency_per_day`, a 24-bucket `activity_by_hour` histogram, and `most_active_time_utc`.
+- **Breach exposure** — HIBP needs a paid key (the `.env` key is a dummy), so new `backend/ingestion/xposedornot_scraper.py` uses the **free, key-less XposedOrNot** API to populate `metadata["breaches"]` (names only — never passwords). Feeds the `breach_co_occurrence` signal and the report. *Verified:* returns hundreds of real breaches for a test address.
+
+## 12.3 Sprint 2 — new collectors + recall
+- **`holehe_scraper.py` (HoleheScraper)** — email → registered services via the `holehe` CLI (`--only-used`, ~120 sites, parses `[+] domain` lines). Replaces the dead Epieos/user-scanner stubs in the email seed map. *Verified:* 4 services for a test address. Lawful: uses password-reset/registration responses, never logs in, never sees passwords.
+- **`sherlock_scraper.py` (SherlockScraper)** — second username enumerator alongside Maigret. A site found by **both** is stronger corroboration. Wired into the `username` seed map. *Verified:* 99 accounts for `torvalds`.
+- **`variants.py` (`username_variants`)** — generates well-formed handle variants (`j.shankar` → `jshankar`/`j_shankar`/`shankarj`/`shankar.j`; `Arjun Mehta` → `arjunmehta`/`arjun.mehta`/`amehta`/…; strips trailing digits for single tokens). The orchestrator (live only, step "2.5") expands each `username` seed to ≤5 variants (global cap 8) and re-runs the **fast** enumerators (`_fast_username_tools()` = GitHub/Reddit/socialscan/blackbird — **not** Maigret/Sherlock, to bound runtime) on each; profiles are tagged `metadata["found_via_variant"]`. This is the biggest cross-platform recall booster.
+- **Reddit app-only OAuth** — `reddit_scraper.py` now uses `oauth.reddit.com` with a cached app-only token when `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` are set (config + `.env` placeholders added), avoiding the anti-bot **403s that block datacenter IPs**; falls back to the public endpoint otherwise. *Note:* on this datacenter IP the public endpoint returns 403 — set Reddit creds (free "script" app) or run from a residential/venue network for live Reddit data.
+
+## 12.4 Scraper reality table (what produces data TODAY)
+| Scraper | State |
+|---|---|
+| maigret, sherlock, holehe, socialscan | ✅ Real & resolve now (installed); maigret/sherlock/holehe verified live |
+| github, serper, wayback, xposedornot, reddit(code) | ✅ Real HTTP (truststore-fixed); reddit needs OAuth/residential IP for live |
+| photo_enrich (pHash) | ✅ Real & verified |
+| numverify, phoneinfoga | 🟡 numverify keyed; phoneinfoga needs a local server |
+| hibp | 🟡 Real code, dummy key → use XposedOrNot or add a paid key |
+| blackbird, ignorant | 🟡 Real wrappers, **not installed** (separate git/pip) → fail-safe `[]` |
+| **epieos, facebook_phone** | ❌ **STUBS** (always `[]`); telethon uses a bot token and can't resolve arbitrary users — treat as non-functional. epieos/user_scanner were removed from the active seed map. |
+
+## 12.5 Capabilities vs. the CID wishlist — honest status
+- ✅ **Real & defensible / built:** cross-platform username verification (Maigret+Sherlock+variants), email→services (holehe), breach exposure (XposedOrNot), profile-photo/face matching (pHash), posting-time/frequency (Reddit), archived/deleted public content (Wayback), GitHub/Reddit profile data, bio-link expansion, basic stylometry (bio TF-IDF — upgrade pending).
+- ⏳ **Planned (Sprint 3):** real stylometry (char n-grams/function words across all collected text), sentiment/keyword analysis, engagement metrics, and a "leads vs. evidence" split in the UI/PDF. Sourcing stance chosen by the user: **include ToS-gray sources as clearly-labelled non-evidentiary leads** (e.g. Instagram/Telegram public data) — must be visually separated from evidence in the UI/PDF.
+- ❌ **Not built — deliberately (myth / inadmissible), do not promise:** Telegram "IP from phone/username" (impossible), password harvesting from breaches (illegal to use, inadmissible — we return breach *names* only), viewing private stories / fetching private deleted posts (auth circumvention → inadmissible; Wayback is the lawful substitute), WhatsApp DP harvesting (privacy-gated/ToS), Truecaller/Eyecon scraping (no API, poor provenance — carrier/HLR via NumVerify/PhoneInfoga is the defensible version). Refusing these is a courtroom strength, not a gap.
+
+## 12.6 New dependencies & env
+- `requirements.txt`: `truststore`, `holehe`, `sherlock-project` added (pulls pandas/openpyxl/trio).
+- `.env`: `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` (optional; for reliable Reddit).
+- Tests: `conftest.py` now forces the LLM into its fallback (offline/deterministic) — without this, truststore lets the orchestrator tests make real NVIDIA calls (slow/flaky). Still **48 passing**.
+
+## 12.7 UI legibility + reading the dashboard correctly
+- **Graph/tier colour contrast fixed.** On the near-black canvas (`#0E1117`) the old LOW (`#8A4A2E`, muddy brown) and UNLINKED/REJECT (`#4A5568`, dark slate) tiers were nearly invisible — and most nodes are those tiers. Brightened, consistently, in **all** definition sites: `globals.css` (`.tier-*`), `components/Graph.js` (`NODE_COLOR`/`EDGE_COLOR`), `components/Timeline.js` (`TIER_BG`), `app/cases/[id]/page.js` (`NODE_HEX`, AccountCard/ClusterBlock accents, graph legend), and `tailwind.config.js` (`steel`, `rust` tokens). New palette: HIGH `#D4900A` (unchanged brand amber), MEDIUM `#5B9BD5`, LOW `#E08A4A`, UNLINKED/REJECT `#8A97AD`.
+- **Why a bare username often shows "0 clusters / all LOW-unlinked" (this is correct, not a bug):** for a username-only seed the engine finds many same-string accounts across platforms, but with **no shared phone/email/photo/activity** between them the **red-herring rule** refuses to merge them — they remain LOW singletons. Multi-account HIGH clusters appear when corroborating signals exist (same registered phone/email/UPI, identical profile photo via the new pHash, overlapping posting hours, shared breaches). Demo with a seed that produces those signals to show HIGH links.
+- **Status confirmed (2026-07-01):** running server reflects current code; full endpoint sweep passes (auth/cases/access-control/report — 19/19); `compileall` + import-all (35 modules) clean; report endpoint returns a valid `application/pdf`.
+
+## 12.8 Phone-seed path fixed
+The phone seed was effectively empty. Root cause: its only web query was the dork `site:truecaller.com "{q}"`, which returns **0** results (Truecaller `noindex`s profiles), and HIBP (email-only) + the Facebook-phone stub contributed nothing. NumVerify worked but is just one carrier/line-type record.
+**Fix (orchestrator `_seed_tool_map`):** `phone → [NumVerifyScraper(), PhoneInfogaScraper(), IgnorantScraper(), SerperScraper('"{q}"')]`. The **plain Serper search** surfaces real web mentions (Truecaller/Facebook/Instagram/Scribd hits), and NumVerify supplies carrier/line-type/country. HIBP and the Facebook stub were removed from the phone path. *Verified live:* ~11 results per number for both a US and an Indian test number. PhoneInfoga/ignorant remain (fail-safe) for when a local PhoneInfoga server / the `ignorant` CLI is present.
+
+## 12.9 Audit of the remaining paths (2026-07-01) — issues found & fixed
+A full sweep of the other seed paths (email/name/upi/url) + the remaining scrapers + report/correlation/scoring. **Every seed type now produces output** (email→~20, name→~30, upi→3 w/ cascade, url→3). Fixes applied:
+- **socialscan was permanently dead** — it shelled out with a `--json` flag that doesn't exist in socialscan 1.4.2 (empty stdout → `[]`). Rewritten to use the **async Python API** (`await execute_queries([username])`), keeping platforms where `available is False and valid and success`. *Verified:* 4 taken platforms for `torvalds`.
+- **url_scraper extracted bogus handles** → false cascade seeds & correlations (`youtube.com/watch?v=…`→`watch`, `instagram.com/p/<id>`→`p`). Fixed: YouTube regex restricted to `@`/`c/`/`user/`; reserved-segment denylist; query/fragment stripped; last-segment fallback only fires for unknown hosts (a known-platform URL with no profile handle is recorded as a URL reference with no cascade).
+- **Serper platform mislabel** — `in.linkedin.com`/`uk.linkedin.com` were labelled `in`/`uk`. `_platform_from_url` now uses the second-level domain (`linkedin`).
+- **breach_co_occurrence too noisy** (false-link risk) — a single shared mega-breach (Collection #1/LinkedIn/Adobe…) fired the signal. Now fires only on a rare shared breach or ≥2 shared (`_MEGA_BREACHES` denylist).
+- **correlation type-robustness** — `_norm`/`_phone` now `str()`-coerce so a scraper emitting a list/int can't abort the pipeline.
+- **report PDF crash-safety** — `action`/`actor`/`artifact_type`/filename/`tier` now `_esc()`'d; `search_id`/`*_hash` subscripts NULL-guarded; non-dict seed no longer aborts the cover.
+
+## 12.10 Report now renders the full digital footprint (gap closed)
+Added section **"2A. Digital Footprint & Exposure"** to `bsa63_generator.py` (after Findings Summary). It parses each entity's `metadata_json` and renders four `_esc()`/`_redact()`-safe tables:
+- **Discovered accounts** — platform, account, name, activity (most-active-hour + posts/day); capped at 40 with total noted.
+- **Service registrations** — per email, the services it's registered on (holehe).
+- **Data-breach exposure** — identifier, breach count, sample breach names (names only; no credentials).
+- **Phone intelligence** — carrier / country / line type (NumVerify).
+
+*Verified live:* an email+phone case produced a **39 KB** PDF (was ~13 KB) with all four tables populated (lastpass/office365 registrations, breach list, carrier data); 48 tests still pass. Remaining Sprint-3 item: an explicit "leads vs. evidence" visual split + real stylometry/sentiment.
+
+> ⚠️ Editing note: `context.md` was once reverted mid-session because it was open & re-saved in the IDE. If you keep it open, close/refresh it before I edit, or my appended sections may be overwritten.
+
+---
+
+# 13. SPRINT 3 — Forensics layer (2026-07-01)
+
+> NOTE: this section was lost once to an IDE re-save and re-added. If it's missing, the
+> forensics layer below is still in the code; this is just its documentation.
+
+## 13.1 Entity-bloat fix
+A username seed produced ~380 entities, ~170 of them redundant `url` type (the URL parser was re-run on every discovered account URL). Discovered URLs now get a **Wayback archive check only, capped at 20**; the URL parser runs only on user-entered `url` seeds. `torvalds`+email dropped 379 → **196 entities** with no junk nodes.
+
+## 13.2 `backend/analysis/forensics.py` (NEW package + module)
+- **`stylometry_similarity(a, b)`** — character n-gram cosine + function-word frequency cosine (authorship style, not topic). Replaces the old 2-bio word-TF-IDF. Identical text → 1.0, unrelated → ~0.007.
+- **`summarize(entities)`** — case-level forensic block: VADER **sentiment/tone** (+`flag_negative` for hostile tone), **keywords + hashtags**, **activity-hour profile** (merged `posting_hours`), **engagement** (followers), **footprint** (platforms / breach exposures / registered services).
+- `reddit_scraper` now stores sampled comment bodies as `metadata["text_sample"]` to feed stylometry + sentiment. New dep: `vaderSentiment`.
+
+## 13.3 Surfaced in 3 places
+- **Results API:** `get_results` now returns a **`forensics`** field (see §14 correction of §4).
+- **Frontend:** "LINGUISTIC & BEHAVIOURAL FORENSICS" panel on the case page (above the timeline).
+- **Report:** new **"2B. Linguistic & Behavioural Forensics"** section (`bsa63_generator`), `_esc`-safe.
+
+## 13.4 UI contrast round 2
+Muted text token `dim` `#4A5568` → `#8693A8`; `.panel-label` → `#8693A8`; `.hash-val` → `#707E96`. (Tier node colours were brightened in §12.7: HIGH `#D4900A`, MEDIUM `#5B9BD5`, LOW `#E08A4A`, UNLINKED `#8A97AD`.)
+
+---
+
+# 14. AUTHORITATIVE CORRECTIONS TO §1–10 (read these over the body)
+
+The body (§1–10) is the original snapshot. Where it conflicts with the list below, **this section is correct** (verified against the code 2026-07-01).
+
+## 14.1 Correlation signal weights — §6 line ~407 is WRONG. Actual `SIGNAL_WEIGHTS` (15 signals):
+```
+exact_phone_match      = 60      exact_email_match      = 60      exact_upi_match       = 60
+username_exact_match   = 45      username_substring_match = 20    username_fuzzy_match  = 15
+exact_name_match       = 35      fuzzy_name_match       = 20      location_overlap      = 15
+profile_photo_phash    = 35      posting_hours_overlap  = 15      stylometry_cosine     = 20
+breach_co_occurrence   = 18      bio_keyword_overlap    = 12      reciprocal_mention    = 15
+```
+(The §6 numbers — phone=40, email=35, etc. — and the omission of `exact_name_match`/`fuzzy_name_match`/`location_overlap` are stale.)
+
+## 14.2 Other §6 / §7 corrections
+- **Stylometry** is now char n-grams + function-word distribution (`forensics.stylometry_similarity`), fired at **> 0.6** over each profile's `bio + text_sample` (length gate 25 chars). NOT "TF-IDF > 0.75 / bios > 15".
+- **`username_fuzzy_match`** fires on **thefuzz ratio ≥ 80** (difflib percent fallback), not "Levenshtein < 3".
+- **`reciprocal_mention` (15) is defined but NEVER fires** — no scraper supplies mention-graph data. Treat as inactive.
+- **`breach_co_occurrence`** no longer fires on a single shared mega-breach (rare-or-≥2 rule; see §12.9).
+
+## 14.3 `/cases/{id}/results` response — §4 (line ~274) and Flow F omit a field. Actual:
+```
+{ "case": {...}, "entities": [...], "clusters": [...], "forensics": {...}, "status": str }
+```
+
+## 14.4 BSA-63 PDF sections — Flow G (§3) is missing two. Actual order:
+Cover → 1. Search Manifest → 2. Findings Summary → **2A. Digital Footprint & Exposure** → **2B. Linguistic & Behavioural Forensics** → Annexure A → Certificate Part A → Part B → 3. Chain of Custody → Document Integrity Statement.
+
+## 14.5 File map (§2) — current ingestion + analysis modules
+`backend/ingestion/` actually contains: base_module, mock_scraper, github_scraper, serper_scraper, hibp_scraper, **xposedornot_scraper**, **holehe_scraper**, maigret_scraper, **sherlock_scraper**, **socialscan_scraper**, **blackbird_scraper**, **reddit_scraper**, **telethon_scraper**, **wayback_scraper**, **url_scraper**, **variants.py**, **photo_enrich.py**, upi_module, phone_scrapers, plus three **dead/unwired files still on disk**: `epieos_scraper.py`, `facebook_scraper.py`, `user_scanner_scraper.py` (stubs/bot-token — not in the seed map). New package **`backend/analysis/`** → `forensics.py`.
+
+## 14.6 Current live seed → tool map (`orchestrator._seed_tool_map`)
+```
+email    : HIBP, XposedOrNot, Holehe, BlackbirdEmail, GitHub, Serper('"{q}"')
+phone    : NumVerify, PhoneInfoga, Ignorant, Serper('"{q}"')
+username : Maigret, Sherlock, BlackbirdUsername, Socialscan, Reddit, Telethon, GitHub, Serper('"{q}"')
+upi      : UPI parser, Serper('"{q}"')
+name     : Serper(site:linkedin.com/in), Serper(site:instagram.com), Serper(site:twitter.com)
+url      : URLScraper, Wayback
+face     : []   (no matcher runs; pHash matches photos discovered via other seeds)
+```
+Pipeline order: per-seed fan-out → **variant expansion** (live; fast tools = GitHub/Reddit/socialscan/blackbird; ≤8 variants) → derived-seed cascade → **archive check** (Wayback, ≤20 URLs) → LLM entity-extraction (≤10 blobs) + bio-link expansion (≤5) → dedup → **photo pHash enrichment** (live) → persist → correlate → score → forensics.
+
+## 14.7 Test count: **48** (not 44). pytest/pytest-asyncio install separately (not in requirements.txt).

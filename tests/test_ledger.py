@@ -36,6 +36,25 @@ def test_tamper_detected():
     assert "broken" in detail.lower()
 
 
+def test_tamper_last_row_detected():
+    """REGRESSION: editing the FINAL row must also break the chain.
+
+    The last row has no successor whose previous_hash would catch a change, so
+    each row also stores a self-seal (chain_hash). Tampering the tail must fail.
+    """
+    cid = _fresh_case()
+    log_action(cid, "a", {"x": 1}, None, "s")
+    log_action(cid, "b", {"x": 2}, None, "s")
+    log_action(cid, "c_last", {"x": 3}, None, "s")
+    assert verify_chain(cid)[0] is True
+    conn = get_db()
+    conn.execute("UPDATE audit_ledger SET output_hash='TAMPERED' WHERE case_id=? AND action='c_last'", (cid,))
+    conn.commit(); conn.close()
+    ok, detail = verify_chain(cid)
+    assert ok is False
+    assert "broken" in detail.lower()
+
+
 def test_artifact_hash_matches_file():
     cid = _fresh_case()
     art = save_artifact(cid, None, "json_dump", '{"k":"v"}', suffix=".json")

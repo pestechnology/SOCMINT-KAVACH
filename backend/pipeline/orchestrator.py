@@ -40,9 +40,11 @@ from backend.ingestion.socialscan_scraper import SocialscanScraper
 from backend.ingestion.wayback_scraper import WaybackScraper
 from backend.ingestion.reddit_scraper import RedditScraper
 from backend.ingestion.telethon_scraper import TelethonScraper
-from backend.ingestion.user_scanner_scraper import UserScannerScraper
-from backend.ingestion.epieos_scraper import EpieosScraper
-from backend.ingestion.facebook_scraper import FacebookPhoneChecker
+from backend.ingestion.xposedornot_scraper import XposedOrNotScraper
+from backend.ingestion.holehe_scraper import HoleheScraper
+from backend.ingestion.sherlock_scraper import SherlockScraper
+from backend.ingestion.variants import username_variants
+from backend.ingestion.photo_enrich import enrich_photos
 from backend.ledger.audit_ledger import log_action, save_artifact
 from backend.llm.llm_client import LLMClient
 from backend.scoring.scoring_engine import score
@@ -50,9 +52,14 @@ from backend.scoring.scoring_engine import score
 # Seed type -> scraper instances (Section 11.1). SerperScraper templates vary per seed.
 def _seed_tool_map() -> dict:
     live = {
-        "email":    [HIBPScraper(), BlackbirdEmailScraper(), UserScannerScraper(), EpieosScraper(), GitHubScraper(), SerperScraper('"{q}"')],
-        "phone":    [HIBPScraper(), PhoneInfogaScraper(), NumVerifyScraper(), IgnorantScraper(), EpieosScraper(), FacebookPhoneChecker(), SerperScraper('site:truecaller.com "{q}"')],
-        "username": [MaigretScraper(), BlackbirdUsernameScraper(), SocialscanScraper(), RedditScraper(), TelethonScraper(), GitHubScraper(), SerperScraper('"{q}"')],
+        "email":    [HIBPScraper(), XposedOrNotScraper(), HoleheScraper(), BlackbirdEmailScraper(), GitHubScraper(), SerperScraper('"{q}"')],
+        # NumVerify (carrier/line-type/country) works with the configured key; a PLAIN
+        # Serper search returns real web mentions, whereas the old site:truecaller.com
+        # dork returned nothing (Truecaller blocks indexing). PhoneInfoga/ignorant stay
+        # (fail-safe if their server/CLI is absent); HIBP is email-only and the Facebook
+        # checker is a stub, so both are dropped from the phone path.
+        "phone":    [NumVerifyScraper(), PhoneInfogaScraper(), IgnorantScraper(), SerperScraper('"{q}"')],
+        "username": [MaigretScraper(), SherlockScraper(), BlackbirdUsernameScraper(), SocialscanScraper(), RedditScraper(), TelethonScraper(), GitHubScraper(), SerperScraper('"{q}"')],
         "upi":      [UPIScraper(), SerperScraper('"{q}"')],
         "name":     [SerperScraper('site:linkedin.com/in "{q}"'),
                      SerperScraper('site:instagram.com "{q}"'),
@@ -67,6 +74,13 @@ def _seed_tool_map() -> dict:
         for k in live:
             live[k] = [mock] + ([UPIScraper()] if k == "upi" else []) + ([URLScraper()] if k == "url" else [])
     return live
+
+
+def _fast_username_tools() -> list:
+    """Lightweight username enumerators for variant expansion — excludes the slow
+    full-scan tools (Maigret, Sherlock) so checking N handle variants stays bounded."""
+    return [GitHubScraper(), RedditScraper(), SocialscanScraper(),
+            BlackbirdUsernameScraper()]
 
 
 def _now() -> str:
@@ -150,29 +164,69 @@ async def run_investigation(case_id: str) -> dict:
                    {"value": seed.get("value")}, {"found": len(ps)}, "system")
         all_profiles.extend(ps)
 
+    # 2.5: username-variant expansion (live only). The same person uses different
+    # handles across platforms (j.shankar / jshankar / shankarj); generate variants
+    # of each username seed and re-run the FAST enumerators on them to widen recall.
+    if config.DATA_MODE == "live":
+        searched = {(s.get("type"), str(s.get("value")).lower()) for s in seeds}
+        variant_set: list[str] = []
+        for s in seeds:
+            if s.get("type") != "username" or not s.get("value"):
+                continue
+            for v in username_variants(s["value"], max_n=5):
+                if ("username", v.lower()) not in searched and v not in variant_set:
+                    variant_set.append(v)
+        variant_set = variant_set[:8]  # global cap so expansion can't explode
+        if variant_set:
+            fast_tools = _fast_username_tools()
+
+            async def _scrape_variant(v: str) -> list[RawProfile]:
+                res = await asyncio.gather(*[t.resolve(v, "live") for t in fast_tools],
+                                           return_exceptions=True)
+                out: list[RawProfile] = []
+                for r in res:
+                    if isinstance(r, list):
+                        for p in r:
+                            p.metadata["found_via_variant"] = v
+                            out.append(p)
+                return out
+
+            var_results = await asyncio.gather(
+                *[_scrape_variant(v) for v in variant_set], return_exceptions=True)
+            found = 0
+            for r in var_results:
+                if isinstance(r, list):
+                    all_profiles.extend(r)
+                    found += len(r)
+            log_action(case_id, "variant_expansion",
+                       {"variants": variant_set}, {"found": found}, "system")
+
     # 3: one-level cascade for derived seeds (e.g. UPI -> username/phone)
-    # plus trigger URL scrapers on every discovered profile URL
     derived = [p for p in all_profiles if p.platform == "derived"
                and p.metadata.get("cascade")]
-    # Extract URLs for wayback machine checking
-    urls = {p.source_url for p in all_profiles if p.source_url and p.source_url.startswith("http")}
-    
     for d in derived:
         ps = await _scrape_seed(d.type, d.value, tool_map)
         log_action(case_id, f"cascade:{d.type}", {"value": d.value}, {"found": len(ps)}, "system")
         all_profiles.extend(ps)
-        
-    # Run URL cascade in parallel to avoid 100s delays on large profiles
-    async def _process_url(url):
-        res = await _scrape_seed("url", url, tool_map)
-        log_action(case_id, "cascade:url", {"value": url}, {"found": len(res)}, "system")
-        return res
-        
+
+    # Archive check on discovered profile URLs (Wayback ONLY). We deliberately do
+    # NOT re-run the URL parser on every discovered URL: it just re-extracts the
+    # same handle we already have, flooding the case with redundant url/derived
+    # entities. Capped so a 150-account run doesn't fire 150 archive.org calls.
+    wb = WaybackScraper()
+    seen_account_urls = {p.source_url for p in all_profiles
+                         if p.source_url and p.source_url.startswith("http")}
+    urls = list(seen_account_urls)[:20]
     if urls:
-        url_results = await asyncio.gather(*[_process_url(u) for u in urls], return_exceptions=True)
-        for res in url_results:
+        async def _archive(url):
+            return await wb.resolve(url, config.DATA_MODE)
+        arch_results = await asyncio.gather(*[_archive(u) for u in urls], return_exceptions=True)
+        found = 0
+        for res in arch_results:
             if isinstance(res, list):
                 all_profiles.extend(res)
+                found += len(res)
+        log_action(case_id, "archive_check", {"urls": len(urls)}, {"found": found}, "system")
 
     # 4: LLM entity-extraction over free-text blobs -> extra username/email seeds
     llm = LLMClient()
@@ -232,8 +286,17 @@ async def run_investigation(case_id: str) -> dict:
             if isinstance(res, list):
                 all_profiles.extend(res)
 
-    # 5: dedup + persist entities (streaming write)
+    # 5: dedup, then enrich profile photos with a perceptual hash so the
+    # profile_photo_phash signal can match the SAME face/photo across platforms
+    # (live only — mock fixtures supply their own data and use unreachable URLs).
     profiles = _dedup(all_profiles)
+    if config.DATA_MODE == "live":
+        try:
+            hashed = await enrich_photos(profiles)
+            log_action(case_id, "photo_enrichment", {"candidates": len(profiles)},
+                       {"photos_hashed": hashed}, "system")
+        except Exception:  # fail-safe: photo hashing must never stop a run
+            pass
     idx_to_eid: dict[int, str] = {}
     conn = get_db()
     try:

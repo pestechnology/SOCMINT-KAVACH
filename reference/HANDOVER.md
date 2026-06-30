@@ -1,6 +1,13 @@
 # VERTEX - Comprehensive Technical Handover Document
 
-This document contains **every technical detail** required for an LLM agent or Human Engineer to take over the `VERTEX` codebase. Do not assume context; rely on this document as the absolute ground truth for the current state of the architecture, data flows, and mathematical algorithms.
+> ⚠️ **SUPERSEDED — DO NOT USE AS GROUND TRUTH (as of 2026-07-01).**
+> This document describes an **older, divergent fork** of VERTEX and conflicts with the current
+> codebase in major ways: it references **Groq/Llama-3** (current is **NVIDIA Cloud**), a
+> **`POST /investigate`** endpoint (current API is `/auth/*` and `/cases/*`), **different signal
+> weights** (60/45/35 vs. the current set in `correlation_engine.py`), `reddit`/`telethon` scrapers,
+> macOS-specific paths (`/Users/ashwinharish/...`), and an emergency `vismay_v2` branch protocol.
+> **The current, authoritative source is [`../context.md`](../context.md) — read it (especially
+> Section 11) instead.** The notes below are retained only for historical reference.
 
 ---
 

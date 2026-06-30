@@ -1,64 +1,59 @@
 """
 backend/ingestion/socialscan_scraper.py — high-confidence username availability check.
 
-socialscan checks 11 major platforms (Instagram, Twitter, GitHub, Tumblr, etc.)
-with high accuracy by mimicking real registration flows. Unlike maigret which
-checks 300+ sites but gets false positives, socialscan's results are highly
-reliable for the platforms it covers.
+socialscan checks ~10 major platforms (Instagram, Twitter, GitHub, GitLab, Tumblr,
+Lastfm, Reddit, Snapchat, Yahoo, Pinterest) by mimicking real registration flows.
+Where Maigret/Sherlock guess from HTTP status, socialscan is high-confidence for the
+platforms it covers, so it corroborates the enumerators.
 
-Returns one RawProfile per platform where the username IS TAKEN (exists).
-Returns [] if socialscan isn't installed or anything fails.
+Uses the socialscan **async Python API** (`execute_queries`) — the 1.4.2 CLI has no
+machine-readable output, so the old `--json` subprocess approach always returned [].
+A platform is TAKEN (account exists) when available is False AND the check succeeded
+(valid + success). Fail-safe: [] if socialscan is missing or anything errors.
 """
 from __future__ import annotations
 
-import asyncio
-import json
-
 from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profile
+
+# Public profile URL templates for the platforms socialscan covers.
+_URL = {
+    "instagram": "https://instagram.com/{u}",
+    "twitter": "https://twitter.com/{u}",
+    "github": "https://github.com/{u}",
+    "gitlab": "https://gitlab.com/{u}",
+    "tumblr": "https://{u}.tumblr.com",
+    "lastfm": "https://last.fm/user/{u}",
+    "reddit": "https://reddit.com/user/{u}",
+    "pinterest": "https://pinterest.com/{u}",
+}
 
 
 class SocialscanScraper(BaseDataSource):
     name = "socialscan"
 
     async def _run_live(self, username: str) -> list[RawProfile]:
-        proc = await asyncio.create_subprocess_exec(
-            "socialscan", username, "--json",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
-        except asyncio.TimeoutError:
-            proc.kill()
+        if not username:
             return []
-
-        text = stdout.decode(errors="ignore").strip()
-        profiles: list[RawProfile] = []
-
-        # socialscan JSON output is an array of objects
         try:
-            # The output may have non-JSON lines before the actual JSON
-            start = text.find("[")
-            if start < 0:
-                return []
-            data = json.loads(text[start:])
+            from socialscan.util import execute_queries
+        except Exception:
+            return []  # socialscan not installed
+        try:
+            results = await execute_queries([username])
         except Exception:
             return []
 
-        for entry in data:
-            if not isinstance(entry, dict):
-                continue
-            # socialscan reports "available" (username free) or "taken" (exists)
-            if not entry.get("taken", False):
-                continue
-            platform = (entry.get("platform") or entry.get("site") or "unknown").lower()
-            url = entry.get("url") or ""
-            profiles.append(make_profile(
-                "social_account", username, platform, url,
-                metadata={
-                    "source": "socialscan",
-                    "verified_taken": True,
-                    "high_confidence": True,
-                },
-            ))
-
+        profiles: list[RawProfile] = []
+        for r in results:
+            # available is False => the handle is taken (account exists);
+            # require a conclusive check (valid + success) to avoid false positives.
+            if getattr(r, "available", True) is False and getattr(r, "valid", False) \
+                    and getattr(r, "success", False):
+                platform = r.platform.name.lower()
+                url = _URL.get(platform, "").format(u=username)
+                profiles.append(make_profile(
+                    "social_account", username, platform, url,
+                    metadata={"source": "socialscan", "verified_taken": True,
+                              "high_confidence": True},
+                ))
         return profiles

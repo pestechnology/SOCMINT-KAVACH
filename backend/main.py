@@ -49,11 +49,11 @@ def health() -> dict:
 try:
     from backend.auth.auth_routes import router as auth_router
     app.include_router(auth_router)
-except Exception:
-    pass
+except Exception as e:  # ASCII only — Windows console is cp1252
+    print(f"[main] WARNING: auth routes failed to load: {e}")
 
 try:
     from backend.cases.case_routes import router as case_router
     app.include_router(case_router)
-except Exception:
-    pass
+except Exception as e:
+    print(f"[main] WARNING: case routes failed to load: {e}")

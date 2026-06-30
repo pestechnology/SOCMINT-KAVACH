@@ -22,7 +22,10 @@ def register(body: Credentials):
     try:
         user_id = register_user(body.username, body.password)
     except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        # Duplicate username is a genuine conflict (409); a too-short
+        # username/password is a client validation error (400).
+        status = 409 if "exists" in str(e).lower() else 400
+        raise HTTPException(status_code=status, detail=str(e))
     return {"user_id": user_id, "token": create_token(user_id)}
 
 

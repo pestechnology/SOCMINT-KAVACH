@@ -9,7 +9,7 @@ import { Timeline as VisTimeline } from "vis-timeline/standalone";
 import { DataSet } from "vis-data";
 import "vis-timeline/styles/vis-timeline-graph2d.css";
 
-const TIER_BG = { HIGH: "#D4900A", MEDIUM: "#4A7FA5", LOW: "#8A4A2E", REJECT: "#4A5568" };
+const TIER_BG = { HIGH: "#D4900A", MEDIUM: "#5B9BD5", LOW: "#E08A4A", REJECT: "#8A97AD" };
 
 export default function Timeline({ entities, clusters }) {
   const ref = useRef(null);

@@ -16,7 +16,7 @@ import os
 import tempfile
 
 from backend import config
-from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profile
+from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profile, resolve_tool
 
 
 class BlackbirdUsernameScraper(BaseDataSource):
@@ -35,11 +35,14 @@ class BlackbirdEmailScraper(BaseDataSource):
 
 async def _run_blackbird(flag: str, value: str) -> list[RawProfile]:
     """Run blackbird CLI and parse JSON results."""
+    exe = resolve_tool("blackbird")
+    if not exe:
+        return []  # blackbird not installed
     outdir = os.path.join(config.REPORT_OUTPUT_DIR, "blackbird")
     os.makedirs(outdir, exist_ok=True)
 
     proc = await asyncio.create_subprocess_exec(
-        "blackbird", flag, value, "--json",
+        exe, flag, value, "--json",
         "--no-nsfw",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         cwd=outdir,
@@ -48,6 +51,7 @@ async def _run_blackbird(flag: str, value: str) -> list[RawProfile]:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
     except asyncio.TimeoutError:
         proc.kill()
+        await proc.wait()
         return []
 
     # blackbird outputs JSON to stdout
