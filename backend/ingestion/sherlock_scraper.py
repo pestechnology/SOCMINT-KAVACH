@@ -2,11 +2,15 @@
 backend/ingestion/sherlock_scraper.py — username -> accounts (Sherlock).
 
 Sherlock (sherlock-project) is a second, independent username enumerator alongside
-Maigret. Running two enumerators gives corroboration: a site found by BOTH is a
-stronger signal than one found by a single tool. Sherlock only reports accounts it
+Maigret.  Running two enumerators gives corroboration: a site found by BOTH is a
+stronger signal than one found by a single tool.  Sherlock only reports accounts it
 finds (`--print-found`).
 
-Parses `[+] Site: url` lines. Fail-safe: [] if sherlock isn't installed/errors/times out.
+FALSE-POSITIVE FILTER: same control-probe strategy as maigret_scraper.py.
+Runs a random control username in parallel; any site that fires for the control
+is excluded from the real results.  See fp_filter.py.
+
+Parses `[+] Site: url` lines.  Fail-safe: [] if sherlock isn't installed/errors.
 """
 from __future__ import annotations
 
@@ -15,6 +19,7 @@ import re
 from urllib.parse import urlparse
 
 from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profile, resolve_tool
+from backend.ingestion.fp_filter import filter_with_control
 
 _FOUND_RE = re.compile(r"^\[\+\]\s+(.+?):\s+(https?://\S+)\s*$", re.MULTILINE)
 
@@ -27,13 +32,16 @@ def _platform_from(site: str, url: str) -> str:
 
 class SherlockScraper(BaseDataSource):
     name = "sherlock"
+    # Set by _run_live after each run; read by orchestrator to log to audit ledger.
+    last_fp_info: dict | None = None
 
-    async def _run_live(self, username: str) -> list[RawProfile]:
+    async def _run_for_username(self, username: str) -> list[RawProfile]:
+        """Run sherlock for one username and return raw (unfiltered) profiles."""
         if not username:
             return []
         exe = resolve_tool("sherlock")
         if not exe:
-            return []  # sherlock not installed
+            return []
         proc = await asyncio.create_subprocess_exec(
             exe, username, "--print-found", "--no-color", "--timeout", "5",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -59,3 +67,10 @@ class SherlockScraper(BaseDataSource):
                 metadata={"site_name": site.strip(), "source": "sherlock"},
             ))
         return profiles
+
+    async def _run_live(self, username: str) -> list[RawProfile]:
+        filtered, fp_info = await filter_with_control(
+            "sherlock", username, self._run_for_username,
+        )
+        self.last_fp_info = fp_info
+        return filtered

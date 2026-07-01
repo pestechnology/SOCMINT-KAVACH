@@ -38,26 +38,36 @@ rm -f *.db *.db-wal *.db-shm *.session *.session-journal
 
 ---
 
-## 1. Backend — recreate the virtualenv (Python 3.10)
-Use **Python 3.10** (the project's target). Do NOT reuse the zipped venv.
+## 1. Backend — recreate the virtualenv (Python 3.10+)
+
+Python 3.10 or later works (tested on 3.10 and 3.13). Do NOT reuse the zipped venv.
 
 ```bash
 # Windows:
-py -3.10 -m venv venv
+py -3.10 -m venv venv          # or: python -m venv venv  (if 3.10+ is the default)
 venv\Scripts\activate
 # macOS / Linux:
-python3.10 -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 
 pip install --upgrade pip
-pip install -r requirements.txt        # includes maigret, sherlock-project, holehe, truststore, vaderSentiment
+pip install -r requirements.txt        # includes maigret, sherlock-project, holehe, socialscan, truststore, vaderSentiment
 pip install pytest pytest-asyncio      # test deps (NOT in requirements.txt)
+
+# ignorant (phone registration checker — pip-packaged):
+pip install ignorant
+
+# Blackbird (username/email enumerator — must be cloned, NOT pip-packaged):
+git clone https://github.com/p1ngul1n0/blackbird C:\path\to\blackbird
+pip install -r C:\path\to\blackbird\requirements.txt
+# Add to .env:  BLACKBIRD_PATH=C:\path\to\blackbird
+# resolve_tool() finds venv/Scripts/blackbird.bat automatically; the scraper creates it.
 ```
 
-`requirements.txt` already pulls the OSINT tools that matter (maigret, sherlock, holehe,
-socialscan, waybackpy, telethon). **Optional, separate installs** (the app is fail-safe
-without them): `pip install ignorant`; Blackbird (`git clone https://github.com/p1ngul1n0/blackbird`);
-PhoneInfoga (`docker pull sundowndev/phoneinfoga`, run its REST server on :5000).
+`requirements.txt` already pulls the core OSINT tools (maigret, sherlock, holehe, socialscan,
+waybackpy, telethon). `ignorant` and Blackbird require separate steps above (both are
+fail-safe — the app returns `[]` from those scrapers if they're absent).
+PhoneInfoga: `docker pull sundowndev/phoneinfoga` then run its REST server on :5000.
 
 ---
 
@@ -110,7 +120,7 @@ uvicorn backend.main:app --reload --port 8000      # http://localhost:8000/docs
 # frontend (separate terminal)
 cd frontend && npm run dev                          # http://localhost:3000 (3001 if 3000 busy)
 # tests
-python -m pytest tests/ -q                          # 48 tests
+python -m pytest tests/ -q                          # 71 tests
 ```
 
 ---
@@ -123,7 +133,7 @@ python -m pytest tests/ -q                          # 48 tests
 - [ ] `.env.example` (the template, no real secrets) **is** committed — that's intended.
 - [ ] If this repo's git history is from the original, confirm no secret was ever committed:
       `git log --all -- .env` should be **empty** (it was never tracked in the original).
-- [ ] Run `python -m pytest tests/ -q` → 48 passing before you push.
+- [ ] Run `python -m pytest tests/ -q` → 71 passing before you push.
 
 > Quick secret scan before pushing:
 > ```bash
@@ -134,10 +144,13 @@ python -m pytest tests/ -q                          # 48 tests
 
 ## 7. Notes / gotchas
 - **Python must be 3.10.** Other versions may break pinned deps.
-- **CLI tools resolve via `resolve_tool()`** (PATH + the venv's Scripts/bin) — so maigret/holehe/
-  sherlock work even if the venv isn't "activated", as long as `pip install -r requirements.txt`
-  ran into that venv.
+- **CLI tools resolve via `resolve_tool()`** (PATH + the venv's Scripts/bin) — searches `.exe`,
+  `.bat`, and `.cmd` on Windows, so maigret/sherlock/holehe/ignorant/blackbird all work even if the
+  venv isn't "activated", as long as the installs ran into that venv.
 - **`truststore`** makes outbound TLS use the OS cert store — this is what lets scrapers and the
   LLM work behind corporate TLS-inspection proxies. Keep it installed.
 - **Default admin** `admin` / `vertex2026` is a demo credential — change it before real use.
-- **Full engineering detail:** see `context.md` (read Sections 11–13 for the latest state).
+- **Blackbird needs `BLACKBIRD_PATH` in `.env`** — set it to wherever you cloned the repo (e.g. `C:\tools\blackbird`). The scraper also needs a `venv\Scripts\blackbird.bat` wrapper; create it manually (details in `SETUP.md` §3).
+- **Name searches (seed type `name`)** use three Serper dorks (`site:linkedin.com/in`, `site:instagram.com`, `site:twitter.com`). LinkedIn/Instagram/Twitter handles are now extracted from the result URL paths, so correlation works correctly without needing Maigret/Sherlock on top.
+- **False-positive filter** runs a hex control-username against Maigret, Sherlock, and Blackbird in parallel; broken-detector sites are excluded from real results and cached for 6 h in `reports/false_positive_sites.json`. This directory is created automatically.
+- **Full engineering detail:** see `context.md` (read Sections 11–17 for the complete current state; §17 is a from-scratch setup walk-through).

@@ -31,12 +31,17 @@ def resolve_tool(name: str) -> str | None:
     found = shutil.which(name)
     if found:
         return found
-    ext = ".exe" if os.name == "nt" else ""
+    # shutil.which() only searches PATH; when the venv's Scripts dir isn't on PATH
+    # (e.g. server launched via venv\Scripts\python.exe without activation), it misses
+    # even properly-installed tools.  Fall back to the interpreter's Scripts/bin dir.
+    # On Windows try .exe first, then .bat/.cmd for wrapper scripts (e.g. blackbird.bat).
+    exts = [".exe", ".bat", ".cmd"] if os.name == "nt" else [""]
     sub = "Scripts" if os.name == "nt" else "bin"
     for base in (os.path.dirname(sys.executable), sys.prefix):
-        cand = os.path.join(base, sub, name + ext)
-        if os.path.exists(cand):
-            return cand
+        for ext in exts:
+            cand = os.path.join(base, sub, name + ext)
+            if os.path.exists(cand):
+                return cand
     return None
 
 

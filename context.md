@@ -854,4 +854,513 @@ face     : []   (no matcher runs; pHash matches photos discovered via other seed
 ```
 Pipeline order: per-seed fan-out → **variant expansion** (live; fast tools = GitHub/Reddit/socialscan/blackbird; ≤8 variants) → derived-seed cascade → **archive check** (Wayback, ≤20 URLs) → LLM entity-extraction (≤10 blobs) + bio-link expansion (≤5) → dedup → **photo pHash enrichment** (live) → persist → correlate → score → forensics.
 
-## 14.7 Test count: **48** (not 44). pytest/pytest-asyncio install separately (not in requirements.txt).
+## 14.7 Test count
+
+**71** (was 48 → 59 → 71). pytest/pytest-asyncio install separately (not in requirements.txt).
+
+---
+
+## 15. SPRINT 4 — OSINT tool installation + FP hardening (2026-07-01)
+
+> This section covers work done after the §13/§14 session: installing two missing tools, fixing the FP filter race condition, rewriting the Blackbird scraper from scratch, and extending `resolve_tool()`.
+
+## 15.1 ignorant — installation and verification
+
+`ignorant` is a pip-packaged phone-registration checker (Instagram, Amazon, Snapchat). It was listed in the seed map but not installed.
+
+```bash
+pip install ignorant        # installs v1.2 with a console-script entry point
+```
+
+**Verification** (live): `IgnorantScraper` runs `ignorant <number>` in a subprocess, parses `[+]` lines, and returns `phone_registration` profiles. Confirmed `[+] instagram.com` returned for a live test number.
+
+`IgnorantScraper` already existed in `phone_scrapers.py`; no scraper rewrite was needed — only the installation.
+
+## 15.2 Blackbird — installation, CLI verification, and scraper rewrite
+
+Blackbird is a **WhatsMyName-based** username/email enumerator that checks ~680 sites. It was listed in the seed map but neither installed nor correct in the scraper code. Three independent bugs were found by manual CLI verification **before touching any code** (lesson from the socialscan `--json` incident):
+
+| Bug | Old scraper assumption | Reality |
+| --- | ---------------------- | ------- |
+| Output location | `--json` writes JSON to **stdout** | `--json` writes a file to `{repo}/results/{user}_{date}_blackbird/{user}_{date}_blackbird.json` |
+| Platform key | `entry.get("site") or entry.get("app")` | `entry.get("name")` |
+| Windows encoding | No encoding set | `rich` library prints box-drawing chars → `UnicodeEncodeError` with cp1252 stdout |
+
+**Installation:**
+
+```bash
+git clone https://github.com/p1ngul1n0/blackbird C:\path\to\blackbird
+pip install -r C:\path\to\blackbird\requirements.txt
+# version conflict fix (Blackbird pins older aiohttp/multidict/reportlab than maigret needs):
+pip install "aiohttp>=3.12.14,<4.0.0" "multidict>=6.6.3,<7.0.0" "reportlab>=4.4.3,<5.0.0"
+# .env: BLACKBIRD_PATH=C:\path\to\blackbird
+```
+
+Blackbird's `config.py` uses `os.getcwd()` for all data paths (wmn-data.json). The subprocess must always run with `cwd=repo` (the BLACKBIRD_PATH directory), otherwise the data file isn't found.
+
+**`blackbird.bat` wrapper** — created at `venv/Scripts/blackbird.bat`:
+
+```bat
+@echo off
+"<venv>\Scripts\python.exe" "<blackbird_path>\blackbird.py" %*
+```
+
+**`_run_blackbird` key design decisions** (in `backend/ingestion/blackbird_scraper.py`):
+
+- Subprocess command: `.bat` files can't be run directly by `CreateProcess`; wrapped as `["cmd", "/c", bat_path, ...]` via `_build_cmd()` helper.
+- `PYTHONIOENCODING=utf-8` injected into subprocess env to prevent cp1252 crash.
+- JSON file found via glob (`results/{safe_value}_*_blackbird/*.json`) as fallback if the date in the filename doesn't match (clock drift, timezone).
+- `metadata` list `[{name, value}, ...]` is flattened into a dict for the profile's `metadata` field.
+- Only entries with `status == "FOUND"` are returned; `ERROR`, `NONE`, `NOT-FOUND` are skipped.
+
+**Verified live**: 87 profiles returned for `torvalds`.
+
+## 15.3 resolve_tool() extended to .bat and .cmd on Windows
+
+`backend/ingestion/base_module.py` — the fallback extension loop now tries `[".exe", ".bat", ".cmd"]` on Windows (was only `".exe"`). Uses `sys.prefix` (the venv root) as the base, **not** `os.path.dirname(sys.executable)` (which is already the Scripts dir, and would create a double-Scripts path like `Scripts/Scripts/blackbird.bat`).
+
+```python
+exts = [".exe", ".bat", ".cmd"] if os.name == "nt" else [""]
+sub  = "Scripts" if os.name == "nt" else "bin"
+for base in (os.path.dirname(sys.executable), sys.prefix):
+    for ext in exts:
+        cand = os.path.join(base, sub, name + ext)
+        if os.path.exists(cand):
+            return cand
+```
+
+## 15.4 FP filter race condition fix
+
+`backend/ingestion/fp_filter.py` — `_save_cache` had a race condition: Maigret and Sherlock (and now Blackbird) run in parallel via `asyncio.gather`. Each would load the stale (empty) cache dict at the start of `filter_with_control`, then write its own entry at the end — the last writer would stomp the first writer's entry.
+
+Fix: `_save_cache` now does a **read-merge-write** — load the current file, update a single key, save. Since `asyncio` is single-threaded and there is no `await` inside `_save_cache`, there is no interleaving between concurrent callers.
+
+Old signature: `_save_cache(data: dict)` — saved the full stale dict.
+New signature: `_save_cache(tool_name: str, entry: dict)` — loads current file, merges one entry, saves.
+
+## 15.5 FP filter extended to Blackbird; Socialscan confirmed FP-free
+
+Control probe runs for Maigret, Sherlock, and Blackbird. Socialscan uses actual registration-flow checks (not HTTP heuristics), confirmed **0 FP** on the garbage username — no filter needed.
+
+**Verified FP exclusion counts (2026-07-01):**
+
+- Maigret: **36 sites** excluded
+- Sherlock: **3 sites** excluded (allmylinks, baby, mastodon)
+- Blackbird: **1 site** excluded (arch linux gitlab)
+
+**Residual slip-through**: 6 garbage-username entities still appear after filtering. Root cause: these sites use pattern-dependent heuristics (e.g., `"username doesn't exist"` in the body) that happen to fire for the 20-char hex control but not for realistic-looking usernames. This is a known limitation of the control-probe approach, not a code bug.
+
+## 15.6 Test count update
+
+New test file `tests/test_step0_tools.py` — 12 tests:
+
+- `test_resolve_tool_finds_exe/bat/cmd` — uses `monkeypatch.setattr(sys, "prefix", str(tmp_path))`; patches `shutil.which` to None so the PATH fallback doesn't accidentally find a real tool.
+- `test_resolve_tool_returns_none_for_missing`
+- `test_blackbird_parser_reads_name_field` — verifies `"name"` key (not `"site"`/`"app"`)
+- `test_blackbird_parser_skips_non_found` — verifies only `FOUND` entries returned
+- `test_blackbird_parser_flattens_metadata` — verifies `[{name, value}]` → dict
+- `test_blackbird_parser_no_exe_returns_empty` / `no_repo_returns_empty`
+- `test_ignorant_detects_registered/ignores_rate_limit/detects_all_three`
+
+Helper `_setup_bb_json(tmp_path, username, entries)` creates the correct results subdirectory path: `tmp_path/results/{safe}_{date}_blackbird/{safe}_{date}_blackbird.json`.
+
+**Total: 71 tests passing** (`python -m pytest tests/ -q`).
+
+---
+
+## 16. SPRINT 5 — Correlation quality fixes + name-search UX (2026-07-01)
+
+> Three bugs diagnosed against a live case (`f44ce9bf…`): name-seed results showing as REJECT singletons, Wayback wasting 15 s on Serper URLs, and Serper page-titles blocking username correlation. All three are now fixed; test count unchanged at 71.
+
+## 16.1 Root-cause diagnosis (live case `f44ce9bf5228435a94c13ae6ed55bfd6`)
+
+Seeds: email `vismayhs@gmail.com` + name `Vismay H S`.
+
+**Entities found:**
+
+| Type | Platform | Value (before fix) |
+| --- | --- | --- |
+| email_registration | office365.com / spotify.com / twitter.com | `vismayhs@gmail.com` |
+| social_account | github | VismayHS (bio, email, name in metadata) |
+| web_mention | linkedin | "Vismay HS - Student at PES University, Bengaluru \| LinkedIn" |
+| web_mention | linkedin | "Vismay H.S - Ceh \| Aspiring SOC Analyst…" |
+| web_mention | instagram | "vismay.hs (@mr_viz_) • Instagram photos and videos" |
+| web_mention | instagram | post title (A little escape from reality…) |
+| web_mention | instagram | another post title |
+
+**HIGH cluster found:** GitHub + 3 email_registrations — because `"VismayHS"` is a substring of `"vismayhs@gmail.com"` → `username_substring_match` (20 pts) + `exact_email_match` (60 pts) = 80 pts, 2 signals.
+
+**LinkedIn + Instagram: all REJECT singletons.** Three independent bugs caused this:
+
+**Bug A — No `metadata["name"]` on name-seed profiles.** `_scrape_seed` stamped seed value for email/phone/username seeds but NOT for name seeds. So web_mention profiles from a name search had only `metadata = {"snippet": ..., "query": ...}`. The correlation engine found zero name-signal pairs → all REJECT (0 confidence, 0.5 opacity in UI).
+
+**Bug B — Serper result `value` is the page title, not the username.** `_username_signal` compares `a.value` vs `b.value`. LinkedIn web_mention had `value = "Vismay HS - Student at PES University, Bengaluru | LinkedIn"` (the Google result title). Fuzzy ratio against `"VismayHS"` = 23% — far below the 80% threshold. No username signal fires even though the LinkedIn handle and GitHub handle are literally the same string (`vismayhs` / `VismayHS`).
+
+**Bug C — Wayback ran 20 requests on LinkedIn/Instagram/Twitter URLs.** The archive check was designed for Maigret/Sherlock-discovered profile URLs (to check if a deleted account has an archived copy). It ran on every profile's `source_url` — including the 20 Serper result URLs (LinkedIn/Instagram/Twitter). archive.org never has useful copies of those pages, but each request waits the full 15 s timeout. This added ~15 s to every name-search investigation.
+
+**"PES University" in keywords:** The snippet from the LinkedIn Serper result contained "Student at PES University, Bengaluru. AIESEC in India PES University…". The forensics `summarize()` pulls keywords from all entity snippets, so "pes university" was indexed — the system never actually loaded the LinkedIn page; that text came from Google's index of the page.
+
+## 16.2 Fix A — Stamp `metadata["name"]` for name seeds
+
+`backend/pipeline/orchestrator.py`, `_scrape_seed()`:
+
+```python
+# was:
+if seed_type in {"email", "phone", "username"}:
+# now:
+if seed_type in {"email", "phone", "username", "name"}:
+    for p in profiles:
+        if seed_type not in p.metadata:
+            p.metadata[seed_type] = value
+```
+
+Effect: all Serper `web_mention` profiles from a name search now carry `metadata["name"] = seed_value` (e.g., `"Vismay H S"`). The correlation engine's `exact_name_match` (35 pts) fires between every pair → singletons promoted from REJECT (0 pts, 0.5 opacity) to LOW (35 pts, full opacity, orange accent). The red-herring rule (`LINK_MIN_SIGNALS ≥ 2`) still prevents them from being incorrectly linked — they're unlinked LOW, which is the correct semantics for "found on the web for this name, unconfirmed".
+
+## 16.3 Fix B — Extract social username from URL in SerperScraper
+
+`backend/ingestion/serper_scraper.py` — new helper `_extract_social_username(url, platform)`:
+
+```python
+def _extract_social_username(url: str, platform: str) -> str | None:
+    path = urlparse(url).path.strip("/")
+    parts = [seg for seg in path.split("/") if seg]
+    if platform == "linkedin" and len(parts) >= 2 and parts[0] == "in":
+        return parts[1]                        # /in/vismayhs → "vismayhs"
+    if platform in {"github", "gitlab"} and len(parts) == 1:
+        return parts[0]                        # /VismayHS   → "VismayHS"
+    if platform in {"instagram", "twitter", "tiktok"} and parts[0] not in _NON_USERNAME_SEGMENTS:
+        return parts[0]                        # /mr_viz_/   → "mr_viz_"
+    if platform == "reddit" and len(parts) >= 2 and parts[0] in {"u", "user"}:
+        return parts[1]
+    return None
+```
+
+`_NON_USERNAME_SEGMENTS` blocks known non-profile path prefixes: `p`, `reel`, `explore`, `stories`, `watch`, `channel`, `status`, `intent`, etc. So `instagram.com/p/abc123` → `None` (keeps page title), but `instagram.com/mr_viz_/` → `"mr_viz_"`.
+
+In `_run_live`, the profile `value` is set to the extracted username when one is found; the original page title is stored in `metadata["title"]` for display:
+
+```python
+username = _extract_social_username(url, platform)
+value    = username if username else item.get("title", identifier)
+meta     = {"snippet": item.get("snippet"), "query": query}
+if username:
+    meta["title"] = item.get("title", "")
+```
+
+**Combined effect of Fix A + Fix B for LinkedIn ↔ GitHub:**
+
+```
+_username_signal("vismayhs", "VismayHS") → exact_match (45 pts)
+exact_name_match("Vismay H S", "Vismay H S") → 35 pts
+Total: 80 pts, 2 signals → HIGH cluster — LinkedIn joins GitHub+email_registrations ✓
+```
+
+The second LinkedIn handle `vismay-h-s` also links via `username_fuzzy_match` (15 pts) + `exact_name_match` (35 pts) = 50 pts, 2 signals → MEDIUM threshold met → linked ✓.
+
+## 16.4 Fix C — Skip Wayback for web_mention profiles
+
+`backend/pipeline/orchestrator.py`, archive-check section:
+
+```python
+# was:
+seen_account_urls = {p.source_url for p in all_profiles
+                     if p.source_url and p.source_url.startswith("http")}
+# now:
+seen_account_urls = {p.source_url for p in all_profiles
+                     if p.source_url and p.source_url.startswith("http")
+                     and p.type != "web_mention"}
+```
+
+Web-mention profiles come from Serper (Google's current search index). The Wayback check is designed for `social_account` profiles discovered by Maigret/Sherlock/Blackbird where the account may have been deleted but an archived copy exists. Serper results are by definition current live pages — archive.org checks add no value and cost up to 15 s of timeout.
+
+## 16.5 Frontend fixes
+
+**Auto-expand unlinked accounts when no clusters exist** (`frontend/app/cases/[id]/page.js`):
+
+```javascript
+// Before: {showUnlinked && unlinked.map(...)}
+// After:
+{(showUnlinked || (status === "complete" && multi.length === 0)) && unlinked.map(...)}
+```
+
+When an investigation completes with zero multi-account clusters (typical for name-only seeds), the "UNLINKED ACCOUNTS" section now opens automatically so results are visible without the user having to hunt for a collapsed section.
+
+**Show page title under username in AccountCard** — when a Serper result has a `metadata.title` (stored by Fix B), it appears as a dim subtitle under the extracted username, so the investigator sees both `vismayhs` (for correlation) and the full title `"Vismay HS - Student at PES University, Bengaluru | LinkedIn"` (for context).
+
+---
+
+## 17. COMPLETE SETUP GUIDE FOR A FRESH GITHUB CLONE
+
+> Read this section if you are setting VERTEX up from scratch on a new machine after pulling from GitHub. Every step is required. Do them in order.
+
+## 17.1 Prerequisites
+
+| Requirement | Version | Why |
+| --- | --- | --- |
+| Python | 3.10 or later | Tested on 3.10 and 3.13. Do NOT use < 3.10 (match-statement / type-union syntax). |
+| Node.js | 18 or later | Next.js 14 frontend. |
+| Git | any | Needed to clone Blackbird (not pip-packaged). |
+| Docker | optional | Only if you want PhoneInfoga REST server. |
+
+## 17.2 Clone VERTEX and set up the Python environment
+
+```bash
+# Clone the VERTEX repo (already done if you're reading this)
+git clone <your-repo-url> VERTEX
+cd VERTEX
+
+# Create a fresh virtualenv — NEVER reuse a venv from another machine
+# (venv stores absolute interpreter paths that break on a different OS/user)
+py -3.10 -m venv venv          # Windows (use py launcher to force 3.10+)
+python3 -m venv venv           # macOS / Linux
+
+# Activate the venv (every terminal session that touches this project)
+venv\Scripts\activate          # Windows PowerShell / cmd
+source venv/bin/activate       # macOS / Linux
+
+# Install Python dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+# ↑ this installs: fastapi, uvicorn, httpx, python-jose, bcrypt, reportlab,
+#   maigret, sherlock-project, holehe, socialscan, waybackpy, vaderSentiment,
+#   truststore, thefuzz, scikit-learn, imagehash, pillow, telethon, praw,
+#   python-dotenv, and their transitive deps.
+
+# Install test tools (NOT in requirements.txt — dev only)
+pip install pytest pytest-asyncio
+```
+
+## 17.3 Install ignorant (phone registration checker)
+
+`ignorant` is pip-packaged and has a console-script entry point — install it the same way as any other package:
+
+```bash
+pip install ignorant
+```
+
+Verify it works:
+
+```bash
+ignorant +14155552671
+# should print: [+] instagram.com  or  [-] instagram.com  etc.
+```
+
+`IgnorantScraper` in `backend/ingestion/phone_scrapers.py` calls this CLI automatically. If it is absent the scraper returns `[]` without crashing.
+
+## 17.4 Install Blackbird (username / email enumerator — NOT pip-packaged)
+
+Blackbird is not on PyPI. You must clone it to a **separate directory outside the VERTEX repo**, then tell VERTEX where it lives via the `BLACKBIRD_PATH` env var.
+
+```bash
+# Clone Blackbird — pick any location you like outside VERTEX/
+git clone https://github.com/p1ngul1n0/blackbird C:\tools\blackbird   # Windows
+git clone https://github.com/p1ngul1n0/blackbird ~/tools/blackbird    # macOS/Linux
+
+# Install Blackbird's dependencies into the VERTEX venv
+# (same venv — Blackbird is invoked as a subprocess via the venv's python)
+pip install -r C:\tools\blackbird\requirements.txt    # Windows
+pip install -r ~/tools/blackbird/requirements.txt     # macOS/Linux
+```
+
+**Version conflict fix (required):** Blackbird pins older versions of three packages than Maigret needs. After the install above, upgrade them:
+
+```bash
+pip install "aiohttp>=3.12.14,<4.0.0" "multidict>=6.6.3,<7.0.0" "reportlab>=4.4.3,<5.0.0"
+```
+
+**Create the `.bat` wrapper (Windows only):** `asyncio.create_subprocess_exec` cannot run `.py` files directly on Windows; it needs a wrapper script. Create `venv\Scripts\blackbird.bat` with this content (replace both paths with your actual absolute paths):
+
+```bat
+@echo off
+"C:\path\to\VERTEX\venv\Scripts\python.exe" "C:\tools\blackbird\blackbird.py" %*
+```
+
+On macOS/Linux no wrapper is needed — `blackbird.py` is called directly with the venv's python.
+
+**Download the site list (one-time):** Blackbird's database (`wmn-data.json`) is not included in the repo. Run it once without `--no-update` from inside the Blackbird directory to download it:
+
+```bash
+cd C:\tools\blackbird          # must be IN the Blackbird dir (it uses os.getcwd())
+python blackbird.py -u torvalds   # triggers download then scans; ~87 results expected
+cd -                           # back to VERTEX/
+```
+
+**Tell VERTEX where Blackbird is (add to `.env`):**
+
+```
+BLACKBIRD_PATH=C:\tools\blackbird
+```
+
+`resolve_tool()` in `base_module.py` searches `venv/Scripts/*.bat` automatically, so once `blackbird.bat` is in place and `BLACKBIRD_PATH` is set, the scraper works without any further config.
+
+## 17.5 Create your `.env` file
+
+```bash
+cp .env.example .env      # Windows: copy .env.example .env
+```
+
+Edit `.env` and fill in every value:
+
+```ini
+# ─── REQUIRED for a strong demo ──────────────────────────────────────────────
+SERPER_API_KEY=          # Google search backbone — get from serper.dev (free 2 500 queries)
+GITHUB_TOKEN=            # GitHub REST API — no scopes needed, free at github.com/settings/tokens
+NVIDIA_API_KEY=          # LLM entity-extraction + explanations — integrate.api.nvidia.com
+
+# ─── REQUIRED for your JWT to be secure ──────────────────────────────────────
+JWT_SECRET=              # generate: python -c "import secrets; print(secrets.token_hex(32))"
+# ↑ anyone with this value can forge login tokens — NEVER commit it
+
+# ─── REQUIRED: where Blackbird is cloned ─────────────────────────────────────
+BLACKBIRD_PATH=C:\tools\blackbird    # Windows path to blackbird clone
+
+# ─── OPTIONAL: improves coverage, fails safely if absent ─────────────────────
+HIBP_API_KEY=            # haveibeenpwned.com Core plan (~$4/mo) — email breach lookups
+NUMVERIFY_KEY=           # numverify.com free tier — phone carrier/country/line-type
+TELEGRAM_API_ID=         # my.telegram.org → "API development tools"
+TELEGRAM_API_HASH=       # same as above
+REDDIT_CLIENT_ID=        # reddit.com/prefs/apps → "script" app — avoids 403 from VPN/datacenter IPs
+REDDIT_CLIENT_SECRET=    # same as above
+REDDIT_USER_AGENT=VERTEX-OSINT/1.0 (CIDECODE)
+
+# ─── DATA MODE ────────────────────────────────────────────────────────────────
+DATA_MODE=live           # "live" for real scraping; "mock" for offline dev/demo without network
+```
+
+**Security note:** `.env` is gitignored. If a key was ever pasted in a chat, screenshot, or committed to git, rotate it in each provider's console before demo day.
+
+## 17.6 Initialise the database and create the admin account
+
+```bash
+python -m backend.database          # creates cidecode.db with 6 tables + audit_ledger.chain_hash
+python -m scripts.create_admin      # creates user admin / password vertex2026
+```
+
+Change the admin password before any real use (`scripts/create_admin.py` — just re-run with different values, or update the DB directly).
+
+## 17.7 Set up and run the frontend
+
+```bash
+cd frontend
+
+# Create the env file (there is NO .env.local.example — create it directly)
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+
+npm install
+npm run dev                    # http://localhost:3000  (3001 if 3000 is in use)
+```
+
+CORS already allows both 3000 and 3001 in `backend/main.py`, so either port works.
+
+## 17.8 Run the backend
+
+Open a **separate terminal** (or the same if frontend is backgrounded):
+
+```bash
+# From the VERTEX/ root, with venv active:
+uvicorn backend.main:app --reload --port 8000
+# Interactive API docs: http://localhost:8000/docs
+```
+
+On Windows, if `uvicorn` reports "port already in use" after a hard kill, the child process may still hold the socket:
+
+```powershell
+netstat -ano | findstr :8000   # find the PID
+taskkill /F /PID <pid>
+```
+
+## 17.9 Smoke test the install
+
+```bash
+# Run the test suite — all 71 tests must pass
+python -m pytest tests/ -q
+
+# Quick offline demo (no network, no keys)
+# In .env: DATA_MODE=mock  → restart uvicorn → create a case in the UI
+```
+
+If any tests fail, check:
+
+1. `venv` is activated (`which python` / `where python` must point inside `venv/`).
+2. `pip install -r requirements.txt` completed without errors.
+3. `pytest pytest-asyncio` are installed (not in `requirements.txt`).
+4. Blackbird dependency conflicts were resolved (step §17.4 upgrade command).
+
+## 17.10 How the external tools wire into VERTEX
+
+This is the part that catches people. VERTEX relies on four CLI tools that are either installed as console-script entry points in the venv (maigret, sherlock, holehe, socialscan, ignorant) or invoked as subprocesses via a wrapper (Blackbird). Here is exactly how each one is found at runtime:
+
+```text
+resolve_tool("maigret")
+  → shutil.which("maigret")             ← found via PATH (venv/Scripts/maigret.exe or bin/maigret)
+  → os.path.join(sys.prefix, "Scripts", "maigret.exe")   ← fallback if PATH not set
+  → returns full path or None
+
+resolve_tool("blackbird")
+  → shutil.which("blackbird")           ← probably not on PATH
+  → os.path.join(sys.prefix, "Scripts", "blackbird.exe") ← not there on Windows
+  → os.path.join(sys.prefix, "Scripts", "blackbird.bat") ← FOUND (if you created it in §17.4)
+  → returns "venv/Scripts/blackbird.bat"
+
+_blackbird_repo()
+  → os.environ.get("BLACKBIRD_PATH")   ← from .env
+  → returns "C:\tools\blackbird"
+
+subprocess is then: ["cmd", "/c", "venv/Scripts/blackbird.bat", "-u", username, "--json", "--no-update", "--timeout", "15"]
+cwd = "C:\tools\blackbird"            ← CRITICAL: Blackbird uses os.getcwd() for data paths
+env["PYTHONIOENCODING"] = "utf-8"     ← CRITICAL: prevents cp1252 crash on Windows console output
+```
+
+If Blackbird returns nothing:
+
+1. Check `BLACKBIRD_PATH` is set in `.env`.
+2. Check `venv/Scripts/blackbird.bat` exists and the paths inside it are correct.
+3. Check `C:\tools\blackbird\data\wmn-data.json` exists (run §17.4 download step).
+4. Run `python -m pytest tests/test_step0_tools.py -v` — those 12 tests exercise the parser and resolve logic without a real network call.
+
+## 17.11 What each seed type does and which tools run
+
+| Seed type | Tools invoked | Profiles returned |
+| --- | --- | --- |
+| `username` | Maigret (3 000+ sites), Sherlock (400+ sites), Blackbird (680 sites), Socialscan (10 platforms), Reddit, Telethon, GitHub API, Serper | social_account per platform found + web_mention from Google |
+| `email` | HIBP, XposedOrNot, Holehe, Blackbird-email, GitHub API, Serper | email_registration per service + breach records |
+| `phone` | NumVerify, PhoneInfoga, ignorant, Serper | phone_registration per carrier/platform |
+| `name` | Serper×3 (`site:linkedin.com/in`, `site:instagram.com`, `site:twitter.com`) | web_mention per result; handles extracted from URLs for correlation |
+| `upi` | UPI parser, Serper | upi_account + web_mention |
+| `url` | URLScraper (handle extraction), Wayback | url_reference + archive records |
+| `face` | none currently | (pHash matches are done against photos collected from other seeds) |
+
+**False-positive filter (username tools only):** Maigret, Sherlock, and Blackbird each run a random 20-char hex control username in parallel. Sites that fire for the control are "broken detectors" and are excluded from real results. Cached 6 h in `reports/false_positive_sites.json`. Socialscan and ignorant have no FP filter (they use real registration-flow checks, not HTTP heuristics).
+
+## 17.12 Correlation signals reference
+
+| Signal | Points | Fires when |
+| --- | --- | --- |
+| exact_phone_match | 60 | Last 10 digits of phone match |
+| exact_email_match | 60 | Normalised email strings match |
+| exact_upi_match | 60 | UPI IDs match |
+| username_exact_match | 45 | Normalised `value` strings are identical |
+| username_substring_match | 20 | One is a substring of the other |
+| username_fuzzy_match | 15 | thefuzz ratio ≥ 80 (difflib fallback) |
+| exact_name_match | 35 | `metadata["name"]` values match exactly |
+| fuzzy_name_match | 20 | Name fuzzy ratio ≥ 80 |
+| location_overlap | 15 | `metadata["location"]` values match/contain each other |
+| profile_photo_phash | 35 | Perceptual-hash Hamming distance < 8 OR same photo URL |
+| posting_hours_overlap | 15 | Jaccard index of active hours > 0.6 |
+| stylometry_cosine | 20 | Char n-gram + function-word cosine > 0.6 |
+| breach_co_occurrence | 18 | Shared breach (rare or ≥ 2 shared; mega-breaches excluded) |
+| bio_keyword_overlap | 12 | ≥ 2 non-stopword bio tokens in common |
+
+**Red-herring rule (hard-coded, DO NOT CHANGE):** linking requires BOTH `num_signals ≥ 2` AND `raw_points ≥ 50`. A single signal — even a 60-pt phone match — is flagged at LOW but never merges accounts into a cluster. This is the system's primary defensive claim for court use.
+
+**Tiers:** HIGH > 75 pts | MEDIUM 50–75 | LOW 25–50 | REJECT < 25
+
+## 17.13 Known limitations and honest non-features
+
+- **Maigret/Sherlock/Blackbird "false positives" that slip through the control probe:** ~6 sites whose broken detection uses heuristics that happen to fire on realistic-looking usernames but not on the 20-char hex control. They appear as LOW singletons and are clearly not linked.
+- **Instagram / LinkedIn / Twitter profiles in name searches:** The system finds them via Serper (Google's index) and extracts the handle from the URL for correlation. It does NOT log in, call private APIs, or scrape beyond what is publicly indexed.
+- **Telegram:** The Telethon scraper works only for public channels/groups and requires the API credentials from §17.5. It cannot resolve arbitrary phone numbers to users.
+- **Face/photo seed:** Accepted as a seed type but no matcher runs on it. Profile photos discovered via other seeds are pHash-compared to each other.
+- **Reddit:** Without `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET`, Reddit returns 403 from datacenter/VPN IPs. Set up a free "script" app at reddit.com/prefs/apps.
+- **PhoneInfoga:** Requires a local Docker container running the PhoneInfoga REST server on port 5000. `docker pull sundowndev/phoneinfoga:latest && docker run -p 5000:5000 sundowndev/phoneinfoga serve`.
+- **UPI name lookup:** Returns only the registered name from the UPI payment rail — it does not expose account numbers or bank details.

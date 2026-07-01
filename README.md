@@ -1,14 +1,8 @@
-<div align="center">
-
-# VERTEX
-
-### SOCMINT / OSINT Suspect-Profiling System
+# VERTEX — SOCMINT / OSINT Suspect-Profiling System
 
 **One identifier in. A complete, court-admissible digital profile out.**
 
 Built for **CIDECODE 2026** · CCITR + CID Karnataka · PES University
-
-</div>
 
 ---
 
@@ -17,8 +11,8 @@ Built for **CIDECODE 2026** · CCITR + CID Karnataka · PES University
 An investigator enters **one** thing they know about a suspect — a username, email, phone
 number, UPI ID, full name, or social-media URL — and VERTEX:
 
-1. **Collects** publicly available OSINT data for that identifier across many platforms.
-2. **Correlates** every account/trace it finds using a 12-signal engine.
+1. **Collects** publicly available OSINT data for that identifier across dozens of platforms.
+2. **Correlates** every account/trace it finds using a 15-signal engine.
 3. **Decides** which accounts belong to the **same person** — and refuses to link on weak
    evidence (the *red-herring rejection*).
 4. **Produces** a **court-admissible evidence PDF** under India's **Bharatiya Sakshya
@@ -31,134 +25,149 @@ rather refuse a link than over-claim one that couldn't survive in court.
 
 ## Key features
 
-- **12-signal correlation engine** — shared phone/email/UPI, username similarity, photo
-  perceptual-hash, posting-hour overlap, stylometry, breach co-occurrence, and more.
+- **15-signal correlation engine** — shared phone/email/UPI, username similarity (exact /
+  substring / fuzzy), profile photo perceptual-hash, posting-hour overlap, stylometry,
+  breach co-occurrence, bio keywords, real-name match, location overlap.
 - **Red-herring rejection** — a single signal (e.g. only a matching username) is never enough
-  to link accounts; it is flagged but kept separate.
+  to link accounts; it is flagged LOW but kept separate.
 - **Confidence tiers** — HIGH / MEDIUM / LOW / REJECT, each with a plain-English explanation.
-- **BSA-63 court PDF** — cover page, search manifest, findings, Annexure A (artifacts +
-  SHA-256), Part A/B §63(4) certificate templates, chain-of-custody log. Hashes are
-  independently verifiable.
-- **Tamper-evident audit ledger** — every step recorded in an append-only SHA-256 hash chain;
-  each row is self-sealed (`chain_hash`) so even the final entry cannot be edited undetected.
+- **False-positive filter** — Maigret, Sherlock, and Blackbird each run a random control
+  username in parallel; "broken detector" sites are excluded from real results.
+- **BSA-63 court PDF** — cover page, search manifest, findings, Annexure A (SHA-256
+  hashes), Part A/B §63(4) certificate templates, chain-of-custody log.
+- **Tamper-evident audit ledger** — every step in an append-only SHA-256 hash chain.
 - **Fail-safe scrapers** — any failing tool returns empty; one broken source never stops a run.
-- **LLM enhancement (NVIDIA), never on the critical path** — used only to extract entities and
-  phrase explanations, always with a deterministic fallback. It never decides linking.
+- **LLM enhancement (NVIDIA), never on the critical path** — entity extraction + plain-English
+  explanations, always with a deterministic fallback. Never decides linking.
+- **Username extraction from Serper URLs** — LinkedIn/Instagram/Twitter/GitHub handles are
+  extracted from URL paths so name-seed searches produce correct correlation matches.
 
 ---
 
 ## Tech stack
 
 | Layer | Technology |
-|-------|-----------|
-| Backend | Python 3.10, FastAPI, uvicorn, SQLite (stdlib, no ORM), httpx |
+| ----- | ---------- |
+| Backend | Python 3.10+, FastAPI, uvicorn, SQLite (stdlib, no ORM), httpx |
 | Auth | JWT (python-jose, HS256) + bcrypt |
 | Correlation | thefuzz, scikit-learn, imagehash (all optional; degrade gracefully) |
 | Report | ReportLab (BSA-63 PDF) |
 | LLM | NVIDIA Cloud (`llama-3.3-70b`, `deepseek-v4-pro`) — enhancement-only |
-| Scrapers | Maigret, GitHub API, Serper, HIBP, UPI parser, PhoneInfoga/ignorant |
+| Scrapers | Maigret, Sherlock, Blackbird, Socialscan, GitHub API, Serper, HIBP, XposedOrNot, Holehe, ignorant, PhoneInfoga, NumVerify, Wayback, Reddit, Telethon, UPI parser |
 | Frontend | Next.js 14 (App Router), Tailwind CSS, sigma.js, vis-timeline |
 
 ---
 
 ## Quick start
 
-> Requires Python 3.10+ and Node 18+.
+> Requires Python 3.10+ and Node 18+. Read `SETUP.md` for the full guide including
+> Blackbird (external repo) and all optional tools.
 
 ```bash
 # 1. Secrets
-cp .env.example .env                 # fill SERPER_API_KEY, GITHUB_TOKEN, NVIDIA_API_KEY
-python -c "import secrets; print(secrets.token_hex(32))"   # paste into JWT_SECRET in .env
+cp .env.example .env
+# Fill in SERPER_API_KEY, GITHUB_TOKEN, NVIDIA_API_KEY
+# Generate JWT_SECRET:  python -c "import secrets; print(secrets.token_hex(32))"
 
-# 2. Backend  (use Python 3.10; don't reuse a venv from another machine)
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt      # includes maigret
-pip install pytest pytest-asyncio    # test deps (NOT in requirements.txt)
-python -m backend.database           # create/upgrade cidecode.db (6 tables)
-python -m scripts.create_admin       # creates admin / vertex2026
-uvicorn backend.main:app --reload --port 8000      # API + docs at /docs
+# 2. Backend  (Python 3.10+; never reuse a venv from another machine)
+python -m venv venv
+venv\Scripts\activate          # Windows  |  source venv/bin/activate  on macOS/Linux
+pip install -r requirements.txt
+pip install pytest pytest-asyncio    # test deps (not in requirements.txt)
+pip install ignorant                 # phone registration checker
 
-# 3. Frontend
+# 3. Blackbird (not on PyPI — clone separately)
+git clone https://github.com/p1ngul1n0/blackbird C:\tools\blackbird
+pip install -r C:\tools\blackbird\requirements.txt
+pip install "aiohttp>=3.12.14,<4.0.0" "multidict>=6.6.3,<7.0.0" "reportlab>=4.4.3,<5.0.0"
+# Create venv\Scripts\blackbird.bat and add BLACKBIRD_PATH=C:\tools\blackbird to .env
+# Full instructions in SETUP.md
+
+# 4. Database + admin
+python -m backend.database           # creates cidecode.db (6 tables)
+python -m scripts.create_admin       # admin / vertex2026
+
+# 5. Backend
+uvicorn backend.main:app --reload --port 8000
+
+# 6. Frontend
 cd frontend
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local   # no .env.local.example exists
-npm install
-npm run dev                          # http://localhost:3000 (3001 if 3000 busy)
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+npm install && npm run dev           # http://localhost:3000
 
-# 4. Tests
-python -m pytest tests/ -q           # 48 tests
+# 7. Tests
+python -m pytest tests/ -q           # 71 tests
 ```
 
-**Offline demo (no keys/network):** set `DATA_MODE=mock` in `.env`, restart the backend, then run
-an investigation — you'll get a HIGH-confidence cluster plus a correctly-rejected red herring.
+**Offline demo:** set `DATA_MODE=mock` in `.env`, restart the backend, run an investigation.
+You get a HIGH-confidence cluster, a correctly-rejected red herring, and a PDF — no network.
 
-**Default login:** `admin` / `vertex2026` — change it before any real use.
+**Default login:** `admin` / `vertex2026` — change before any real use.
 
 ---
 
 ## Project structure
 
-```
+```text
 backend/
   config.py            env-driven config (warns on missing keys, never crashes)
   database/            SQLite: 6 tables (users, cases, entities, clusters, audit_ledger, artifacts)
-  auth/                JWT + bcrypt (register/login/middleware/routes)
+  auth/                JWT + bcrypt
   cases/               case CRUD + owner access control
-  ingestion/           BaseDataSource + scrapers: maigret, sherlock, github, serper, reddit,
-                       socialscan, blackbird, holehe, hibp, xposedornot, wayback, telethon,
-                       upi, phone, url, variants, photo_enrich (mock for dev)
-  analysis/            forensics.py — stylometry, sentiment/tone, keywords, activity, engagement
-  correlation/         pairwise signal computation
-  scoring/             clustering + tiers + red-herring rule
+  ingestion/           BaseDataSource + all scrapers (maigret, sherlock, blackbird,
+                       socialscan, github, serper, hibp, xposedornot, holehe,
+                       phone_scrapers, wayback, reddit, telethon, upi, url,
+                       variants, photo_enrich, profile_page_fetcher, fp_filter, mock)
+  analysis/            forensics.py — stylometry, sentiment, keywords, activity
+  correlation/         pairwise 15-signal computation
+  scoring/             clustering + tiers + red-herring rule (DO NOT MODIFY)
   llm/                 NVIDIA client with regex/template fallbacks
-  pipeline/            orchestrator (parallel fan-out -> correlate -> score -> persist)
+  pipeline/            orchestrator + lead_reverification
   ledger/              tamper-evident hash chain + artifact hashing
   report/              BSA-63 PDF generator
   main.py              FastAPI entrypoint
-frontend/              Next.js 14 + Tailwind dashboard (login, registry, 3-panel case view)
+frontend/              Next.js 14 + Tailwind dashboard
 scripts/               create_admin, seed_demo_case
-tests/                 pytest suite (48 tests)
-context.md             full engineering onboarding doc (read this to continue development; see §11 for the latest state)
+tests/                 71 pytest tests
+context.md             full engineering onboarding doc (read §15-17 for latest)
+SETUP.md               step-by-step run guide including Blackbird setup
+TRANSFER_CHECKLIST.md  checklist for zip/GitHub transfers to a new machine
 LEGAL_VERIFICATION.md  BSA-63 legal claims verified against primary sources
-SETUP.md               detailed run guide
 ```
 
 ---
 
-## API (summary)
+## API summary
 
 | Method | Path | Auth | Purpose |
-|--------|------|------|---------|
+| ------ | ---- | ---- | ------- |
 | GET | `/health` | no | liveness |
 | POST | `/auth/register` | no | create user → token |
 | POST | `/auth/login` | no | authenticate → token |
-| POST | `/cases` | yes | create case + start investigation (background) |
+| POST | `/cases` | yes | create case + start investigation |
 | GET | `/cases` | yes | list your cases |
 | GET | `/cases/{id}` | yes | one case (owner only) |
-| GET | `/cases/{id}/results` | yes | entities + clusters (polled by the UI) |
-| GET | `/cases/{id}/report` | yes | download the BSA-63 PDF |
+| GET | `/cases/{id}/results` | yes | entities + clusters + forensics |
+| GET | `/cases/{id}/report` | yes | download BSA-63 PDF |
 
 ---
 
 ## Legal
 
-All BSA-63 claims have been checked against primary/authoritative sources — see
-[`LEGAL_VERIFICATION.md`](LEGAL_VERIFICATION.md). The two incorrect citations from the original
-brief (PMLA §12, CPCR §12) are replaced with **BNSS §94** and **POCSO §23 / JJ Act §74**. The
-report's certificate is a template; Part B is left for a certified expert to sign — VERTEX never
-fabricates a signature. **Get a qualified advocate to co-sign before any real/court use.**
+All BSA-63 claims checked against primary sources — see [`LEGAL_VERIFICATION.md`](LEGAL_VERIFICATION.md).
+Two wrong citations from the original brief (PMLA §12, CPCR §12) replaced with **BNSS §94**
+and **POCSO §23 / JJ Act §74**. Part B of the certificate is a template for a qualified expert
+to sign — VERTEX never fabricates a signature. **Get a qualified advocate to co-sign before
+any real or court use.**
 
 ---
 
 ## Security notes
 
-> - Secrets live in `.env`, which is **gitignored** — never commit real keys, and rotate any key
->   that was ever exposed.
-> - The default admin password (`vertex2026`) is for the demo only; change it.
-> - This tool collects only **publicly available** data and is intended for **lawful, authorised**
->   investigative use.
+- Secrets live in `.env`, which is gitignored — never commit real keys; rotate any that were exposed.
+- The default admin password (`vertex2026`) is for the demo only; change it.
+- This tool collects only **publicly available** data for **lawful, authorised** investigative use.
 
 ---
 
-<div align="center">
-<sub>VERTEX — investigative-grade OSINT. Quality of evidence over volume of results.</sub>
-</div>
+*VERTEX — investigative-grade OSINT. Quality of evidence over volume of results.*

@@ -45,12 +45,19 @@ from backend.ingestion.holehe_scraper import HoleheScraper
 from backend.ingestion.sherlock_scraper import SherlockScraper
 from backend.ingestion.variants import username_variants
 from backend.ingestion.photo_enrich import enrich_photos
+from backend.ingestion.profile_page_fetcher import enrich_profiles_from_page
 from backend.ledger.audit_ledger import log_action, save_artifact
 from backend.llm.llm_client import LLMClient
+from backend.pipeline.lead_reverification import reverify_leads
 from backend.scoring.scoring_engine import score
 
 # Seed type -> scraper instances (Section 11.1). SerperScraper templates vary per seed.
-def _seed_tool_map() -> dict:
+def _seed_tool_map(maigret: MaigretScraper | None = None,
+                   sherlock: SherlockScraper | None = None,
+                   blackbird: BlackbirdUsernameScraper | None = None) -> dict:
+    _maigret = maigret or MaigretScraper()
+    _sherlock = sherlock or SherlockScraper()
+    _blackbird = blackbird or BlackbirdUsernameScraper()
     live = {
         "email":    [HIBPScraper(), XposedOrNotScraper(), HoleheScraper(), BlackbirdEmailScraper(), GitHubScraper(), SerperScraper('"{q}"')],
         # NumVerify (carrier/line-type/country) works with the configured key; a PLAIN
@@ -59,7 +66,7 @@ def _seed_tool_map() -> dict:
         # (fail-safe if their server/CLI is absent); HIBP is email-only and the Facebook
         # checker is a stub, so both are dropped from the phone path.
         "phone":    [NumVerifyScraper(), PhoneInfogaScraper(), IgnorantScraper(), SerperScraper('"{q}"')],
-        "username": [MaigretScraper(), SherlockScraper(), BlackbirdUsernameScraper(), SocialscanScraper(), RedditScraper(), TelethonScraper(), GitHubScraper(), SerperScraper('"{q}"')],
+        "username": [_maigret, _sherlock, _blackbird, SocialscanScraper(), RedditScraper(), TelethonScraper(), GitHubScraper(), SerperScraper('"{q}"')],
         "upi":      [UPIScraper(), SerperScraper('"{q}"')],
         "name":     [SerperScraper('site:linkedin.com/in "{q}"'),
                      SerperScraper('site:instagram.com "{q}"'),
@@ -96,6 +103,18 @@ async def _scrape_seed(seed_type: str, value: str, tool_map: dict) -> list[RawPr
     for r in results:
         if isinstance(r, list):
             profiles.extend(r)
+    # Stamp the seed identifier onto each returned profile's metadata so that
+    # exact_email_match / exact_phone_match / username_exact_match / exact_name_match
+    # signals fire between profiles discovered from the same seed (e.g. GitHub + Holehe
+    # both found via the same email address). Don't overwrite a scraper-derived value
+    # (e.g. GitHub's own discovered email on a username search).
+    # "name" is included so that web_mention results from a name search all carry
+    # metadata["name"] = seed_value, causing exact_name_match (35 pts) to fire between
+    # them and promote them from REJECT (invisible) to LOW (visible, orange) in the UI.
+    if seed_type in {"email", "phone", "username", "name"}:
+        for p in profiles:
+            if seed_type not in p.metadata:
+                p.metadata[seed_type] = value
     return profiles
 
 
@@ -154,7 +173,12 @@ async def run_investigation(case_id: str) -> dict:
 
     log_action(case_id, "investigation_started", {"seeds": seeds}, None, "system")
 
-    tool_map = _seed_tool_map()
+    # Keep explicit references to the FP-filtered username scrapers so we can
+    # read their false-positive filter info after each run and write audit-ledger entries.
+    _maigret = MaigretScraper()
+    _sherlock = SherlockScraper()
+    _blackbird = BlackbirdUsernameScraper()
+    tool_map = _seed_tool_map(_maigret, _sherlock, _blackbird)
     all_profiles: list[RawProfile] = []
 
     # 1+2: primary fan-out per seed
@@ -163,6 +187,20 @@ async def run_investigation(case_id: str) -> dict:
         log_action(case_id, f"scrape:{seed.get('type')}",
                    {"value": seed.get("value")}, {"found": len(ps)}, "system")
         all_profiles.extend(ps)
+        # Log false-positive filter results for username seeds (maigret + sherlock + blackbird).
+        # fp_filter.py runs both real + control in parallel and caches results 6 h.
+        if seed.get("type") == "username" and config.DATA_MODE == "live":
+            for inst in (_maigret, _sherlock, _blackbird):
+                fp = getattr(inst, "last_fp_info", None)
+                if fp:
+                    log_action(
+                        case_id, "false_positive_filter",
+                        {"tool": fp.get("tool"), "control_username": fp.get("control_username")},
+                        {"excluded_sites": fp.get("excluded_sites", [])[:30],
+                         "removed": fp.get("removed", 0),
+                         "cache_hit": fp.get("cache_hit")},
+                        "system",
+                    )
 
     # 2.5: username-variant expansion (live only). The same person uses different
     # handles across platforms (j.shankar / jshankar / shankarj); generate variants
@@ -188,6 +226,8 @@ async def run_investigation(case_id: str) -> dict:
                     if isinstance(r, list):
                         for p in r:
                             p.metadata["found_via_variant"] = v
+                            if "username" not in p.metadata:
+                                p.metadata["username"] = v
                             out.append(p)
                 return out
 
@@ -213,9 +253,13 @@ async def run_investigation(case_id: str) -> dict:
     # NOT re-run the URL parser on every discovered URL: it just re-extracts the
     # same handle we already have, flooding the case with redundant url/derived
     # entities. Capped so a 150-account run doesn't fire 150 archive.org calls.
+    # Skip web_mention profiles (Serper results) — those are live public pages that
+    # don't need an archival check; only social_account URLs are worth checking for
+    # deleted-but-archived profiles.
     wb = WaybackScraper()
     seen_account_urls = {p.source_url for p in all_profiles
-                         if p.source_url and p.source_url.startswith("http")}
+                         if p.source_url and p.source_url.startswith("http")
+                         and p.type != "web_mention"}
     urls = list(seen_account_urls)[:20]
     if urls:
         async def _archive(url):
@@ -286,11 +330,21 @@ async def run_investigation(case_id: str) -> dict:
             if isinstance(res, list):
                 all_profiles.extend(res)
 
-    # 5: dedup, then enrich profile photos with a perceptual hash so the
-    # profile_photo_phash signal can match the SAME face/photo across platforms
-    # (live only — mock fixtures supply their own data and use unreachable URLs).
+    # 5: dedup, then two enrichment passes (live only):
+    #    5a. og:image / og:description — fetch profile pages for accounts where
+    #        the enumerator (Maigret, Sherlock) returned a URL but no photo or bio.
+    #        This is the primary mechanism for getting avatars; most maigret/sherlock
+    #        site definitions have no field-extraction patterns (see maigret_scraper.py).
+    #    5b. pHash — compute perceptual hashes on any photo_url now present so the
+    #        profile_photo_phash signal can match the same face across platforms.
     profiles = _dedup(all_profiles)
     if config.DATA_MODE == "live":
+        try:
+            enriched = await enrich_profiles_from_page(profiles)
+            log_action(case_id, "page_enrichment", {"candidates": len(profiles)},
+                       {"profiles_enriched": enriched}, "system")
+        except Exception:
+            pass
         try:
             hashed = await enrich_photos(profiles)
             log_action(case_id, "photo_enrichment", {"candidates": len(profiles)},
@@ -320,11 +374,48 @@ async def run_investigation(case_id: str) -> dict:
                   json.dumps([p.to_dict() for p in profiles], indent=2, default=str),
                   suffix=".json")
 
-    # 6: correlate -> score -> persist clusters with explanations
+    # 6: correlate -> score
     pairs = correlate(profiles)
     clusters = score(profiles, pairs)
     log_action(case_id, "scoring_complete", {"pairs": len(pairs)},
                {"clusters": len(clusters)}, "system")
+
+    # 6b: lead reverification (live only) — for singleton LOW/REJECT entities with
+    # a source_url, fetch their profile page, re-correlate against confirmed clusters
+    # only, and promote those that now share a strong corroborating signal.
+    # The red-herring rule (LINK_MIN_SIGNALS >= 2) is NOT weakened here.
+    if config.DATA_MODE == "live":
+        promoted: list[int] = []
+        try:
+            profiles, clusters, promoted = await reverify_leads(profiles, clusters)
+            if promoted:
+                for pidx in promoted:
+                    log_action(
+                        case_id, "lead_reverification",
+                        {"entity_index": pidx, "platform": profiles[pidx].platform,
+                         "value": profiles[pidx].value},
+                        {"promoted": True},
+                        "system",
+                    )
+                log_action(case_id, "reverification_summary", None,
+                           {"promoted_count": len(promoted)}, "system")
+        except Exception:
+            pass  # reverification must never break the main pipeline
+
+        # Flush any metadata enrichment from the reverification page-fetch back to DB
+        if promoted:
+            conn = get_db()
+            try:
+                for pidx in promoted:
+                    eid = idx_to_eid.get(pidx)
+                    if eid:
+                        conn.execute(
+                            "UPDATE entities SET metadata_json=? WHERE entity_id=?",
+                            (json.dumps(profiles[pidx].metadata, default=str), eid),
+                        )
+                conn.commit()
+            finally:
+                conn.close()
 
     conn = get_db()
     try:
@@ -355,8 +446,31 @@ async def run_investigation(case_id: str) -> dict:
 
 
 def run_investigation_sync(case_id: str) -> dict:
-    """Blocking wrapper for FastAPI BackgroundTasks."""
+    """Blocking wrapper for FastAPI BackgroundTasks.
+
+    uvicorn sets asyncio.WindowsSelectorEventLoopPolicy() on Windows
+    (venv/Lib/site-packages/uvicorn/loops/asyncio.py), and that policy is
+    process-global. Since this runs as a BackgroundTask in the same process,
+    a plain asyncio.run() here would inherit that policy and build a
+    SelectorEventLoop, which raises NotImplementedError on any
+    create_subprocess_exec call. Every CLI-based scraper (Maigret, Sherlock,
+    Holehe, Blackbird, Ignorant) would then hit that inside its fail-safe
+    try/except and silently return [] -- indistinguishable from "no results
+    found" at every level above. Running this call on its own
+    ProactorEventLoop (Windows only, scoped to this thread/instance, not the
+    global policy) restores subprocess support without touching uvicorn's
+    own loop.
+    """
+    import sys
     try:
+        if sys.platform == "win32":
+            loop = asyncio.ProactorEventLoop()
+            try:
+                asyncio.set_event_loop(loop)
+                return loop.run_until_complete(run_investigation(case_id))
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
         return asyncio.run(run_investigation(case_id))
     except Exception as e:  # noqa: BLE001
         import traceback

@@ -353,25 +353,62 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
                      "in Section 2 indicate which are assessed as the same individual.",
                      ss["Body2"]), Spacer(1, 3 * mm)]
 
+    # --- false-positive filter note ---
+    fp_actions = [r for r in ledger if r.get("action") == "false_positive_filter"]
+    if fp_actions:
+        el += [Paragraph(
+            "<i>Validation note:</i> Username enumeration results from Maigret and "
+            "Sherlock were validated against a random control probe before inclusion. "
+            "Sites that returned a hit for the control string (broken detector) were "
+            "excluded from the real results.  See Section 1 (Search Manifest) for "
+            f"the {len(fp_actions)} recorded filter step(s) and their audit hashes.",
+            ss["Small"]), Spacer(1, 2 * mm)]
+
     # --- discovered accounts (capped) ---
     if accounts:
+        # Build a map from entity_id -> cluster tier for "Confirmed" vs "Possible lead" labelling
+        eid_tier: dict[str, str] = {}
+        for cl in data["clusters"]:
+            try:
+                ids = json.loads(cl.get("entity_ids_json") or "[]")
+            except Exception:
+                ids = []
+            t = cl.get("tier", "REJECT")
+            for eid in ids:
+                eid_tier[eid] = t
+
         CAP = 40
         el += [Paragraph(f"<b>Discovered accounts</b> ({len(accounts)} total"
                          + (f"; first {CAP} shown" if len(accounts) > CAP else "") + ")",
                          ss["Body2"]), Spacer(1, 1.5 * mm)]
-        rows = [["#", "Platform", "Account", "Name", "Activity (UTC)"]]
+        rows = [["#", "Platform", "Account", "Name", "Status", "Activity (UTC)"]]
         for n, e in enumerate(accounts[:CAP], 1):
             m = _m(e)
             name = m.get("name") or m.get("fullname") or ""
             act = m.get("most_active_time_utc") or ""
             if m.get("posting_frequency_per_day"):
                 act = (act + f" · {m.get('posting_frequency_per_day')}/day").strip(" ·")
+            tier = eid_tier.get(e.get("entity_id", ""), "REJECT")
+            if tier in ("HIGH", "MEDIUM"):
+                status_txt = "Confirmed"
+            elif tier == "LOW":
+                status_txt = "Possible lead"
+            else:
+                status_txt = "Unconfirmed"
             rows.append([str(n),
                          Paragraph(_esc(e.get("platform")), ss["CellWrap"]),
                          Paragraph(_redact(e.get("value", ""), redact), ss["CellWrap"]),
                          Paragraph(_redact(name, redact) if name else "-", ss["CellWrap"]),
+                         Paragraph(_esc(status_txt), ss["CellWrap"]),
                          Paragraph(_esc(act) if act else "-", ss["CellWrap"])])
-        el += [_table(rows, [8 * mm, 28 * mm, 50 * mm, 48 * mm, 40 * mm]), Spacer(1, 4 * mm)]
+        el += [_table(rows, [8 * mm, 24 * mm, 44 * mm, 40 * mm, 22 * mm, 36 * mm]),
+               Spacer(1, 2 * mm)]
+        el += [Paragraph(
+            "<i>Status key:</i> <b>Confirmed</b> = HIGH/MEDIUM cluster with ≥2 corroborating "
+            "signals.  <b>Possible lead</b> = LOW tier (single or weak signal).  "
+            "<b>Unconfirmed</b> = REJECT — no corroborating evidence links this account "
+            "to others in the case; treat as an investigative lead only.",
+            ss["Small"]), Spacer(1, 3 * mm)]
 
     # --- email -> registered services (holehe) ---
     if registrations:

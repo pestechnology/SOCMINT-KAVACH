@@ -225,9 +225,9 @@ export default function CaseView() {
             <div className="border-t border-edge">
               <button onClick={() => setShowUnlinked((v) => !v)} className="flex items-center justify-between w-full" style={{ padding: "10px 14px" }}>
                 <span className="mono text-dim" style={{ fontSize: 9 }}>UNLINKED ACCOUNTS ({unlinked.length})</span>
-                <span className="mono text-dim" style={{ fontSize: 9 }}>{showUnlinked ? "▾ hide" : "▸ expand"}</span>
+                <span className="mono text-dim" style={{ fontSize: 9 }}>{(showUnlinked || multi.length === 0) ? "▾ hide" : "▸ expand"}</span>
               </button>
-              {showUnlinked && unlinked.map((c) => {
+              {(showUnlinked || (status === "complete" && multi.length === 0)) && unlinked.map((c) => {
                 const e = entById[(c.entity_ids || [])[0]];
                 return (
                   <div key={c.cluster_id} className="border-t border-edge" style={{ padding: "8px 14px", opacity: 0.7 }}>
@@ -235,7 +235,7 @@ export default function CaseView() {
                       {(e?.platform || "?").toUpperCase()} · {e?.value || "—"}
                     </div>
                     <div className="display text-dim" style={{ fontSize: 9, fontStyle: "italic", marginTop: 2 }}>
-                      Reason: single signal — insufficient corroboration
+                      {c.signals && Object.keys(c.signals).length ? "Single signal — insufficient to link across platforms" : "No corroborating signals found"}
                     </div>
                   </div>
                 );
@@ -292,6 +292,37 @@ export default function CaseView() {
       </div>
     </div>
   );
+}
+
+// Platform icon fallbacks (initials) when no photo_url is available
+const PLATFORM_ICONS = {
+  github: "GH", instagram: "IG", twitter: "TW", telegram: "TG", reddit: "RD",
+  linkedin: "LI", youtube: "YT", tiktok: "TK", facebook: "FB", snapchat: "SC",
+  pinterest: "PT", tumblr: "TB", mastodon: "MD", spotify: "SP", twitch: "TV",
+};
+function PlatformIcon({ platform, size = 36 }) {
+  const abbr = PLATFORM_ICONS[(platform || "").toLowerCase()] || (platform || "?").slice(0, 2).toUpperCase();
+  return (
+    <div style={{ width: size, height: size, borderRadius: 4, background: "#2A3148", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <span className="mono text-dim" style={{ fontSize: size * 0.28, letterSpacing: "0.05em" }}>{abbr}</span>
+    </div>
+  );
+}
+
+// Confirmed / Possible lead / Unconfirmed label based on tier and signals
+function ConfidenceLabel({ tier, signals }) {
+  const sigs = signals ? Object.keys(signals) : [];
+  const STRONG = ["exact_email_match", "exact_phone_match", "exact_upi_match",
+                  "profile_photo_phash", "exact_name_match"];
+  const hasStrong = sigs.some((s) => STRONG.includes(s));
+
+  if ((tier === "HIGH" || tier === "MEDIUM") && hasStrong) {
+    return <span className="mono tier-complete" style={{ fontSize: 8 }}>● CONFIRMED</span>;
+  }
+  if (tier === "LOW" || ((tier === "HIGH" || tier === "MEDIUM") && !hasStrong)) {
+    return <span className="mono tier-high" style={{ fontSize: 8 }}>◐ POSSIBLE LEAD (username-only, unconfirmed)</span>;
+  }
+  return <span className="mono tier-reject" style={{ fontSize: 8 }}>○ UNCONFIRMED</span>;
 }
 
 // ---------- subcomponents ----------
@@ -351,31 +382,45 @@ function AccountCard({ e, info, onClick, active }) {
   const breaches = Array.isArray(m.breaches) && m.breaches.length
     ? `${m.breaches.join(", ")} (${m.breaches.length})`
     : m.breach_name || null;
+  const photoUrl = m.photo_url || m.avatar || m.avatar_url || m.image || null;
 
   return (
     <div
       onClick={onClick}
       className="cursor-pointer border-b border-edge relative"
-      style={{ padding: "10px 14px", borderLeft: `2.5px solid ${accent}`, background: active ? "#1E2235" : "transparent", opacity: isReject ? 0.45 : 1 }}
+      style={{ padding: "10px 14px", borderLeft: `2.5px solid ${accent}`, background: active ? "#1E2235" : "transparent", opacity: isReject ? 0.5 : 1 }}
     >
-      <div className="flex items-start justify-between">
-        <span className="mono text-dim" style={{ fontSize: 9, letterSpacing: "0.08em" }}>{(e.platform || "").toUpperCase()}</span>
-        <div style={{ textAlign: "right" }}>
-          <div className={`mono ${TIER_CLASS[tier]}`} style={{ fontSize: 18, fontWeight: 500, lineHeight: 1 }}>{score}</div>
-          <div className={`mono ${TIER_CLASS[tier]}`} style={{ fontSize: 8, marginTop: 1 }}>{TIER_SHORT[tier]}</div>
+      {/* Header: avatar + platform + score */}
+      <div className="flex items-start" style={{ gap: 8 }}>
+        {photoUrl ? (
+          <img src={photoUrl} alt="" style={{ width: 36, height: 36, borderRadius: 4, objectFit: "cover", flexShrink: 0, border: `1px solid ${accent}` }}
+            onError={(ev) => { ev.currentTarget.style.display = "none"; ev.currentTarget.nextSibling.style.display = "flex"; }} />
+        ) : null}
+        <div style={{ display: photoUrl ? "none" : "flex" }}>
+          <PlatformIcon platform={e.platform} size={36} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between">
+            <span className="mono text-dim" style={{ fontSize: 9, letterSpacing: "0.08em" }}>{(e.platform || "").toUpperCase()}</span>
+            <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 4 }}>
+              <div className={`mono ${TIER_CLASS[tier]}`} style={{ fontSize: 16, fontWeight: 500, lineHeight: 1 }}>{score}</div>
+              <div className={`mono ${TIER_CLASS[tier]}`} style={{ fontSize: 8, marginTop: 1 }}>{TIER_SHORT[tier]}</div>
+            </div>
+          </div>
+          <div className="display text-head" style={{ fontSize: 13, fontWeight: 500, marginTop: 2, wordBreak: "break-all" }}>{e.value}</div>
+          {m.title && <div className="mono text-dim" style={{ fontSize: 9, marginTop: 1, wordBreak: "break-word" }}>{m.title}</div>}
         </div>
       </div>
 
-      <div className="display text-head" style={{ fontSize: 14, fontWeight: 500, marginTop: 3, wordBreak: "break-all" }}>{e.value}</div>
+      {/* Confirmed / unconfirmed label — every card gets one */}
+      <div style={{ marginTop: 4 }}>
+        <ConfidenceLabel tier={tier} signals={info?.cluster?.signals} />
+      </div>
 
-      {isReject && (
-        <div className="display text-dim" style={{ fontSize: 9, fontStyle: "italic", marginTop: 3 }}>Single signal — insufficient corroboration</div>
-      )}
-
-      <div style={{ marginTop: 6 }}>
+      <div style={{ marginTop: 5 }}>
         {m.fullname && <div className="display text-body" style={{ fontSize: 11 }}>{m.fullname}</div>}
         {m.location && <MetaRow label="LOC">{m.location}</MetaRow>}
-        {m.bio && <MetaRow label="BIO">{String(m.bio).slice(0, 55)}{String(m.bio).length > 55 ? "…" : ""}</MetaRow>}
+        {m.bio && <MetaRow label="BIO">{String(m.bio).slice(0, 60)}{String(m.bio).length > 60 ? "…" : ""}</MetaRow>}
         {m.phone && <MetaRow label="PH">{m.phone}</MetaRow>}
         {breaches && <MetaRow label="BREACH">{breaches}</MetaRow>}
         {hours && <MetaRow label="ACTIVE">{hours}</MetaRow>}
