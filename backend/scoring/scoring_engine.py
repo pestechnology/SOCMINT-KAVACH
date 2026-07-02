@@ -110,12 +110,27 @@ HARD_ANCHOR_SIGNALS = {
 }
 
 
+_CONTEXT_SIGNALS = ("location_overlap", "bio_keyword_overlap",
+                    "stylometry_cosine", "posting_hours_overlap")
+
+
 def _has_hard_anchor(signals: dict) -> bool:
     if any(sig in signals for sig in HARD_ANCHOR_SIGNALS):
         return True
-    has_name = "exact_name_match" in signals or "fuzzy_name_match" in signals
-    has_context = any(sig in signals for sig in ("location_overlap", "bio_keyword_overlap", "stylometry_cosine", "posting_hours_overlap"))
-    return bool(has_name and has_context)
+    # A name match can anchor a link only WITH corroborating context, and the strength
+    # required scales with how reliable the name signal is:
+    #   - exact_name_match  : distinctive enough to anchor on ONE context signal.
+    #   - fuzzy_name_match  : fires at ratio>=80 and hits common names ("rahul sharma" vs
+    #                         "rahul verma"), so it needs TWO independent context signals.
+    # Without this split, two unrelated people who share a common first/last name and both
+    # post in the evening (posting_hours_overlap is trivially shared) would be treated as
+    # hard-anchored and could reach HIGH — a false-positive merge on soft signals alone.
+    n_context = sum(1 for sig in _CONTEXT_SIGNALS if sig in signals)
+    if "exact_name_match" in signals and n_context >= 1:
+        return True
+    if "fuzzy_name_match" in signals and n_context >= 2:
+        return True
+    return False
 
 
 class _UnionFind:

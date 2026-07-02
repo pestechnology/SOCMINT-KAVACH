@@ -25,10 +25,7 @@ from dataclasses import dataclass, field
 from backend.analysis.forensics import _WORD_RE, _STOP
 from backend.ingestion.base_module import RawProfile
 from backend.llm.llm_client import LLMClient
-from backend.scoring.scoring_engine import (
-    Cluster, _tier, _cap_tier, _explain,
-    LINK_MIN_POINTS, LINK_MIN_SIGNALS,
-)
+from backend.scoring.scoring_engine import Cluster
 
 
 def _extract_keywords(text: str, max_n: int = 15) -> list[str]:
@@ -264,14 +261,18 @@ def rerank_and_promote(
             if nc.cluster_id == best_cluster.cluster_id:
                 merged_members = list(nc.member_indices) + promoted
                 merged_signals = dict(nc.signals)
-                # Add a semantic signal for promoted members
+                # Record the semantic signal for transparency in the explanation, but it is
+                # NOT summed into the score below.
                 merged_signals["semantic_rerank_match"] = 30
 
-                confidence = min(100.0, float(sum(merged_signals.values())))
-                tier = _tier(confidence)
-                single = len(merged_signals) == 1
-                if single:
-                    tier = _cap_tier(tier, "LOW")
+                # PRECISION GUARD: an LLM promotion ADDS MEMBERS for recall but must NOT
+                # upgrade the cluster's tier/confidence. Those stay pinned to what the
+                # deterministic hard signals already earned. Summing semantic_rerank_match
+                # into the score (the old behaviour) let two LLM calls push a MEDIUM cluster
+                # to HIGH with no hard anchor — making the LLM the sole justification for a
+                # "confirmed" link, which is exactly the failure mode this tool must avoid.
+                confidence = nc.confidence_score
+                tier = nc.tier
 
                 promoted_names = [
                     f"{profiles[p].platform}/{profiles[p].value}" for p in promoted
@@ -305,20 +306,26 @@ def rerank_and_promote(
 
     for i, c in enumerate(new_clusters):
         c.relevance_rank = i + 1
-        # Attach relevance info to singleton clusters and boost confidence by LLM keyword match
+        # Attach LLM relevance to singleton clusters for UI ORDERING only.
+        # PRECISION GUARD: LLM relevance is a LEAD score, not a linkage confidence. An
+        # unlinked account the LLM "thinks" matches is a lead to investigate, not a
+        # confirmed link. The old code overwrote confidence_score/tier with the raw
+        # relevance number, so relevance>75 turned a singleton with ZERO hard signals into
+        # a HIGH/"confirmed" cluster on the LLM's word alone. We now keep relevance in its
+        # own field (relevance_score, surfaced separately in the UI) and NEVER let it raise
+        # the deterministic confidence_score or tier.
         if len(c.member_indices) == 1:
             idx = c.member_indices[0]
             rel_info = relevance_map.get(idx)
             if rel_info:
                 c.relevance_score = rel_info["relevance"]
                 c.relevance_reason = rel_info["reason"]
-                if rel_info["relevance"] > c.confidence_score and rel_info["relevance"] >= 50:
-                    c.confidence_score = float(rel_info["relevance"])
-                    c.tier = _tier(c.confidence_score)
-                    c.signals["llm_keyword_semantic_match"] = int(rel_info["relevance"])
+                if rel_info["relevance"] >= 50:
+                    lead = (f"LLM lead ({rel_info['relevance']}/100 — a lead to verify, "
+                            f"not a confirmed link): {rel_info['reason']}")
                     if not c.explanation or c.explanation == "No strong correlations found. Isolated profile.":
-                        c.explanation = f"LLM identity resolution ({rel_info['relevance']}/100): {rel_info['reason']}"
+                        c.explanation = lead
                     else:
-                        c.explanation += f" | LLM match ({rel_info['relevance']}/100): {rel_info['reason']}"
+                        c.explanation += f" | {lead}"
 
     return new_clusters, promoted

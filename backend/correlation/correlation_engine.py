@@ -95,7 +95,9 @@ def jaro_winkler(s1: str, s2: str) -> float:
     if s1 == s2: return 1.0
     
     # Jaro
-    match_distance = max(len(s1), len(s2)) // 2 - 1
+    # Floor at 0: for very short strings (len<=2) the raw formula goes negative, which
+    # corrupts the matching window. 0 means "same index only", which is correct there.
+    match_distance = max(0, max(len(s1), len(s2)) // 2 - 1)
     matches1 = [False] * len(s1)
     matches2 = [False] * len(s2)
     m = 0
@@ -137,7 +139,12 @@ def _username_signal(a: str, b: str) -> tuple[str, int] | None:
     if a in b or b in a:
         if min(len(a), len(b)) >= 5 and (a.startswith(b) or b.startswith(a) or a.endswith(b) or b.endswith(a)):
             return "username_exact_match", 40
-        return "username_substring_match", SIGNAL_WEIGHTS["username_substring_match"]
+        # A short fragment contained in a longer handle (e.g. "jo" in "john123", "raj" in
+        # "brajesh") is not evidence — it collides across countless unrelated handles.
+        # Require the shorter string to be >=4 chars; otherwise fall through to fuzzy,
+        # which demands high OVERALL similarity, not mere containment.
+        if min(len(a), len(b)) >= 4:
+            return "username_substring_match", SIGNAL_WEIGHTS["username_substring_match"]
     
     # Advanced Fuzzy Matching using Jaro-Winkler (better for typological/phonetic errors)
     jw_score = jaro_winkler(a, b) * 100
@@ -161,11 +168,20 @@ def _hours_jaccard(a, b) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+_PHASH_MAX_HAMMING = 6   # of 64 bits
+
+
 def _photo_match(ma: dict, mb: dict) -> bool:
     pa, pb = ma.get("photo_phash"), mb.get("photo_phash")
     if pa is not None and pb is not None:
-        try:  # hamming distance < 8
-            return bin(int(pa, 16) ^ int(pb, 16)).count("1") < 8
+        try:
+            # profile_photo_phash is a HARD anchor (one more signal → HIGH), so the
+            # threshold must be tight. imagehash's 64-bit pHash changes only ~1-4 bits
+            # under re-encoding/resize of the SAME image, but two DIFFERENT photos with a
+            # similar palette/composition can sit ~8-12 bits apart. The old <8 cutoff sat
+            # inside that ambiguous band and risked anchoring on look-alike-but-different
+            # avatars. <6 keeps tolerance for the same image while excluding look-alikes.
+            return bin(int(pa, 16) ^ int(pb, 16)).count("1") < _PHASH_MAX_HAMMING
         except Exception:
             pass
     ua, ub = ma.get("photo_url"), mb.get("photo_url")

@@ -94,3 +94,53 @@ def test_seed_matching_subword_and_metadata():
     assert len(clusters) == 1
     assert clusters[0].confidence_score == 100.0
     assert clusters[0].tier == "HIGH"
+
+
+# ---- precision regressions (correlation-accuracy audit) ----
+def test_common_name_plus_hours_not_hard_anchor():
+    """REGRESSION: two unrelated people sharing a COMMON name + evening posting hours must
+    NOT be treated as hard-anchored and must not reach HIGH. Fuzzy name + one soft context
+    signal is not enough evidence."""
+    from backend.scoring.scoring_engine import _has_hard_anchor
+    # fuzzy name (common) + a single context signal -> NOT an anchor
+    assert not _has_hard_anchor({"fuzzy_name_match": 20, "posting_hours_overlap": 15})
+    # fuzzy name needs TWO independent context signals to anchor
+    assert _has_hard_anchor({"fuzzy_name_match": 20, "posting_hours_overlap": 15,
+                             "location_overlap": 15})
+    # an EXACT name is distinctive enough to anchor on one context signal
+    assert _has_hard_anchor({"exact_name_match": 35, "posting_hours_overlap": 15})
+    # a real hard identifier always anchors on its own
+    assert _has_hard_anchor({"exact_email_match": 60})
+
+
+def test_common_name_evening_hours_capped_below_high():
+    """Two 'Rahul Sharma' / 'Rahul Verma' accounts both posting evenings must not link HIGH."""
+    md_a = {"name": "Rahul Sharma", "posting_hours": [18, 19, 20, 21]}
+    md_b = {"name": "Rahul Verma", "posting_hours": [18, 19, 20, 21]}
+    a = make_profile("social_account", "rahul_s", "instagram", "u1", md_a)
+    b = make_profile("social_account", "rahul_v", "twitter", "u2", md_b)
+    clusters = score([a, b], correlate([a, b]))
+    assert all(c.tier != "HIGH" for c in clusters), "common name + hours must never reach HIGH"
+
+
+def test_short_username_fragment_not_substring_match():
+    """REGRESSION: a <4-char fragment contained in a longer handle is not a substring match."""
+    from backend.correlation.correlation_engine import _username_signal
+    assert _username_signal("jo", "john123") is None  # "jo" in "john123" is noise
+    # a real >=4-char shared stem still fires
+    sig = _username_signal("john", "john123")
+    assert sig is not None and sig[0] in ("username_substring_match", "username_exact_match")
+
+
+def test_photo_phash_lookalike_not_matched():
+    """REGRESSION: two DIFFERENT photos ~8 bits apart must not fire the photo hard anchor,
+    while the SAME image with minor re-encoding (<6 bits) still matches."""
+    from backend.correlation.correlation_engine import _photo_match
+    base = 0x0000000000000000
+    same_reencoded = 0x000000000000000F   # 4 bits apart -> same image
+    lookalike = 0x00000000000000FF        # 8 bits apart -> different photo
+    hx = lambda n: format(n, "016x")
+    assert _photo_match({"photo_phash": hx(base)}, {"photo_phash": hx(same_reencoded)})
+    assert not _photo_match({"photo_phash": hx(base)}, {"photo_phash": hx(lookalike)})
+    # two profiles with NO photo are "no signal", never a match
+    assert not _photo_match({}, {})
