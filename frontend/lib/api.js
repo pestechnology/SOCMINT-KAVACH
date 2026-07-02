@@ -39,8 +39,8 @@ export const api = {
   login: (username, password) =>
     req("/auth/login", { method: "POST", body: { username, password }, auth: false }),
   listCases: () => req("/cases"),
-  createCase: (title, seeds, minor_involved = false) =>
-    req("/cases", { method: "POST", body: { title, seeds, minor_involved } }),
+  createCase: (title, seeds, minor_involved = false, country_filter = "ALL") =>
+    req("/cases", { method: "POST", body: { title, seeds, minor_involved, country_filter } }),
   getCase: (id) => req(`/cases/${id}`),
   getResults: (id) => req(`/cases/${id}/results`),
   reportUrl: (id) => `${BASE}/cases/${id}/report`,

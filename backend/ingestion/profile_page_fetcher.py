@@ -35,6 +35,16 @@ _TIMEOUT = 5.0
 _CONCURRENCY = 8
 _UA = "Mozilla/5.0 (compatible; VERTEX-OSINT/1.0)"
 
+_PLACEHOLDER_IMAGE_MARKERS = (
+    "default_profile_images", "default_profile_normal", "default_profile.png",
+    "avatar-default", "no_avatar", "no-avatar", "anonymous-user",
+    "missing-avatar", "default-avatar",
+)
+
+def _is_placeholder(url: str) -> bool:
+    u = url.lower()
+    return any(marker in u for marker in _PLACEHOLDER_IMAGE_MARKERS)
+
 # Patterns for og:image, twitter:image, og:description, twitter:description
 _OG_IMAGE  = re.compile(
     r'<meta[^>]+(?:property=["\']og:image["\']|name=["\']twitter:image["\'])'
@@ -107,7 +117,7 @@ async def _enrich_one(
         # Only read the first 50 KB — the <head> is always near the top
         html = r.text[:51200]
         photo, bio = _extract(html)
-        if photo and not meta.get("photo_url"):
+        if photo and not meta.get("photo_url") and not _is_placeholder(photo):
             meta["photo_url"] = photo
         if bio and not meta.get("bio"):
             meta["bio"] = bio

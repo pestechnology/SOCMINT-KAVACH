@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS cases (
     seeds_json TEXT NOT NULL,
     minor_involved INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending',
+    country_filter TEXT DEFAULT 'ALL',
     created_at TEXT,
     updated_at TEXT,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -121,6 +122,9 @@ def init_db() -> None:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(audit_ledger)").fetchall()]
         if "chain_hash" not in cols:
             conn.execute("ALTER TABLE audit_ledger ADD COLUMN chain_hash TEXT")
+        cols_cases = [r[1] for r in conn.execute("PRAGMA table_info(cases)").fetchall()]
+        if "country_filter" not in cols_cases:
+            conn.execute("ALTER TABLE cases ADD COLUMN country_filter TEXT DEFAULT 'ALL'")
         conn.commit()
     finally:
         conn.close()

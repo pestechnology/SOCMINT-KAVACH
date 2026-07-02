@@ -135,6 +135,8 @@ def _username_signal(a: str, b: str) -> tuple[str, int] | None:
     if a == b:
         return "username_exact_match", SIGNAL_WEIGHTS["username_exact_match"]
     if a in b or b in a:
+        if min(len(a), len(b)) >= 5 and (a.startswith(b) or b.startswith(a) or a.endswith(b) or b.endswith(a)):
+            return "username_exact_match", 40
         return "username_substring_match", SIGNAL_WEIGHTS["username_substring_match"]
     
     # Advanced Fuzzy Matching using Jaro-Winkler (better for typological/phonetic errors)
@@ -198,8 +200,10 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
     if _hours_jaccard(ma.get("posting_hours"), mb.get("posting_hours")) > 0.6:
         fired["posting_hours_overlap"] = SIGNAL_WEIGHTS["posting_hours_overlap"]
 
-    # bio keyword overlap — guard against None bios from maigret
-    ka, kb = _keywords(str(ma.get("bio") or "")), _keywords(str(mb.get("bio") or ""))
+    # bio and snippet keyword overlap
+    text_a = " ".join(filter(None, [str(ma.get("bio") or ""), str(ma.get("snippet") or ""), str(ma.get("title") or "")]))
+    text_b = " ".join(filter(None, [str(mb.get("bio") or ""), str(mb.get("snippet") or ""), str(mb.get("title") or "")]))
+    ka, kb = _keywords(text_a), _keywords(text_b)
     if ka and kb and len(ka & kb) >= 2:
         fired["bio_keyword_overlap"] = SIGNAL_WEIGHTS["bio_keyword_overlap"]
 
@@ -220,44 +224,45 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
     if shared and (len(shared) >= 2 or (shared - _MEGA_BREACHES)):
         fired["breach_co_occurrence"] = SIGNAL_WEIGHTS["breach_co_occurrence"]
 
-    # real name overlap
-    na, nb = _norm(ma.get("name") or ""), _norm(mb.get("name") or "")
-    if na and nb:
+    # real name overlap across metadata fields
+    def _clean_name(meta: dict) -> str:
+        n = str(meta.get("name") or meta.get("fullname") or meta.get("title") or "")
+        for sep in (" - ", " | ", " (@", " • ", " / "):
+            n = n.split(sep)[0]
+        return _norm(n)
+    na, nb = _clean_name(ma), _clean_name(mb)
+    va, vb = _norm(a.value), _norm(b.value)
+    if na and nb and len(na) >= 3 and len(nb) >= 3 and na != va and nb != vb:
         if na == nb:
+            fired["exact_name_match"] = SIGNAL_WEIGHTS["exact_name_match"]
+        elif (len(na) >= 8 and len(nb) >= 8) and (na in nb or nb in na):
             fired["exact_name_match"] = SIGNAL_WEIGHTS["exact_name_match"]
         else:
             ratio = (_fuzz.ratio(na, nb) if _HAVE_FUZZ else int(difflib.SequenceMatcher(None, na, nb).ratio() * 100))
             if ratio >= 80:
                 fired["fuzzy_name_match"] = SIGNAL_WEIGHTS["fuzzy_name_match"]
 
-    # location overlap
+    # location overlap — require at least 4-char strings to avoid
+    # spurious substring matches like "new" matching "new york" AND "new delhi".
     la, lb = _norm(ma.get("location") or ""), _norm(mb.get("location") or "")
-    if la and lb:
+    if la and lb and len(la) >= 4 and len(lb) >= 4:
         if la == lb or la in lb or lb in la:
             fired["location_overlap"] = SIGNAL_WEIGHTS["location_overlap"]
 
     return fired
 
 
-from backend.llm.llm_client import LLMClient
-
 def correlate(profiles: list[RawProfile]) -> list[CandidatePair]:
-    """Compare every profile against every other; return pairs that share >=1 signal."""
+    """Compare every profile against every other; return pairs that share >=1 signal.
+
+    This is purely deterministic (rule-based signals only). LLM-based semantic
+    matching is handled downstream by the reranker, which operates on the
+    already-clustered output and makes a bounded number of calls.
+    """
     pairs: list[CandidatePair] = []
-    llm = LLMClient()
-    
     for i in range(len(profiles)):
         for j in range(i + 1, len(profiles)):
             fired = _pair_signals(profiles[i], profiles[j])
             if fired:
                 pairs.append(CandidatePair(i=i, j=j, signals=fired))
-            else:
-                # If rule-based rules failed to find any exact match, let's try fuzzy holistic correlation
-                # Only run this if we have rich metadata for both
-                ma, mb = profiles[i].metadata or {}, profiles[j].metadata or {}
-                if len(str(ma)) > 50 and len(str(mb)) > 50:
-                    llm_score = llm.evaluate_match(ma, mb)
-                    if llm_score >= 35:
-                        fired["llm_holistic_match"] = llm_score
-                        pairs.append(CandidatePair(i=i, j=j, signals=fired))
     return pairs

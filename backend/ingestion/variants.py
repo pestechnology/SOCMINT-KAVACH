@@ -34,7 +34,7 @@ def username_variants(value: str, max_n: int = 5) -> list[str]:
 
     def add(candidate: str) -> None:
         c = candidate.strip("._-")
-        if c and c != original and c not in out and 3 <= len(c) <= 40:
+        if c and c != original and c not in out and 4 <= len(c) <= 40:
             out.append(c)
 
     if len(toks) >= 2:
@@ -44,7 +44,8 @@ def username_variants(value: str, max_n: int = 5) -> list[str]:
         rev = list(reversed(toks))
         add("".join(rev))                   #           -> shankarj
         add(".".join(rev))                  #           -> shankar.j
-        add(toks[0][0] + toks[-1])          # arjun mehta -> amehta
+        if not toks[-1].isdigit() and len(toks[-1]) >= 3:
+            add(toks[0][0] + toks[-1])      # arjun mehta -> amehta (but NOT ash29_03 -> a03!)
     else:
         de_num = re.sub(r"\d+$", "", original)   # ghostrider99 -> ghostrider
         add(de_num)

@@ -127,6 +127,11 @@ export default function Cases() {
                         [{(s.type || "").toUpperCase()}]
                       </span>
                     ))}
+                    {c.country_filter && c.country_filter !== "ALL" && (
+                      <span className="mono text-amber" style={{ fontSize: 9, border: "0.5px solid #D4900A", borderRadius: 2, padding: "1px 5px" }}>
+                        [REGION: {c.country_filter}]
+                      </span>
+                    )}
                   </div>
                 </div>
                 {!!c.minor_involved && (
@@ -179,6 +184,7 @@ function NewInvestigation({ onClose, onCreated }) {
   const [draftType, setDraftType] = useState("username");
   const [draftValue, setDraftValue] = useState("");
   const [minor, setMinor] = useState(false);
+  const [countryFilter, setCountryFilter] = useState("INDIA");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -192,7 +198,7 @@ function NewInvestigation({ onClose, onCreated }) {
     setError(""); setBusy(true);
     try {
       if (!seeds.length) throw new Error("Add at least one identifier");
-      const res = await api.createCase(title || "Untitled investigation", seeds, minor);
+      const res = await api.createCase(title || "Untitled investigation", seeds, minor, countryFilter);
       onCreated(res.case_id);
     } catch (e) { setError(e.message); setBusy(false); }
   }
@@ -215,6 +221,21 @@ function NewInvestigation({ onClose, onCreated }) {
               placeholder="e.g. Investment fraud — complaint #1423"
               style={{ border: "1px solid #2A3148", borderRadius: 2, fontSize: 13, padding: "10px 12px", outline: "none" }}
               onFocus={(e) => (e.currentTarget.style.borderColor = "#D4900A")} onBlur={(e) => (e.currentTarget.style.borderColor = "#2A3148")} />
+          </div>
+
+          <div>
+            <label className="mono text-dim block mb-1" style={{ fontSize: 9, letterSpacing: "0.1em" }}>COUNTRY / REGION FILTER</label>
+            <select
+              value={countryFilter}
+              onChange={(e) => setCountryFilter(e.target.value)}
+              className="mono bg-lifted text-head w-full"
+              style={{ border: "1px solid #2A3148", borderRadius: 2, fontSize: 12, padding: "8px 10px", outline: "none", cursor: "pointer" }}
+              onFocus={(e) => (e.currentTarget.style.borderColor = "#D4900A")}
+              onBlur={(e) => (e.currentTarget.style.borderColor = "#2A3148")}
+            >
+              <option value="INDIA">INDIA (Indian & Common Global Platforms Only)</option>
+              <option value="ALL">ALL (Global Web Search - No Country Restriction)</option>
+            </select>
           </div>
 
           <div>
@@ -255,8 +276,8 @@ function NewInvestigation({ onClose, onCreated }) {
         </div>
 
         <div className="flex items-center justify-end" style={{ padding: "12px 20px", borderTop: "1px solid #2A3148", gap: 8 }}>
-          <button onClick={onClose} disabled={busy} className="mono text-dim" style={{ fontSize: 10 }}>CANCEL</button>
-          <button onClick={begin} disabled={busy} className="mono"
+          <button onClick={onClose} disabled={busy} className="mono text-dim disabled:opacity-40" style={{ fontSize: 10 }}>CANCEL</button>
+          <button onClick={begin} disabled={busy} className="mono disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ border: "1px solid #D4900A", color: "#D4900A", background: "transparent", fontSize: 10, padding: "8px 20px", borderRadius: 2 }}
             onMouseEnter={(e) => { if (!busy) e.currentTarget.style.background = "rgba(212,144,10,0.10)"; }}
             onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>

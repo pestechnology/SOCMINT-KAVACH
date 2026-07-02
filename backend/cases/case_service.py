@@ -26,7 +26,7 @@ def _now() -> str:
 
 
 def create_case(user_id: str, title: str, seeds: list[dict],
-                minor_involved: bool = False) -> str:
+                minor_involved: bool = False, country_filter: str = "ALL") -> str:
     for s in seeds:
         if s.get("type") not in VALID_SEED_TYPES:
             raise ValueError(f"invalid seed type: {s.get('type')!r}")
@@ -37,9 +37,9 @@ def create_case(user_id: str, title: str, seeds: list[dict],
     try:
         conn.execute(
             """INSERT INTO cases (case_id, user_id, title, seeds_json, minor_involved,
-               status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)""",
+               status, country_filter, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)""",
             (case_id, user_id, title, json.dumps(seeds), int(minor_involved),
-             "pending", _now(), _now()),
+             "pending", country_filter or "ALL", _now(), _now()),
         )
         conn.commit()
     finally:

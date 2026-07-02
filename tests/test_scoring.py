@@ -84,3 +84,13 @@ def test_unionfind():
 def test_weights_present():
     for k in ("exact_phone_match", "username_exact_match", "profile_photo_phash"):
         assert SIGNAL_WEIGHTS[k] > 0
+
+
+def test_seed_matching_subword_and_metadata():
+    # Simulate finding LinkedIn profile with generated suffix or matching metadata fullname
+    a = make_profile("social_account", "ashwin-harish-a628a72b2", "linkedin", "https://linkedin.com/in/ashwin-harish-a628a72b2", {"name": "Ashwin Harish - AI intern @GREYWIZ"})
+    seeds = [{"type": "name", "value": "Ashwin Harish"}]
+    clusters = score([a], correlate([a]), seeds=seeds)
+    assert len(clusters) == 1
+    assert clusters[0].confidence_score == 100.0
+    assert clusters[0].tier == "HIGH"

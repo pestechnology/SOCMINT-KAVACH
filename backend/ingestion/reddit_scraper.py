@@ -24,6 +24,25 @@ _PUBLIC_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 # Module-level app-only token cache (shared across scraper instances within a run).
 _token_cache = {"value": None, "exp": 0.0}
 
+_THUMB_PLACEHOLDERS = {"self", "default", "nsfw", "spoiler", "image", ""}
+
+def _post_image_url(post: dict) -> str | None:
+    """Best-effort real image URL for a submitted post, or None if it has none."""
+    thumb = post.get("thumbnail") or ""
+    if thumb.startswith("http") and thumb not in _THUMB_PLACEHOLDERS:
+        return thumb
+    url = post.get("url") or ""
+    if url.startswith("http") and url.lower().split("?")[0].endswith(
+        (".jpg", ".jpeg", ".png", ".gif", ".webp")
+    ):
+        return url
+    preview = (post.get("preview") or {}).get("images") or []
+    if preview:
+        src = (preview[0].get("source") or {}).get("url")
+        if src:
+            return src.replace("&amp;", "&")
+    return None
+
 
 async def _oauth_token(client: httpx.AsyncClient) -> str | None:
     """Return a cached app-only Reddit token, or None if creds are absent/fail."""
@@ -119,8 +138,9 @@ class RedditScraper(BaseDataSource):
                     meta["name"] = sub.get("title", "")
                     meta["avatar"] = sub.get("icon_img", "").split("?")[0] if sub.get("icon_img") else ""
 
-                # Activity analytics from recent comments (public, timestamped).
-                # Fail-safe: if this fetch fails the profile is still returned.
+                # Activity analytics from recent comments and submitted posts.
+                # Fail-safe: if these fetches fail the profile is still returned.
+                all_epochs = []
                 try:
                     cr = await client.get(
                         f"{base}/user/{username}/comments{suffix}",
@@ -129,8 +149,10 @@ class RedditScraper(BaseDataSource):
                     )
                     if cr.status_code == 200:
                         children = cr.json().get("data", {}).get("children", [])
-                        epochs = [c.get("data", {}).get("created_utc") for c in children]
-                        meta.update(_activity_from_timestamps(epochs))
+                        for c in children:
+                            epoch = c.get("data", {}).get("created_utc")
+                            if epoch:
+                                all_epochs.append(epoch)
                         # sampled comment text -> stylometry + sentiment forensics
                         bodies = [c.get("data", {}).get("body", "") for c in children]
                         sample = " ".join(b for b in bodies if b)[:4000]
@@ -138,6 +160,40 @@ class RedditScraper(BaseDataSource):
                             meta["text_sample"] = sample
                 except Exception:
                     pass
+
+                try:
+                    sr = await client.get(
+                        f"{base}/user/{username}/submitted{suffix}",
+                        params={"limit": 25, "raw_json": 1},
+                        headers=headers,
+                    )
+                    if sr.status_code == 200:
+                        children = sr.json().get("data", {}).get("children", [])
+                        recent_posts = []
+                        for c in children:
+                            d = c.get("data", {})
+                            epoch = d.get("created_utc")
+                            if epoch:
+                                all_epochs.append(epoch)
+                            img = _post_image_url(d)
+                            if img and len(recent_posts) < 10:
+                                recent_posts.append({
+                                    "kind": "post",
+                                    "platform": "reddit",
+                                    "title": d.get("title"),
+                                    "image_url": img,
+                                    "posted_at": datetime.datetime.utcfromtimestamp(epoch).isoformat() + "Z"
+                                        if epoch else None,
+                                    "permalink": ("https://www.reddit.com" + d.get("permalink"))
+                                        if d.get("permalink") else None,
+                                })
+                        if recent_posts:
+                            meta["recent_posts"] = recent_posts
+                except Exception:
+                    pass
+
+                if all_epochs:
+                    meta.update(_activity_from_timestamps(all_epochs))
 
                 return [make_profile(
                     "social_account", username, "reddit", f"https://www.reddit.com/user/{username}",

@@ -107,15 +107,22 @@ class SerperScraper(BaseDataSource):
             r = await client.post(
                 _ENDPOINT,
                 headers={"X-API-KEY": config.SERPER_API_KEY, "Content-Type": "application/json"},
-                json={"q": query, "num": 10},
+                json={"q": query, "num": 20},
             )
             if r.status_code != 200:
                 return []
             data = r.json()
         out = []
-        for item in data.get("organic", [])[:10]:
+        platform_counts: dict[str, int] = {}
+        is_general_query = "site:" not in self.query_template.lower()
+        for item in data.get("organic", [])[:20]:
             url      = item.get("link", "")
             platform = _platform_from_url(url)
+            if is_general_query:
+                count = platform_counts.get(platform, 0)
+                if count >= 3:
+                    continue
+                platform_counts[platform] = count + 1
             username = _extract_social_username(url, platform)
             # Use the extracted handle as the profile value when available so
             # _username_signal in the correlation engine can match it against

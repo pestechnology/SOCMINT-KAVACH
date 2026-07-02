@@ -181,5 +181,5 @@ async def reverify_leads(
                 )
                 break
 
-    new_clusters.sort(key=lambda c: (len(c.member_indices) > 1, c.confidence_score), reverse=True)
+    new_clusters.sort(key=lambda c: ("Primary target persona" in (c.explanation or ""), len(c.member_indices) > 1, c.confidence_score), reverse=True)
     return profiles, new_clusters, promoted

@@ -46,12 +46,29 @@ _FUNCTION_WORDS = (
 ).split()
 _FUNCTION_SET = set(_FUNCTION_WORDS)
 
-_STOP = _FUNCTION_SET | {
-    "dm", "rt", "amp", "http", "https", "com", "www", "that", "this", "with", "your",
-    "from", "they", "what", "when", "been", "have", "has", "had", "got", "ago", "via",
-    "you", "are", "was", "were", "his", "her", "him", "she", "them", "their", "our",
-    "out", "for", "and", "the", "but", "not", "can", "all", "any", "get", "got",
+_BOILERPLATE_NOISE = {
+    "photos", "videos", "instagram", "profile", "samsung", "galaxy", "follow",
+    "flight", "mesa", "tiktok", "number", "twitter", "facebook", "youtube",
+    "github", "linkedin", "app", "sign", "up", "subscribers", "posts",
+    "account", "user", "channel", "likes", "views", "share", "official",
+    "page", "bio", "link", "click", "join", "online", "free", "content",
+    "media", "platform", "social", "phone", "site", "source", "view",
+    "see", "post", "like", "public", "create", "creating", "login",
+    "www", "com", "net", "org", "gmail", "yahoo", "hotmail", "email",
+    "dm", "rt", "amp", "http", "https", "that", "this", "with", "your",
+    "from", "they", "what", "when", "been", "have", "has", "had", "got",
+    "ago", "via", "you", "are", "was", "were", "his", "her", "him", "she",
+    "them", "their", "our", "out", "for", "and", "the", "but", "not", "can",
+    "all", "any", "get", "got", "picture", "photo", "image", "avatar",
+    "check", "welcome", "about", "home", "search", "people", "groups",
+    "member", "members", "group", "recent", "default", "contact", "info",
+    "information", "status", "user", "users", "name", "full", "first", "last",
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "here", "there", "where", "why", "how", "who", "whom", "whose", "which",
+    "such", "much", "many", "more", "most", "some", "any", "every", "all",
+    "only", "own", "other", "another", "same", "different", "new", "old",
 }
+_STOP = _FUNCTION_SET | _BOILERPLATE_NOISE
 _HASHTAG_RE = re.compile(r"#(\w{2,40})")
 _WORD_RE = re.compile(r"[A-Za-z']{3,}")
 
@@ -185,7 +202,39 @@ def summarize(entities: list[dict]) -> dict:
 
     # --- keywords + hashtags ---
     words = [w.lower() for w in _WORD_RE.findall(blob)]
-    keywords = [w for w, _ in Counter(w for w in words if w not in _STOP).most_common(12)]
+    
+    # 1. Gather explicit identifying names / tokens from entities so they get priority
+    explicit_tokens: Counter = Counter()
+    for e in entities:
+        m = _meta(e)
+        for k in ("name", "fullname", "username", "first_name", "last_name", "title", "query"):
+            val = str(m.get(k) or e.get(k) or "").strip()
+            if val and val.lower() != "null":
+                val = val.split(" • ")[0].split(" | ")[0].replace("(@", " ").replace(")", " ")
+                for tok in _WORD_RE.findall(val):
+                    t_lower = tok.lower()
+                    if t_lower not in _STOP and len(t_lower) >= 3 and not t_lower.isdigit():
+                        explicit_tokens[t_lower] += 50  # Huge boost for actual person names / handles!
+
+    # 2. Try LLM extraction for NSA-grade identifying keywords
+    keywords: list[str] = []
+    try:
+        from backend.llm.llm_client import LLMClient
+        llm = LLMClient()
+        keywords = llm.extract_keywords(blob, entities)
+    except Exception:
+        pass
+
+    # 3. If LLM returned fewer than 5 keywords, combine with weighted explicit tokens + clean frequency counts
+    if len(keywords) < 5:
+        freq = Counter(w for w in words if w not in _STOP)
+        combined = explicit_tokens + freq
+        keywords = [w for w, _ in combined.most_common(15)]
+    if explicit_tokens:
+        # Guarantee top explicit names appear at the front of the final keyword list
+        top_names = [w for w, _ in explicit_tokens.most_common(6) if w not in keywords]
+        keywords = (top_names + keywords)[:15]
+
     hashtags = [h for h, _ in Counter(m.lower() for m in _HASHTAG_RE.findall(blob)).most_common(10)]
 
     # --- activity profile ---

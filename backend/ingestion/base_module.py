@@ -35,13 +35,14 @@ def resolve_tool(name: str) -> str | None:
     # (e.g. server launched via venv\Scripts\python.exe without activation), it misses
     # even properly-installed tools.  Fall back to the interpreter's Scripts/bin dir.
     # On Windows try .exe first, then .bat/.cmd for wrapper scripts (e.g. blackbird.bat).
-    exts = [".exe", ".bat", ".cmd"] if os.name == "nt" else [""]
-    sub = "Scripts" if os.name == "nt" else "bin"
+    exts = [".exe", ".bat", ".cmd", ""]
+    subs = ["Scripts", "bin"]
     for base in (os.path.dirname(sys.executable), sys.prefix):
-        for ext in exts:
-            cand = os.path.join(base, sub, name + ext)
-            if os.path.exists(cand):
-                return cand
+        for sub in subs:
+            for ext in exts:
+                cand = os.path.join(base, sub, name + ext)
+                if os.path.exists(cand):
+                    return cand
     return None
 
 

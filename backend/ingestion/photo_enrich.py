@@ -31,12 +31,21 @@ _MAX_BYTES = 5 * 1024 * 1024          # don't download more than 5 MB per image
 _CONCURRENCY = 8                       # parallel downloads cap
 _TIMEOUT = 10.0
 
+_PLACEHOLDER_IMAGE_MARKERS = (
+    "default_profile_images", "default_profile_normal", "default_profile.png",
+    "avatar-default", "no_avatar", "no-avatar", "anonymous-user",
+    "missing-avatar", "default-avatar",
+)
+
 
 def _photo_url_of(meta: dict) -> str | None:
     for k in _PHOTO_KEYS:
         v = meta.get(k)
         if isinstance(v, str) and v.startswith("http"):
-            return v.split("?")[0] if k == "icon_img" else v
+            url = v.split("?")[0] if k == "icon_img" else v
+            if any(marker in url.lower() for marker in _PLACEHOLDER_IMAGE_MARKERS):
+                continue
+            return url
     return None
 
 

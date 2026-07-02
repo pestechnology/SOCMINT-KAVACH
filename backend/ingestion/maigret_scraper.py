@@ -58,7 +58,7 @@ class MaigretScraper(BaseDataSource):
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         try:
-            await asyncio.wait_for(proc.communicate(), timeout=200)
+            await asyncio.wait_for(proc.communicate(), timeout=90)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()

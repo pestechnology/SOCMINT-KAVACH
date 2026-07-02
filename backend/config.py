@@ -66,7 +66,12 @@ REDDIT_USER_AGENT: str = _get("REDDIT_USER_AGENT", "VERTEX-OSINT/1.0 (CIDECODE)"
 # ---- LLM model names (NVIDIA Cloud, OpenAI-compatible) ----
 LLM_EXTRACT_MODEL: str = _get("LLM_EXTRACT_MODEL", "meta/llama-3.3-70b-instruct")
 LLM_EXPLAIN_MODEL: str = _get("LLM_EXPLAIN_MODEL", "deepseek-ai/deepseek-v4-pro")
-LLM_TIMEOUT_SECONDS: int = int(_get("LLM_TIMEOUT_SECONDS", "15"))
+LLM_TIMEOUT_SECONDS: int = int(_get("LLM_TIMEOUT_SECONDS", "45"))
+
+# ---- Groq Cloud (reranking + failover) ----
+GROQ_API_KEY: str = _get("GROQ_API_KEY")
+GROQ_BASE_URL: str = _get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+GROQ_MODEL: str = _get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 # ---- Paths ----
 _ROOT = Path(__file__).resolve().parent.parent

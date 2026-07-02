@@ -45,6 +45,8 @@ export default function CaseView() {
   const [hovered, setHovered] = useState(null);
   const [mouse, setMouse] = useState({ x: 0, y: 0 });
   const [filter, setFilter] = useState("ALL");
+  const [platformFilter, setPlatformFilter] = useState("ALL");
+  const [scoreFilter, setScoreFilter] = useState("ALL");
   const [showUnlinked, setShowUnlinked] = useState(false);
 
   // scanning feed (running state)
@@ -102,8 +104,17 @@ export default function CaseView() {
   const entById = {};
   entities.forEach((e) => (entById[e.entity_id] = e));
 
+  const uniquePlatforms = Array.from(new Set(entities.map((e) => (e.platform || "").toLowerCase()))).filter(Boolean).sort();
+
   const sorted = [...entities].sort((a, b) => (infoByEntity[b.entity_id]?.score || 0) - (infoByEntity[a.entity_id]?.score || 0));
-  const visible = filter === "ALL" ? sorted : sorted.filter((e) => (infoByEntity[e.entity_id]?.tier || "REJECT") === filter);
+  const visible = sorted.filter((e) => {
+    const p = (e.platform || "").toLowerCase();
+    const tier = infoByEntity[e.entity_id]?.tier || "REJECT";
+    const passTierBtn = filter === "ALL" || tier === filter;
+    const passPlatform = platformFilter === "ALL" || p === platformFilter;
+    const passScore = scoreFilter === "ALL" || tier === scoreFilter;
+    return passTierBtn && passPlatform && passScore;
+  });
 
   const multi = clusters.filter((c) => (c.entity_ids || []).length >= 2);
   const unlinked = clusters.filter((c) => (c.entity_ids || []).length < 2);
@@ -111,16 +122,25 @@ export default function CaseView() {
   const highLinks = multi.filter((c) => c.tier === "HIGH").length;
   const topScore = clusters.reduce((m, c) => Math.max(m, c.confidence_score || 0), 0);
 
-  const hoveredEnt = hovered ? entById[hovered] : null;
-  const hoveredInfo = hovered ? infoByEntity[hovered] : null;
+  const activeEntId = hovered || selected;
+  const hoveredEnt = activeEntId ? entById[activeEntId] : null;
+  const hoveredInfo = activeEntId ? infoByEntity[activeEntId] : null;
   const fx = data.forensics || {};
+  const galleryItems = buildGalleryItems(entities, infoByEntity);
 
   return (
-    <div className="h-screen flex flex-col bg-ink overflow-hidden">
+    <div className="min-h-screen flex flex-col bg-ink">
       {/* TOP BAR */}
       <div className="bg-surface border-b border-edge flex items-center justify-between" style={{ padding: "10px 20px" }}>
         <button onClick={() => router.push("/cases")} className="mono text-dim hover:text-amber" style={{ fontSize: 10 }}>← Registry</button>
-        <div className="display text-head truncate" style={{ fontSize: 15, fontWeight: 500, maxWidth: "50%" }}>{kase.title}</div>
+        <div className="flex items-center" style={{ gap: 8, maxWidth: "50%" }}>
+          <div className="display text-head truncate" style={{ fontSize: 15, fontWeight: 500 }}>{kase.title}</div>
+          {kase.country_filter && kase.country_filter !== "ALL" && (
+            <span className="mono text-amber shrink-0" style={{ fontSize: 9, border: "0.5px solid #D4900A", borderRadius: 2, padding: "1px 5px", letterSpacing: "0.08em" }}>
+              [{kase.country_filter}]
+            </span>
+          )}
+        </div>
         <div className="flex items-center" style={{ gap: 12 }}>
           <StatusBadge status={status} />
           <ReportButton id={id} disabled={status !== "complete"} />
@@ -137,7 +157,7 @@ export default function CaseView() {
       </div>
 
       {/* THREE PANELS */}
-      <div className="flex flex-1 overflow-hidden" style={{ minHeight: 0 }}>
+      <div className="flex overflow-hidden" style={{ minHeight: 0, height: "64vh", flexShrink: 0 }}>
         {/* LEFT — ACCOUNT REGISTRY */}
         <div className="overflow-y-auto bg-surface border-r border-edge" style={{ width: 260, flexShrink: 0 }}>
           <div className="panel-label sticky top-0 bg-surface border-b border-edge" style={{ padding: "10px 14px" }}>
@@ -145,68 +165,189 @@ export default function CaseView() {
           </div>
 
           {!running && (
-            <div className="flex border-b border-edge" style={{ gap: 6, padding: "6px 14px" }}>
-              {FILTERS.map(([label, val]) => (
-                <button key={val} onClick={() => setFilter(val)} className="mono"
-                  style={{ fontSize: 8, padding: "3px 8px", borderRadius: 2, border: "0.5px solid", borderColor: filter === val ? "#D4900A" : "#2A3148", color: filter === val ? "#D4900A" : "#4A5568", background: "transparent" }}>
-                  {label}
-                </button>
-              ))}
+            <div className="flex flex-col border-b border-edge bg-lifted" style={{ gap: 8, padding: "10px 14px" }}>
+              <div className="flex" style={{ gap: 4 }}>
+                {FILTERS.map(([label, val]) => (
+                  <button key={val} onClick={() => { setFilter(val); if (val !== "ALL") setScoreFilter(val); else setScoreFilter("ALL"); }} className="mono flex-1"
+                    style={{ fontSize: 8, padding: "3px 4px", borderRadius: 2, border: "0.5px solid", borderColor: (filter === val || scoreFilter === val) ? "#D4900A" : "#2A3148", color: (filter === val || scoreFilter === val) ? "#D4900A" : "#4A5568", background: "transparent", textAlign: "center" }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div>
+                <label className="mono text-dim block mb-1" style={{ fontSize: 8, letterSpacing: "0.08em", color: "#8A97AD" }}>PLATFORM FILTER</label>
+                <select
+                  value={platformFilter}
+                  onChange={(e) => setPlatformFilter(e.target.value)}
+                  className="mono bg-ink text-head w-full"
+                  style={{ fontSize: 8, padding: "4px 6px", border: "1px solid #2A3148", borderRadius: 2 }}
+                >
+                  <option value="ALL">ALL PLATFORMS ({uniquePlatforms.length})</option>
+                  {uniquePlatforms.map((p) => (
+                    <option key={p} value={p}>{p.toUpperCase()}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mono text-dim block mb-1" style={{ fontSize: 8, letterSpacing: "0.08em", color: "#8A97AD" }}>CONFIDENCE SCORE</label>
+                <select
+                  value={scoreFilter}
+                  onChange={(e) => {
+                    setScoreFilter(e.target.value);
+                    if (e.target.value === "ALL" || e.target.value === "HIGH" || e.target.value === "MEDIUM" || e.target.value === "LOW" || e.target.value === "REJECT") {
+                      setFilter(e.target.value);
+                    }
+                  }}
+                  className="mono bg-ink text-head w-full"
+                  style={{ fontSize: 8, padding: "4px 6px", border: "1px solid #2A3148", borderRadius: 2 }}
+                >
+                  <option value="ALL">ALL SCORES</option>
+                  <option value="HIGH">HIGH CONFIDENCE</option>
+                  <option value="MEDIUM">MEDIUM CONFIDENCE</option>
+                  <option value="LOW">LOW CONFIDENCE</option>
+                  <option value="REJECT">REJECTED</option>
+                </select>
+              </div>
             </div>
           )}
 
-          {running ? (
-            <div className="bg-ink" style={{ padding: "8px 12px", minHeight: "100%" }}>
-              {logLines.length === 0 && <div className="mono text-dim" style={{ fontSize: 10 }}>● initialising scan…</div>}
-              {logLines.map((l, i) => (
-                <div key={i} className="mono tier-complete" style={{ fontSize: 10, lineHeight: 1.7, whiteSpace: "pre" }}>{l}</div>
-              ))}
-            </div>
-          ) : (
-            visible.map((e) => <AccountCard key={e.entity_id} e={e} info={infoByEntity[e.entity_id]} onClick={() => setSelected(e.entity_id)} active={selected === e.entity_id} />)
-          )}
+          <div className="divide-y divide-edge">
+            {visible.map((e) => (
+              <AccountCard
+                key={e.entity_id}
+                e={e}
+                info={infoByEntity[e.entity_id]}
+                active={activeEntId === e.entity_id}
+                onClick={() => setSelected((s) => (s === e.entity_id ? null : e.entity_id))}
+              />
+            ))}
+            {visible.length === 0 && !running && (
+              <div className="mono text-dim text-center" style={{ fontSize: 9, padding: 20 }}>No matching accounts</div>
+            )}
+            {running && (
+              <div className="flex flex-col bg-ink border-t border-edge" style={{ padding: "12px 14px", gap: 6 }}>
+                <div className="mono text-amber flex items-center" style={{ fontSize: 9, gap: 6 }}>
+                  <span className="status-dot-running" /> SCANNING LIVE FEED…
+                </div>
+                {logLines.length === 0 && <div className="mono text-dim" style={{ fontSize: 8 }}>● initializing scrapers…</div>}
+                <div className="flex flex-col overflow-y-auto" style={{ maxHeight: "250px", gap: 3 }}>
+                  {logLines.map((l, i) => (
+                    <div key={i} className="mono tier-complete" style={{ fontSize: 8, lineHeight: 1.4, whiteSpace: "pre-wrap" }}>{l}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* MIDDLE — CORRELATION GRAPH */}
-        <div className="flex flex-col flex-1 bg-surface border-r border-edge" style={{ minWidth: 0 }}>
-          <div className="panel-label border-b border-edge" style={{ padding: "10px 14px" }}>CORRELATION GRAPH</div>
-          <div className="relative flex-1" style={{ minHeight: 0 }} onMouseMove={(ev) => setMouse({ x: ev.clientX, y: ev.clientY })}>
-            {entities.length > 0 ? (
-              <NetworkGraph entities={entities} clusters={clusters} onSelect={setSelected} onHover={setHovered} />
-            ) : (
-              <div className="flex items-center justify-center h-full mono text-dim" style={{ fontSize: 11 }}>AWAITING DATA</div>
-            )}
-
-            {running && (
-              <div className="absolute mono text-amber flex items-center" style={{ top: 10, right: 10, gap: 6, background: "#161B27", border: "0.5px solid #D4900A", padding: "4px 10px", fontSize: 9 }}>
-                <span className="status-dot-running" /> SCANNING
+        {/* MIDDLE — DETAIL / EVIDENCE / GRAPH */}
+        <div className="flex flex-col flex-1 bg-ink border-r border-edge" style={{ minWidth: 0 }}>
+          {!hoveredEnt ? (
+            <div className="flex flex-col flex-1 h-full bg-surface">
+              <div className="panel-label border-b border-edge flex items-center justify-between" style={{ padding: "10px 14px", background: "#131722", flexShrink: 0 }}>
+                <span>CORRELATION GRAPH</span>
+                <span className="mono text-dim" style={{ fontSize: 8 }}>← Click any node or account card for details</span>
               </div>
-            )}
-
-            {hoveredEnt && (
-              <div className="fixed bg-surface border border-edge pointer-events-none z-50" style={{ left: mouse.x + 14, top: mouse.y + 14, padding: "8px 10px", maxWidth: 240 }}>
-                <div className="mono text-dim" style={{ fontSize: 9, letterSpacing: "0.08em" }}>{(hoveredEnt.platform || "").toUpperCase()}</div>
-                <div className="display text-head" style={{ fontSize: 13, fontWeight: 500 }}>{hoveredEnt.value}</div>
-                {hoveredInfo && (
-                  <div className={`mono ${TIER_CLASS[hoveredInfo.tier] || "tier-reject"}`} style={{ fontSize: 10, marginTop: 2 }}>
-                    {hoveredInfo.score} — {hoveredInfo.tier}
-                  </div>
-                )}
-                {hoveredInfo?.cluster?.signals && (
-                  <div className="mono text-dim" style={{ fontSize: 9, marginTop: 3 }}>
-                    {Object.keys(hoveredInfo.cluster.signals).slice(0, 2).join(", ") || "no shared signals"}
-                  </div>
+              <div className="relative flex-1" style={{ minHeight: 0 }} onMouseMove={(ev) => setMouse({ x: ev.clientX, y: ev.clientY })}>
+                {entities.length > 0 ? (
+                  <NetworkGraph entities={entities} clusters={clusters} onSelect={(id) => { setSelected(id); setHovered(id); }} onHover={setHovered} />
+                ) : (
+                  <div className="flex items-center justify-center h-full mono text-dim" style={{ fontSize: 11 }}>AWAITING DATA</div>
                 )}
               </div>
-            )}
-          </div>
-          <div className="flex border-t border-edge" style={{ gap: 16, padding: "10px 14px" }}>
-            {[["HIGH", "#D4900A"], ["MEDIUM", "#5B9BD5"], ["LOW", "#E08A4A"], ["UNLINKED", "#8A97AD"]].map(([t, c]) => (
-              <span key={t} className="mono text-dim flex items-center" style={{ fontSize: 9, gap: 5 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: c, display: "inline-block" }} />{t}
-              </span>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto">
+              <div className="panel-label sticky top-0 bg-surface border-b border-edge flex items-center justify-between" style={{ padding: "10px 14px" }}>
+                <span>ACCOUNT DETAILS</span>
+                <button onClick={() => { setSelected(null); setHovered(null); }} className="mono text-amber hover:underline" style={{ fontSize: 8 }}>✕ Close Details</button>
+              </div>
+              <div style={{ padding: 16 }}>
+                <div className="flex items-start justify-between border-b border-edge pb-3 mb-3">
+                  <div className="flex items-center" style={{ gap: 10 }}>
+                    <PlatformIcon platform={hoveredEnt.platform} size={32} />
+                    <div>
+                      <div className="display text-head" style={{ fontSize: 16, fontWeight: 500 }}>
+                        {hoveredEnt.metadata?.fullname || hoveredEnt.metadata?.name || hoveredEnt.value}
+                      </div>
+                      <div className="mono text-dim" style={{ fontSize: 10 }}>
+                        {(hoveredEnt.platform || "?").toUpperCase()} · <span style={{ color: "#E2E8F0" }}>{hoveredEnt.value}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="mono" style={{ fontSize: 20, color: "#D4900A", fontWeight: 500 }}>
+                      {hoveredInfo?.score ?? 0}<span style={{ fontSize: 10 }}>/100</span>
+                    </div>
+                    <ConfidenceLabel tier={hoveredInfo?.tier || "REJECT"} signals={hoveredInfo?.cluster?.signals} />
+                  </div>
+                </div>
+
+                {hoveredInfo?.cluster?.explanation && (
+                  <div className="bg-lifted border border-edge mb-4" style={{ padding: "10px 12px", borderLeft: "2px solid #D4900A" }}>
+                    <div className="mono text-dim" style={{ fontSize: 8, letterSpacing: "0.08em", marginBottom: 3 }}>CORRELATION FORENSIC RATIONALE</div>
+                    <div className="display text-body" style={{ fontSize: 11, lineHeight: 1.5 }}>
+                      {hoveredInfo.cluster.explanation}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mono text-dim" style={{ fontSize: 9, letterSpacing: "0.08em", marginBottom: 6 }}>
+                  EXTRACTED METADATA ({Object.keys(hoveredEnt.metadata || {}).length} fields)
+                </div>
+                <div className="bg-surface border border-edge mb-4" style={{ padding: "10px 12px" }}>
+                  {Object.entries(hoveredEnt.metadata || {}).length === 0 ? (
+                    <div className="mono text-dim" style={{ fontSize: 9 }}>No metadata extracted</div>
+                  ) : (
+                    Object.entries(hoveredEnt.metadata || {}).map(([k, v]) => (
+                      <div key={k} className="flex justify-between py-1 border-b border-edge last:border-0" style={{ fontSize: 9 }}>
+                        <span className="mono text-dim">{k}</span>
+                        <span className="mono text-head text-right break-all" style={{ maxWidth: "60%" }}>
+                          {typeof v === "object" ? JSON.stringify(v) : String(v)}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="mono text-dim" style={{ fontSize: 9, letterSpacing: "0.08em", marginBottom: 6 }}>
+                  CORROBORATED SIGNALS ({hoveredInfo?.cluster?.signals ? Object.keys(hoveredInfo.cluster.signals).length : 0})
+                </div>
+                <div className="bg-surface border border-edge" style={{ padding: "10px 12px" }}>
+                  {!hoveredInfo?.cluster?.signals || Object.keys(hoveredInfo.cluster.signals).length === 0 ? (
+                    <div className="mono text-dim" style={{ fontSize: 9 }}>No cross-platform signals matched</div>
+                  ) : (
+                    Object.entries(hoveredInfo.cluster.signals).map(([sig, val]) => (
+                      <div key={sig} className="flex justify-between py-1 border-b border-edge last:border-0" style={{ fontSize: 9 }}>
+                        <span className="mono text-amber">{sig}</span>
+                        <span className="mono text-head text-right break-all" style={{ maxWidth: "60%" }}>
+                          {typeof val === "object" ? JSON.stringify(val) : String(val)}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div style={{ marginTop: 16 }}>
+                  <div className="mono text-dim" style={{ fontSize: 9, letterSpacing: "0.08em", marginBottom: 6 }}>CHAIN OF CUSTODY</div>
+                  <div className="bg-surface border border-edge" style={{ padding: "10px 12px" }}>
+                    <div className="mono text-dim" style={{ fontSize: 8 }}>INTERNAL ENTITY ID</div>
+                    <div className="mono text-head" style={{ fontSize: 9, marginBottom: 8 }}>{hoveredEnt.entity_id}</div>
+                    <div className="mono text-dim" style={{ fontSize: 8 }}>SHA-256 RAW PAYLOAD HASH</div>
+                    <div className="hash-val" style={{ fontSize: 9, wordBreak: "break-all" }}>{hoveredEnt.sha256 || "—"}</div>
+                    {hoveredEnt.source_url && (
+                      <div style={{ marginTop: 8 }}>
+                        <div className="mono text-dim" style={{ fontSize: 8 }}>ORIGIN URL</div>
+                        <a href={hoveredEnt.source_url} target="_blank" rel="noreferrer noopener" className="mono text-amber hover:underline break-all" style={{ fontSize: 9 }}>
+                          {hoveredEnt.source_url} ↗
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* RIGHT — CLUSTER ANALYSIS */}
@@ -244,6 +385,24 @@ export default function CaseView() {
           )}
         </div>
       </div>
+
+      {/* MEDIA GALLERY — every profile photo + real post image found, with source link */}
+      {!running && (
+        <div className="border-t border-edge bg-surface">
+          <div className="panel-label" style={{ padding: "10px 16px" }}>
+            MEDIA GALLERY ({galleryItems.length})
+          </div>
+          {galleryItems.length === 0 ? (
+            <div className="mono text-dim text-center" style={{ fontSize: 10, padding: "24px 0" }}>
+              NO IMAGES RECOVERED FOR THIS CASE
+            </div>
+          ) : (
+            <div className="flex flex-wrap" style={{ gap: 10, padding: "12px 16px" }}>
+              {galleryItems.map((item) => <GalleryTile key={item.key} item={item} />)}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* FORENSIC ANALYSIS */}
       {!running && fx && (fx.tone || fx.activity) && (
@@ -309,12 +468,13 @@ function PlatformIcon({ platform, size = 36 }) {
   );
 }
 
+const STRONG_SIGNALS = ["exact_email_match", "exact_phone_match", "exact_upi_match",
+  "profile_photo_phash", "exact_name_match"];
+
 // Confirmed / Possible lead / Unconfirmed label based on tier and signals
 function ConfidenceLabel({ tier, signals }) {
   const sigs = signals ? Object.keys(signals) : [];
-  const STRONG = ["exact_email_match", "exact_phone_match", "exact_upi_match",
-                  "profile_photo_phash", "exact_name_match"];
-  const hasStrong = sigs.some((s) => STRONG.includes(s));
+  const hasStrong = sigs.some((s) => STRONG_SIGNALS.includes(s));
 
   if ((tier === "HIGH" || tier === "MEDIUM") && hasStrong) {
     return <span className="mono tier-complete" style={{ fontSize: 8 }}>● CONFIRMED</span>;
@@ -436,6 +596,111 @@ function AccountCard({ e, info, onClick, active }) {
   );
 }
 
+function buildGalleryItems(entities, infoByEntity) {
+  const seenUrls = new Set();
+  const seenPhashes = new Set();
+  const items = [];
+
+  entities.forEach((e) => {
+    const m = e.metadata || {};
+    const info = infoByEntity[e.entity_id];
+    const tier = info?.tier || "REJECT";
+    const sigs = info?.cluster?.signals ? Object.keys(info.cluster.signals) : [];
+    const confirmed = (tier === "HIGH" || tier === "MEDIUM") &&
+                      sigs.some((s) => STRONG_SIGNALS.includes(s));
+
+    const avatarUrl = m.photo_url || m.avatar || m.avatar_url || m.image || null;
+    if (avatarUrl && tier !== "REJECT") {
+      const phash = m.photo_phash || null;
+      const isDup = phash ? seenPhashes.has(phash) : seenUrls.has(avatarUrl);
+      if (!isDup) {
+        if (phash) seenPhashes.add(phash);
+        seenUrls.add(avatarUrl);
+        items.push({
+          key: `avatar-${e.entity_id}`,
+          url: avatarUrl,
+          platform: e.platform || "?",
+          label: m.fullname || m.name || e.value || "",
+          postedAt: m.created_at || null,
+          confirmed,
+          tier,
+          link: safeUrl(e.source_url),
+        });
+      }
+    }
+
+    const posts = Array.isArray(m.recent_posts) ? m.recent_posts : [];
+    posts.forEach((p, i) => {
+      if (!p.image_url || seenUrls.has(p.image_url)) return;
+      seenUrls.add(p.image_url);
+      items.push({
+        key: `post-${e.entity_id}-${i}`,
+        url: p.image_url,
+        platform: p.platform || e.platform || "?",
+        label: p.title || m.fullname || e.value || "",
+        postedAt: p.posted_at || null,
+        confirmed,
+        tier,
+        link: safeUrl(p.permalink || e.source_url),
+      });
+    });
+  });
+
+  items.sort((a, b) => {
+    if (a.confirmed !== b.confirmed) return a.confirmed ? -1 : 1;
+    if (a.postedAt && b.postedAt) return new Date(b.postedAt) - new Date(a.postedAt);
+    if (a.postedAt) return -1;
+    if (b.postedAt) return 1;
+    return 0;
+  });
+  return items.slice(0, 30);
+}
+
+function GalleryTile({ item }) {
+  const accent = { HIGH: "#D4900A", MEDIUM: "#5B9BD5", LOW: "#E08A4A", REJECT: "#3A4358" }[item.tier] || "#3A4358";
+  const pName = (item.platform || "?").toUpperCase();
+  const dateStr = item.postedAt
+    ? new Date(item.postedAt).toISOString().slice(0, 16).replace("T", " ") + " UTC"
+    : null;
+
+  const content = (
+    <div data-gallery-tile className="relative flex flex-col bg-ink border border-edge"
+      style={{ width: 108, borderRadius: 4, overflow: "hidden", borderColor: accent }}>
+      <div className="relative" style={{ width: 108, height: 108, background: "#161B27" }}>
+        <img src={item.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          onError={(ev) => {
+            const tile = ev.currentTarget.closest("[data-gallery-tile]");
+            if (tile) tile.style.display = "none";
+          }} />
+        <span className="mono absolute top-1 left-1 px-1 rounded bg-black/75 text-dim"
+          style={{ fontSize: 7, letterSpacing: "0.05em" }}>
+          {pName}
+        </span>
+      </div>
+      <div className="flex flex-col justify-between flex-1" style={{ padding: "6px 8px", background: "#1A2030" }}>
+        <div className="mono text-body" style={{ fontSize: 8, lineHeight: 1.3, maxHeight: 22, overflow: "hidden" }}>
+          {item.label ? String(item.label).slice(0, 40) : "—"}
+        </div>
+        <div style={{ marginTop: 4 }}>
+          {dateStr && <div className="mono text-dim" style={{ fontSize: 7 }}>{dateStr}</div>}
+          <div className="mt-1 flex items-center">
+            {item.confirmed ? (
+              <span className="mono tier-complete" style={{ fontSize: 7 }}>● CONFIRMED</span>
+            ) : (
+              <span className="mono tier-high" style={{ fontSize: 7 }}>◐ POSSIBLE</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (item.link) {
+    return <a href={item.link} target="_blank" rel="noreferrer noopener" className="block hover:opacity-90 transition-opacity">{content}</a>;
+  }
+  return content;
+}
+
 function ClusterBlock({ c, entById }) {
   const tier = c.tier;
   const accent = { HIGH: "#D4900A", MEDIUM: "#5B9BD5", LOW: "#E08A4A", REJECT: "#8A97AD" }[tier] || "#8A97AD";
@@ -515,8 +780,9 @@ function ReportButton({ id, disabled }) {
 
 // only allow http(s) links from scraped source_url (blocks javascript:/data:)
 function safeUrl(url) {
+  if (!url || typeof url !== "string") return null;
   try {
-    const u = new URL(url, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    const u = new URL(url);
     return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
   } catch { return null; }
 }

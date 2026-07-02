@@ -17,6 +17,18 @@ from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profi
 
 _API = "https://api.github.com"
 
+_EVENT_LABELS = {
+    "PushEvent": "pushed commits to",
+    "CreateEvent": "created",
+    "PullRequestEvent": "opened a pull request on",
+    "IssuesEvent": "opened an issue on",
+    "WatchEvent": "starred",
+    "ForkEvent": "forked",
+    "IssueCommentEvent": "commented on",
+    "ReleaseEvent": "published a release on",
+    "PublicEvent": "made public",
+}
+
 
 def _headers() -> dict:
     h = {"Accept": "application/vnd.github+json", "User-Agent": "VERTEX-OSINT"}
@@ -25,22 +37,50 @@ def _headers() -> dict:
     return h
 
 
-def _profile_from_user(user: dict) -> RawProfile:
-    return make_profile(
-        "social_account", user.get("login", ""), "github",
-        user.get("html_url", ""),
-        metadata={
-            "name": user.get("name"),
-            "location": user.get("location"),
-            "bio": user.get("bio"),
-            "followers": user.get("followers"),
-            "public_repos": user.get("public_repos"),
-            "photo_url": user.get("avatar_url"),
-            "email": user.get("email"),
-            "blog": user.get("blog"),
-            "created_at": user.get("created_at")
-        },
-    )
+async def _recent_activity(client: httpx.AsyncClient, login: str) -> list[dict]:
+    """Up to 10 recent public GitHub events with real timestamps. Never raises."""
+    try:
+        r = await client.get(f"{_API}/users/{login}/events/public", params={"per_page": 30})
+        if r.status_code != 200:
+            return []
+        out = []
+        for ev in r.json()[:30]:
+            if len(out) >= 10:
+                break
+            repo = (ev.get("repo") or {}).get("name")
+            created = ev.get("created_at")
+            if not repo or not created:
+                continue
+            out.append({
+                "kind": "activity",
+                "platform": "github",
+                "title": f"{_EVENT_LABELS.get(ev.get('type'), ev.get('type'))} {repo}",
+                "image_url": None,   # explicit None — GitHub has no post images
+                "posted_at": created,
+                "permalink": f"https://github.com/{repo}",
+            })
+        return out
+    except Exception:
+        return []
+
+
+async def _profile_from_user(client: httpx.AsyncClient, user: dict) -> RawProfile:
+    login = user.get("login", "")
+    activity = await _recent_activity(client, login) if login else []
+    meta = {
+        "name": user.get("name"),
+        "location": user.get("location"),
+        "bio": user.get("bio"),
+        "followers": user.get("followers"),
+        "public_repos": user.get("public_repos"),
+        "photo_url": user.get("avatar_url"),
+        "email": user.get("email"),
+        "blog": user.get("blog"),
+        "created_at": user.get("created_at")
+    }
+    if activity:
+        meta["recent_posts"] = activity
+    return make_profile("social_account", login, "github", user.get("html_url", ""), metadata=meta)
 
 
 class GitHubScraper(BaseDataSource):
@@ -58,10 +98,10 @@ class GitHubScraper(BaseDataSource):
                 for item in r.json().get("items", [])[:5]:
                     ur = await client.get(f"{_API}/users/{item.get('login')}")
                     if ur.status_code == 200:
-                        out.append(_profile_from_user(ur.json()))
+                        out.append(await _profile_from_user(client, ur.json()))
                 return out
             # username seed -> profile
             r = await client.get(f"{_API}/users/{ident}")
             if r.status_code != 200:
                 return []
-            return [_profile_from_user(r.json())]
+            return [await _profile_from_user(client, r.json())]

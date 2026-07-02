@@ -108,7 +108,7 @@ async def _run_blackbird(flag: str, value: str) -> list[RawProfile]:
         env=env,
     )
     try:
-        await asyncio.wait_for(proc.communicate(), timeout=180)
+        await asyncio.wait_for(proc.communicate(), timeout=60)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()

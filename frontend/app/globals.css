@@ -90,5 +90,27 @@ html, body {
 .vis-time-axis .vis-text { color: #4A5568 !important; }
 .vis-time-axis .vis-grid.vis-minor { border-color: #1E2235 !important; }
 .vis-time-axis .vis-grid.vis-major { border-color: #2A3148 !important; }
-.vis-item { border-width: 1px; border-radius: 2px; }
-.vis-item .vis-item-content { padding: 2px 4px; }
+.vis-panel, .vis-background { background: #0E1117 !important; }
+
+.vis-item {
+  border-width: 1px;
+  border-radius: 2px;
+  color: #CBD5E0 !important;
+  border-color: #2A3148 !important;
+  background: #1E2235 !important;
+  font-size: 10px !important;
+}
+.vis-item .vis-item-content { padding: 2px 6px; }
+
+.vis-item.vis-selected {
+  border-width: 2px !important;
+  box-shadow: 0 0 0 1px rgba(212,144,10,0.25) !important;
+}
+
+.vis-labelset .vis-label {
+  background: #161B27 !important;
+  color: #8693A8 !important;
+  border-color: #2A3148 !important;
+}
+
+.vis-current-time { background: rgba(212,144,10,0.35) !important; width: 1px !important; }

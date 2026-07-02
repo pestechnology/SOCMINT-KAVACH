@@ -47,7 +47,7 @@ class SherlockScraper(BaseDataSource):
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=150)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()

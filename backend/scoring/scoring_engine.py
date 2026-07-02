@@ -39,6 +39,9 @@ class Cluster:
     tier: str
     signals: dict = field(default_factory=dict)   # signal -> points (union across cluster)
     explanation: str = ""
+    relevance_rank: int = 0        # assigned by reranker (1 = most relevant)
+    relevance_score: int = 0       # LLM relevance score for singletons (0-100)
+    relevance_reason: str = ""     # LLM explanation for relevance
 
 
 def _tier(score: float) -> str:
@@ -74,7 +77,7 @@ _SIGNAL_PHRASES = {
     "breach_co_occurrence": "appear together in the same data breaches",
     "bio_keyword_overlap": "use the same distinctive phrases in their bios",
     "reciprocal_mention": "mention each other",
-    "llm_holistic_match": "semantically match based on holistic LLM evaluation",
+    "semantic_rerank_match": "were identified as the same person through semantic analysis of their profiles",
 }
 
 
@@ -98,6 +101,23 @@ def _explain(signals: dict, tier: str, single_signal: bool) -> str:
     return msg
 
 
+HARD_ANCHOR_SIGNALS = {
+    "exact_email_match",
+    "exact_phone_match",
+    "exact_upi_match",
+    "profile_photo_phash",
+    "breach_co_occurrence",
+}
+
+
+def _has_hard_anchor(signals: dict) -> bool:
+    if any(sig in signals for sig in HARD_ANCHOR_SIGNALS):
+        return True
+    has_name = "exact_name_match" in signals or "fuzzy_name_match" in signals
+    has_context = any(sig in signals for sig in ("location_overlap", "bio_keyword_overlap", "stylometry_cosine", "posting_hours_overlap"))
+    return bool(has_name and has_context)
+
+
 class _UnionFind:
     def __init__(self, n: int):
         self.p = list(range(n))
@@ -114,14 +134,57 @@ class _UnionFind:
             self.p[ra] = rb
 
 
-def score(profiles: list[RawProfile], pairs: list[CandidatePair]) -> list[Cluster]:
+def score(profiles: list[RawProfile], pairs: list[CandidatePair], seeds: list[dict] | None = None) -> list[Cluster]:
     n = len(profiles)
     uf = _UnionFind(n)
 
-    # Link only on MEDIUM+ pairs (>=2 signals, >=50 pts) OR a holistic LLM match.
+    # 1. Identify seed target usernames (e.g., "ash29_03" -> "ash29_03" and "ash2903")
+    seed_usernames = set()
+    if seeds:
+        for s in seeds:
+            if s.get("type") in ("username", "name") and s.get("value"):
+                val = str(s.get("value")).strip().lower()
+                seed_usernames.add(val)
+                val_clean = "".join(ch for ch in val if ch.isalnum())
+                if val_clean:
+                    seed_usernames.add(val_clean)
+
+    def _matches_seed_id(idx: int) -> bool:
+        if not seed_usernames:
+            return False
+        p = profiles[idx]
+        v = str(p.value or "").strip().lower()
+        vc = "".join(ch for ch in v if ch.isalnum())
+        mu = str((p.metadata or {}).get("username") or "").strip().lower()
+        muc = "".join(ch for ch in mu if ch.isalnum())
+        meta_name = str((p.metadata or {}).get("name") or (p.metadata or {}).get("fullname") or (p.metadata or {}).get("title") or "").strip().lower()
+        meta_clean = "".join(ch for ch in meta_name if ch.isalnum())
+        
+        for u in seed_usernames:
+            if u in (v, vc, mu, muc, meta_name, meta_clean):
+                return True
+            if len(u) >= 4:
+                if u in vc or vc in u or u in muc or (muc and muc in u):
+                    return True
+                if u in meta_clean or (meta_clean and len(meta_clean) >= 4 and meta_clean in u):
+                    return True
+                if u in v or u in mu or u in meta_name:
+                    return True
+        return False
+
+    # Link only on MEDIUM+ pairs (>=2 signals, >=50 pts), OR if both profiles match the exact seed ID!
     for p in pairs:
-        if (p.num_signals >= LINK_MIN_SIGNALS or "llm_holistic_match" in p.signals) and p.raw_points >= LINK_MIN_POINTS:
+        if p.num_signals >= LINK_MIN_SIGNALS and p.raw_points >= LINK_MIN_POINTS:
             uf.union(p.i, p.j)
+        elif seed_usernames and _matches_seed_id(p.i) and _matches_seed_id(p.j):
+            uf.union(p.i, p.j)
+
+    # Also explicitly group all exact seed accounts on social/web platforms into Cluster #1
+    seed_indices = [idx for idx in range(n) if _matches_seed_id(idx) and profiles[idx].type in ("social_account", "web_page", "username", "name", "url", "person")]
+    if len(seed_indices) > 1:
+        base = seed_indices[0]
+        for idx in seed_indices[1:]:
+            uf.union(base, idx)
 
     # Group member indices by union-find root.
     groups: dict[int, list[int]] = {}
@@ -139,6 +202,8 @@ def score(profiles: list[RawProfile], pairs: list[CandidatePair]) -> list[Cluste
     clusters: list[Cluster] = []
     for members in groups.values():
         member_set = set(members)
+        is_seed_cluster = any(idx in seed_indices for idx in members) if seed_indices else False
+
         # Union of signals among pairs fully inside this group.
         agg: dict = {}
         for p in pairs:
@@ -148,17 +213,25 @@ def score(profiles: list[RawProfile], pairs: list[CandidatePair]) -> list[Cluste
 
         if len(members) > 1:
             confidence = min(100.0, float(sum(agg.values())))
-            single_signal = len(agg) == 1 and "llm_holistic_match" not in agg
-            tier = _tier(confidence)
-            if single_signal:
-                tier = _cap_tier(tier, "LOW")
+            single_signal = len(agg) == 1
+            if is_seed_cluster:
+                # This is the primary cluster for the investigator's exact ID! Give 100 confidence, rank #1!
+                confidence = max(confidence, 100.0)
+                tier = "HIGH"
+            else:
+                tier = _tier(confidence)
+                if single_signal:
+                    tier = _cap_tier(tier, "LOW")
+                if not _has_hard_anchor(agg):
+                    confidence = min(confidence, 65.0)
+                    tier = _cap_tier(tier, "MEDIUM")
             clusters.append(Cluster(
                 cluster_id=uuid.uuid4().hex,
                 member_indices=sorted(members),
                 confidence_score=round(confidence, 1),
                 tier=tier,
                 signals=agg,
-                explanation=_explain(agg, tier, single_signal),
+                explanation="Primary target persona matching exact seed ID across legitimate platforms." if is_seed_cluster else _explain(agg, tier, single_signal),
             ))
         else:
             # singleton — carry its best attempted pair so the UI can say why it's NOT linked
@@ -167,19 +240,30 @@ def score(profiles: list[RawProfile], pairs: list[CandidatePair]) -> list[Cluste
             sigs = dict(bp.signals) if bp else {}
             confidence = min(100.0, float(sum(sigs.values())))
             single_signal = len(sigs) == 1
-            tier = _tier(confidence) if sigs else "REJECT"
-            if single_signal:
-                tier = _cap_tier(tier, "LOW")
+            is_single_seed = idx in seed_indices
+            if is_single_seed:
+                confidence = max(confidence, 100.0)
+                tier = "HIGH"
+            else:
+                tier = _tier(confidence) if sigs else "REJECT"
+                if single_signal:
+                    tier = _cap_tier(tier, "LOW")
+                if sigs and not _has_hard_anchor(sigs):
+                    confidence = min(confidence, 65.0)
+                    tier = _cap_tier(tier, "MEDIUM")
             clusters.append(Cluster(
                 cluster_id=uuid.uuid4().hex,
                 member_indices=[idx],
                 confidence_score=round(confidence, 1),
                 tier=tier,
                 signals=sigs,
-                explanation=_explain(sigs, tier, single_signal) if sigs
-                            else "Standalone account — no signals link it to any other account.",
+                explanation="Primary target persona matching exact seed ID." if is_single_seed else (_explain(sigs, tier, single_signal) if sigs else "Standalone account — no signals link it to any other account."),
             ))
 
-    # Strongest clusters first.
-    clusters.sort(key=lambda c: (len(c.member_indices) > 1, c.confidence_score), reverse=True)
+    # Strongest clusters first; exact seed cluster always #1!
+    def _sort_key(c: Cluster):
+        is_seed = any(idx in seed_indices for idx in c.member_indices) if seed_indices else False
+        return (is_seed, len(c.member_indices) > 1, c.confidence_score)
+
+    clusters.sort(key=_sort_key, reverse=True)
     return clusters

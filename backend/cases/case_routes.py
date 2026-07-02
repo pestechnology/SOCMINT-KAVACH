@@ -30,13 +30,15 @@ class NewCase(BaseModel):
     title: str
     seeds: list[Seed]
     minor_involved: bool = False
+    country_filter: str = "ALL"
 
 
 @router.post("")
 def create(body: NewCase, background: BackgroundTasks, user_id: str = Depends(get_current_user)):
     try:
         case_id = create_case(user_id, body.title,
-                              [s.model_dump() for s in body.seeds], body.minor_involved)
+                              [s.model_dump() for s in body.seeds], body.minor_involved,
+                              body.country_filter)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
