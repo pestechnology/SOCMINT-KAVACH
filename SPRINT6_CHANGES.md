@@ -1,10 +1,33 @@
-# Sprint 6 — Complete Changes Log (Commit `43932b3`)
+# Sprint 6 & Thursday Updates — Complete Changes Log
 
-Branch: `Vismay_Wednesday_Updated`  
-Committed: 2026-07-02  
-Files changed: 9 | Insertions: +550 | Deletions: -40
+Branch: `ashwin-thurs` (based on `Vismay_Wednesday_Updated`)  
+Updated: 2026-07-02  
+Latest Commit: `cd9ac0b`  
 
 ---
+
+## 0. Thursday Hotfixes (`ashwin-thurs` — Commit `cd9ac0b`)
+
+### 0.1 `backend/pipeline/orchestrator.py` — Seed Auto-Correction & Name-Search Guard
+**Problem:** When users type a full name (e.g. `"ashwin harish"`) into the UI input without switching the seed dropdown from `USERNAME` to `NAME`, the backend receives it as a `username` seed. The Username Permutation Engine (Step 1) immediately splits on the space and generates permutations like `"ashwinharish"`, `"ashwin_harish"`, `"aharish"`, and `"ashwinh"`. Scrapers then enumerate those guessed handles across 80+ platforms, returning unrelated accounts belonging to strangers, while completely skipping LinkedIn, GitHub, and social site searches (`site:linkedin.com/in`) which only execute for `name` seeds.
+**Fix:**
+- **Auto-correction:** Added a check in Step 1 of `orchestrator.py`. If a seed has `type == "username"` but contains spaces (`" "` in `value.strip()`), the backend automatically converts its type to `"name"`.
+- **Targeted Permutations:** Guarded Step 1 so that username permutations are only generated for actual single-token username seeds without spaces. Full-name searches proceed directly to Serper site searches to locate authentic profiles first.
+- **Empty Metadata Filter:** Added `_has_content_metadata` post-enrichment check in `orchestrator.py` to drop profiles with zero substantive user profile data (e.g., boilerplate-only API returns).
+
+### 0.2 `backend/ingestion/variants.py` — Numeric / Short Suffix False-Positive Fix
+**Problem:** For usernames like `"ash29_03"`, the first-initial rule `add(toks[0][0] + toks[-1])` took `'a'` + `'03'`, generating `"a03"`. Scrapers then enumerated `"a03"`, flooding results with false positives.
+**Fix:** Restricted the first-initial rule to only apply when `toks[-1]` is not a number and has length $\ge 3$.
+
+### 0.3 Scraper Timeouts & Live Progress UI Polish
+- **Timeouts:** Reduced CLI tool timeouts across **Sherlock** (60s), **Blackbird** (60s), and **Maigret** (90s) to fail fast on unresponsive platforms and prevent pipeline deadlocks ("RUNNING" state hangs).
+- **Frontend progress feed:** Restored the live scanning progress feed (`logLines`) in the left panel of `frontend/app/cases/[id]/page.js` while a case is `running`.
+- **Interactive Correlation Graph:** When viewing a case, the middle panel displays the interactive `<NetworkGraph />` by default instead of an empty box. Clicking any node or account card transitions smoothy to **Account Details**, featuring a clean **✕ Close Details** button.
+
+---
+
+# Previous Sprint 6 Log (Commit `43932b3`)
+
 
 ## 1. Backend Changes
 

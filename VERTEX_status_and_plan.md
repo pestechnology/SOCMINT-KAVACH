@@ -414,3 +414,22 @@ Fix (`frontend/app/cases/[id]/page.js`):
 `forensics.summarize()` extracts keywords from all entity snippets and bios. Serper returns the Google snippet of the indexed LinkedIn page ("Vismay HS · Student at PES University, Bengaluru"), which becomes the entity's `metadata["snippet"]`. The forensics engine pulls "PES University" from that snippet. This happens **without visiting LinkedIn** — it's data from Google's index.
 
 **No test regressions:** 71 tests still pass after all changes.
+
+---
+
+## 2026-07-02 Sprint 6 & Thursday Hotfixes (`ashwin-thurs` — Commit `cd9ac0b`)
+
+### 1. Seed Auto-Correction & Name-Search Hardening (`backend/pipeline/orchestrator.py`)
+- **Auto-Correction:** When users input a full name with spaces (e.g., `"ashwin harish"`) while the seed dropdown is set to `username`, Step 1 automatically converts `seed["type"] = "name"`.
+- **Targeted Permutations:** Username permutation expansion (generating `ashwinharish`, `aharish`, etc.) is guarded to only execute for single-token username seeds without spaces. Full-name searches proceed directly to Serper site searches (`site:linkedin.com/in`, `site:github.com`, `site:instagram.com`, `site:twitter.com`) to find authentic profiles first.
+- **Empty Metadata Filter:** Added `_has_content_metadata` check to drop profiles containing only structural boilerplate fields and zero substantive user data.
+
+### 2. Numeric/Short Suffix Variant Guard (`backend/ingestion/variants.py`)
+- For usernames like `"ash29_03"`, the first-initial rule `toks[0][0] + toks[-1]` previously generated `"a03"`, flooding results with false positives. Restricted the rule to only apply when `toks[-1]` is not digits and has length $\ge 3$.
+
+### 3. Scraper Timeout Optimization & UI Polish
+- Reduced CLI tool timeouts across **Sherlock** (60s), **Blackbird** (60s), and **Maigret** (90s) to fail fast on unresponsive target platforms.
+- Restored real-time scanning progress feed (`logLines`) in the left panel of `frontend/app/cases/[id]/page.js` while a case is running.
+- Middle panel now displays the interactive `<NetworkGraph />` correlation chart by default when no card is selected, smoothly transitioning to Account Details upon clicking a node, with an **✕ Close Details** button.
+
+**Test Status:** 76/76 unit and integration tests passing cleanly. Next.js production build (`npm run build`) compiles with zero errors.

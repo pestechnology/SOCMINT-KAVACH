@@ -1364,3 +1364,24 @@ If Blackbird returns nothing:
 - **Reddit:** Without `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET`, Reddit returns 403 from datacenter/VPN IPs. Set up a free "script" app at reddit.com/prefs/apps.
 - **PhoneInfoga:** Requires a local Docker container running the PhoneInfoga REST server on port 5000. `docker pull sundowndev/phoneinfoga:latest && docker run -p 5000:5000 sundowndev/phoneinfoga serve`.
 - **UPI name lookup:** Returns only the registered name from the UPI payment rail — it does not expose account numbers or bank details.
+
+# 18. SPRINT 6 & THURSDAY HOTFIXES (2026-07-02)
+
+## 18.1 Hotfixes on branch `ashwin-thurs` (Commit `cd9ac0b`)
+
+1. **Seed Auto-Correction & Name-Search Hardening (`backend/pipeline/orchestrator.py`):**
+   - **Auto-Correction:** If a user inputs a full name containing spaces (e.g., `"ashwin harish"`) while the UI dropdown defaults to `username`, Step 1 automatically converts `seed["type"] = "name"`.
+   - **Targeted Permutations:** Username permutation expansion (generating `ashwinharish`, `aharish`, etc.) is guarded to only run for single-token usernames without spaces. For full-name searches, the pipeline goes directly to Serper site searches (`site:linkedin.com/in`, `site:github.com`, `site:instagram.com`, `site:twitter.com`) to find authenticated profiles first.
+   - **Empty Metadata Filter:** Added `_has_content_metadata` post-enrichment check in `orchestrator.py` to discard profiles with only structural boilerplate fields and zero actual user profile data.
+
+2. **Numeric/Short Suffix Variant Guard (`backend/ingestion/variants.py`):**
+   - For usernames like `"ash29_03"`, the first-initial rule `toks[0][0] + toks[-1]` previously generated `"a03"`, flooding results with false positives. Restricted the rule to only apply when `toks[-1]` is not digits and has length $\ge 3$.
+
+3. **Scraper Timeout Optimization & UI Polish:**
+   - Reduced CLI subprocess timeouts across **Sherlock** (60s), **Blackbird** (60s), and **Maigret** (90s) to fail fast on unresponsive target sites.
+   - Restored real-time scanning progress feed (`logLines`) in the left panel of `frontend/app/cases/[id]/page.js` while a case is running.
+   - Middle panel now displays the interactive `<NetworkGraph />` correlation chart by default when no card is selected, smoothly transitioning to Account Details upon clicking a node, with an **✕ Close Details** button.
+
+## 18.2 Verification & Test Status
+- All **76 automated unit and integration tests** passing cleanly (`pytest tests/`).
+- Frontend production build (`npm run build`) compiles with zero TypeScript or bundling errors.
