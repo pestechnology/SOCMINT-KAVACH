@@ -6,6 +6,7 @@
 
 # ---- Backend / API ----
 fastapi==0.115.6
+truststore>=0.10.0           # use the OS cert store (corporate TLS proxies / partial chains)
 uvicorn[standard]==0.34.0
 httpx==0.28.1
 pydantic==2.10.4
@@ -26,11 +27,16 @@ pillow==11.1.0
 # ---- Report (BSA-63 PDF) ----
 reportlab>=4.4.3,<5.0.0
 
+# ---- Forensics (Sprint 3) ----
+vaderSentiment>=3.3.2        # offline sentiment/tone analysis (stylometry uses scikit-learn above)
+
 # ---- OSINT scrapers (used live; wrappers fail-safe if missing) ----
 maigret==0.5.0
 socialscan==1.4.2
 waybackpy==3.0.6
 telethon==1.38.1
+holehe>=1.61                 # email -> registered services (replaces Epieos stub)
+sherlock-project>=0.16.0     # 2nd username enumerator (corroborates Maigret)
 # ignorant + PhoneInfoga + Blackbird are installed separately (see SETUP.md)
 
 # ---- NER pre-pass (optional; orchestrator degrades gracefully if absent) ----

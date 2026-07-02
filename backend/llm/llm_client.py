@@ -111,13 +111,8 @@ class LLMClient:
             if isinstance(data, list):
                 return [d for d in data if isinstance(d, dict) and d.get("value")]
             raise ValueError("not a list")
-        except Exception as e:  # noqa: BLE001
-            print(f"[llm] extract_entities fallback (regex): {e} on length {len(text)}")
-            import time
-            t0 = time.time()
-            res = _regex_entities(text)
-            print(f"[llm] _regex_entities finished in {time.time() - t0:.2f}s")
-            return res
+        except Exception:  # noqa: BLE001 - any LLM failure -> deterministic regex fallback
+            return _regex_entities(text)
 
     def explain_match(self, signals: list[str], tier: str) -> str:
         try:

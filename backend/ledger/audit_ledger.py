@@ -52,13 +52,17 @@ def _chain_value(previous_hash: str, input_hash: str, output_hash: str,
 
 
 def _last_chain_value(conn, case_id: str) -> str:
-    """Recompute the chain value of the most recent row for this case."""
+    """Chain value of the most recent row for this case (the next row's previous_hash)."""
     row = conn.execute(
         "SELECT * FROM audit_ledger WHERE case_id = ? ORDER BY rowid DESC LIMIT 1",
         (case_id,),
     ).fetchone()
     if row is None:
         return GENESIS
+    # Prefer the stored chain_hash; fall back to recomputing for pre-migration rows.
+    stored = row["chain_hash"] if "chain_hash" in row.keys() else None
+    if stored:
+        return stored
     return _chain_value(row["previous_hash"], row["input_hash"], row["output_hash"],
                         row["action"], row["actor"], row["timestamp"])
 
@@ -74,13 +78,17 @@ def log_action(case_id: str, action: str, input_data=None, output_data=None,
         input_hash = _sha256(input_data if input_data is not None else "")
         output_hash = _sha256(output_data if output_data is not None else "")
         previous_hash = _last_chain_value(conn, case_id)
+        # Seal THIS row's content into its own chain_hash so even the last row
+        # (which has no successor to bind it) is tamper-evident.
+        chain_hash = _chain_value(previous_hash, input_hash, output_hash,
+                                  action, actor, timestamp)
         conn.execute(
             """INSERT INTO audit_ledger
                (ledger_id, case_id, action, search_id, input_hash, output_hash,
-                previous_hash, actor, timestamp)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+                previous_hash, chain_hash, actor, timestamp)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (ledger_id, case_id, action, search_id, input_hash, output_hash,
-             previous_hash, actor, timestamp),
+             previous_hash, chain_hash, actor, timestamp),
         )
         conn.commit()
         return ledger_id
@@ -134,11 +142,20 @@ def verify_chain(case_id: str) -> tuple[bool, str]:
 
     prev = GENESIS
     for n, row in enumerate(rows):
+        # 1) Forward link: this row must point at the prior row's chain value.
         if row["previous_hash"] != prev:
             return False, (f"Chain broken at row {n} (action='{row['action']}'): "
                            f"stored previous_hash does not match recomputed chain.")
-        prev = _chain_value(row["previous_hash"], row["input_hash"], row["output_hash"],
-                            row["action"], row["actor"], row["timestamp"])
+        recomputed = _chain_value(row["previous_hash"], row["input_hash"], row["output_hash"],
+                                  row["action"], row["actor"], row["timestamp"])
+        # 2) Self-seal: the row's own content must match its stored chain_hash.
+        #    This catches tampering with the LAST row, which has no successor.
+        #    (Pre-migration rows have a NULL chain_hash and rely on the link check.)
+        stored = row["chain_hash"] if "chain_hash" in row.keys() else None
+        if stored and stored != recomputed:
+            return False, (f"Chain broken at row {n} (action='{row['action']}'): "
+                           f"row content does not match its sealed chain_hash.")
+        prev = recomputed
     return True, f"Chain intact across {len(rows)} ledger entries."
 
 

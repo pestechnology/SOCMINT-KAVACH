@@ -11,6 +11,10 @@ os.environ["DB_PATH"] = _TMP_DB
 os.environ["DATA_MODE"] = "mock"
 os.environ["REPORT_OUTPUT_DIR"] = os.path.join(tempfile.gettempdir(), "vertex_test_reports")
 os.environ["JWT_SECRET"] = "test-secret-key-for-pytest-only-not-real"
+# Tests must be deterministic and offline: force the LLM into its fallback path
+# (no real NVIDIA calls). Otherwise orchestrator/report tests make live network
+# requests and become slow + non-deterministic.
+os.environ["NVIDIA_API_KEY"] = ""
 
 import pytest  # noqa: E402
 
@@ -23,6 +27,7 @@ for _suffix in ("", "-wal", "-shm"):
 
 import backend.config as config  # noqa: E402
 config.DATA_MODE = "mock"
+config.NVIDIA_API_KEY = ""  # belt-and-suspenders: keep the LLM on its fallback path
 from backend.database import init_db  # noqa: E402
 
 init_db()

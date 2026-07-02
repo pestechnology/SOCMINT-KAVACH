@@ -26,7 +26,9 @@ async function req(path, { method = "GET", body, auth = true } = {}) {
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || `${res.status} ${res.statusText}`);
+    const err = new Error(detail.detail || `${res.status} ${res.statusText}`);
+    err.status = res.status; // let callers reliably detect 401 (expired token)
+    throw err;
   }
   return res.json();
 }
@@ -49,7 +51,9 @@ export const api = {
     });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
-      throw new Error(d.detail || `${res.status} ${res.statusText}`);
+      const err = new Error(d.detail || `${res.status} ${res.statusText}`);
+      err.status = res.status;
+      throw err;
     }
     return res.blob();
   },

@@ -24,9 +24,9 @@ html, body {
 .display { font-family: var(--font-display), "Space Grotesk", sans-serif; }
 
 .tier-high { color: #D4900A; }
-.tier-medium { color: #4A7FA5; }
-.tier-low { color: #8A4A2E; }
-.tier-reject { color: #4A5568; }
+.tier-medium { color: #5B9BD5; }
+.tier-low { color: #E08A4A; }
+.tier-reject { color: #8A97AD; }
 .tier-complete { color: #27AE60; }
 .tier-error { color: #C0392B; }
 
@@ -34,7 +34,7 @@ html, body {
   font-family: var(--font-mono), monospace;
   font-size: 9px;
   letter-spacing: 0.1em;
-  color: #4A5568;
+  color: #8693A8;
 }
 
 .status-dot-running {
@@ -56,8 +56,8 @@ html, body {
 .hash-val {
   font-family: var(--font-mono), monospace;
   font-size: 9px;
-  color: #4A5568;
-  opacity: 0.7;
+  color: #707E96;
+  opacity: 0.85;
 }
 
 /* login left-panel animated correlation graph (pure CSS, no library) */

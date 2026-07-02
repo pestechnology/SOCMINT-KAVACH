@@ -14,6 +14,7 @@ import difflib
 from dataclasses import dataclass, field
 
 from backend.ingestion.base_module import RawProfile
+from backend.analysis.forensics import stylometry_similarity as _stylometry_similarity
 
 # Optional accelerators ------------------------------------------------------
 try:
@@ -69,13 +70,24 @@ class CandidatePair:
 _STOPWORDS = {"the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "at",
              "dm", "me", "my", "now", "i", "is", "are", "with"}
 
+# Mega-breaches (hundreds of millions of unrelated accounts) — a lone shared one
+# is not evidence two accounts belong to the same person. Lowercased.
+_MEGA_BREACHES = {
+    "collection-1", "collection #1", "collection1", "linkedin", "linkedinscrape-2021",
+    "adobe", "canva", "dropbox", "myspace", "twitter", "twitter-scraped", "facebook",
+    "facebook-marketplace", "yahoo", "tumblr", "myfitnesspal", "chegg", "wattpad",
+    "zynga", "naz.api", "exploit.in", "exploitin", "000webhost", "dailymotion",
+    "lastfm", "last.fm", "gravatar", "instagram", "deezer", "500px", "imgur",
+}
+
 
 def _norm(s) -> str:
-    return (s or "").strip().lower()
+    # str() so a stray list/int from a scraper can't raise AttributeError here.
+    return str(s or "").strip().lower()
 
 
 def _phone(s) -> str:
-    return "".join(ch for ch in (s or "") if ch.isdigit())[-10:]
+    return "".join(ch for ch in str(s or "") if ch.isdigit())[-10:]
 
 
 def jaro_winkler(s1: str, s2: str) -> float:
@@ -191,20 +203,21 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
     if ka and kb and len(ka & kb) >= 2:
         fired["bio_keyword_overlap"] = SIGNAL_WEIGHTS["bio_keyword_overlap"]
 
-    # stylometry (optional, needs sklearn + enough text)
-    if _HAVE_SKLEARN:
-        ta, tb = str(ma.get("bio") or ""), str(mb.get("bio") or "")
-        if len(ta) > 15 and len(tb) > 15:
-            try:
-                m = TfidfVectorizer().fit_transform([ta, tb])
-                if cosine_similarity(m[0], m[1])[0][0] > 0.75:
-                    fired["stylometry_cosine"] = SIGNAL_WEIGHTS["stylometry_cosine"]
-            except Exception:
-                pass
+    # stylometry / authorship — character n-grams + function-word distribution over
+    # ALL collected text (bio + sampled posts), capturing writing STYLE not topic.
+    ta = " ".join(str(ma.get(k) or "") for k in ("bio", "text_sample"))
+    tb = " ".join(str(mb.get(k) or "") for k in ("bio", "text_sample"))
+    if _stylometry_similarity(ta, tb) > 0.6:
+        fired["stylometry_cosine"] = SIGNAL_WEIGHTS["stylometry_cosine"]
 
-    # breach co-occurrence
-    bra, brb = set(ma.get("breaches") or []), set(mb.get("breaches") or [])
-    if bra and brb and bra & brb:
+    # breach co-occurrence — but NOT on a single mega-breach. Collection #1,
+    # LinkedIn, Adobe, etc. each contain hundreds of millions of unrelated
+    # addresses, so a lone shared mega-breach is meaningless. Fire only if a
+    # *rare* breach is shared, or two or more breaches are shared.
+    bra = {str(x).lower() for x in (ma.get("breaches") or [])}
+    brb = {str(x).lower() for x in (mb.get("breaches") or [])}
+    shared = bra & brb
+    if shared and (len(shared) >= 2 or (shared - _MEGA_BREACHES)):
         fired["breach_co_occurrence"] = SIGNAL_WEIGHTS["breach_co_occurrence"]
 
     # real name overlap

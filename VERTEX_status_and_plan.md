@@ -284,3 +284,133 @@ That's the demo. That's what wins.
 ## Bottom line
 
 You will have a working SOCMINT tool that handles 5 input types, refuses false positives, and produces court-admissible evidence packages. You will not have a Maltego-killer. That's the right trade. Quality of evidence beats volume of results for the audience you're presenting to.
+
+---
+
+## ADDENDUM — Current state as of 2026-07-01 (supersedes the June 25 snapshot above)
+
+The "40–50% done" estimate above is **out of date**. Since then the project has been built out and hardened. Current reality:
+
+**Now DONE (was listed as not-built / missing above):**
+- ✅ **BSA-63 court PDF** — the moat. Built, polished, and now **tail-safe** (every ledger row self-seals via `chain_hash`, so even the last entry can't be edited undetected).
+- ✅ **Phone** (PhoneInfoga + ignorant, fail-safe), **UPI** (parser + bank map + username cascade), **full name** (Serper), **social URL** (parser → username flow). All wired into the orchestrator.
+- ✅ **Bio-link extraction + iterative seed expansion** (capped at 5).
+- ✅ **Graph view (sigma.js) + timeline (vis-timeline)**, streaming via 1.5 s polling.
+- ✅ **48 pytest tests passing.**
+
+**Architecture note:** the LLM engine is **NVIDIA Cloud** (`llama-3.3-70b`, `deepseek-v4-pro`), enhancement-only — *not* Groq, and *not* on the linking path. Caching described above is **not** part of the current design (the demo is live by design; `mock` mode exists for dev/tests only).
+
+**2026-07-01 hardening pass** fixed the ledger tail-row tamper hole, auth status codes (400 vs 409) + token-decode robustness + bcrypt 72-byte handling, subprocess reaping (maigret/ignorant), one un-escaped PDF field, and several frontend issues (graph refresh on score change, reliable 401 handling). Full details: **`context.md` Section 11**.
+
+### 2026-07-01 OSINT expansion (Sprint 1 & 2) — `context.md` Section 12
+Two infrastructure bugs were found that had been **silently crippling live collection** (every scraper is fail-safe, so failures returned `[]` with no error):
+- **Corporate-TLS failure** — httpx couldn't verify certs behind the TLS-inspection proxy, so archive.org/reddit/breach API **and the NVIDIA LLM** were dead. Fixed with `truststore` (uses the OS cert store; still verifies).
+- **CLI tools not on PATH** — `maigret` (the username backbone), holehe, sherlock, blackbird, ignorant all failed to launch (`FileNotFoundError`) → had **never actually run**. Fixed with a shared `resolve_tool()`. Verified live: maigret → 88, sherlock → 99 accounts.
+
+New/real capabilities now working & verified live:
+- **Profile-photo / face matching** (perceptual hash) — links the same photo across platforms.
+- **Posting-time + frequency / most-active-hours** from real Reddit timestamps (needs Reddit OAuth or a residential IP on this datacenter network).
+- **Breach exposure** via free XposedOrNot (no key; HIBP key is a dummy).
+- **Email → registered services** via holehe (replaces the dead Epieos/user-scanner stubs).
+- **Sherlock** as a 2nd username enumerator (corroborates Maigret) + **username-variant expansion** (`j.shankar`→`jshankar`/`j_shankar`/`shankarj`).
+- **Phone path fixed** — was effectively empty (the `site:truecaller.com` Serper dork returns 0 because Truecaller blocks indexing). Now uses **NumVerify** (carrier/line-type/country, key works) + a **plain Serper web search** (~10 web mentions incl. Truecaller/Facebook/Instagram hits) + PhoneInfoga/ignorant if available. Verified: ~11 results per number. (HIBP, which is email-only, and the Facebook-phone stub were removed from the phone path.)
+
+**Known-dead (do not present as working):** Epieos & Facebook-phone are stubs; Telethon uses a bot token and can't resolve arbitrary users; Reddit requires OAuth credentials (CLIENT_ID/SECRET) to avoid 403s. **Deliberately NOT built (myth/inadmissible):** Telegram-IP-from-phone, password harvesting, private story/deleted-post scraping, WhatsApp DP, Truecaller name scraping.
+
+### 2026-07-01 Sprint 3 — forensics layer (`context.md` Section 13)
+- **Fixed entity bloat:** a username seed was producing ~170 redundant `url` entities (URL parser re-run on every discovered account URL). Discovered URLs now get a capped Wayback archive check only → `torvalds`+email dropped 379→196 entities, no junk nodes.
+- **Linguistic & behavioural forensics** (`backend/analysis/forensics.py`): real **stylometry** (char n-grams + function-word distribution; replaces the weak 2-bio TF-IDF), **sentiment/tone** (VADER, with a negative/hostile-tone flag), **keywords + hashtags**, **activity-hour profile**, **engagement**. Surfaced in a new frontend **Forensics panel** and a report **"2B. Linguistic & Behavioural Forensics"** section.
+- **UI contrast round 2:** muted `dim` text `#4A5568`→`#8693A8` (was unreadable on the near-black canvas).
+- Verified live; 48 tests pass.
+
+> The single source of truth for current architecture, data flows, and run instructions is **`context.md`** (read Sections 11–14 for the latest deltas). The June-25 "known bugs" list above (duplicate platform rows, holehe parsing) predates the current scraper set and no longer applies.
+
+### 2026-07-01 Sprint 4 — OSINT tool installation + FP hardening (`context.md` Section 14)
+
+**Step 0 — installed the two missing OSINT tools:**
+
+- **`ignorant`** (`pip install ignorant`) — phone registration checker (Instagram/Amazon/Snapchat). Verified: `IgnorantScraper.resolve("+919876543210")` returns `[instagram] registered=True`.
+- **Blackbird** (cloned from GitHub, `pip install -r blackbird/requirements.txt`) — WhatsMyName-based username/email enumerator across 680 sites. Verified: 87 profiles for `torvalds`.
+  - `resolve_tool()` extended to search `.exe`, `.bat`, `.cmd` on Windows (was `.exe` only) — `blackbird.bat` wrapper in `venv/Scripts/` is found automatically.
+  - Three bugs in the old `blackbird_scraper.py` fixed: (1) `--json` writes a *file*, not stdout; (2) JSON field is `"name"` not `"site"`/`"app"`; (3) Windows cp1252 crash on ASCII-art banner fixed with `PYTHONIOENCODING=utf-8` in subprocess env.
+  - `BLACKBIRD_PATH` env var added to `.env` so the scraper knows where to find the output file.
+
+**Step 1 — false-positive control-probe filter (all four enumeration tools):**
+
+- Maigret, Sherlock, and Blackbird now each run a random 20-char control username in parallel with the real query. Sites that fire for the control are "broken detectors" and excluded from real results. Cached in `reports/false_positive_sites.json` with a 6-hour TTL.
+- Fixed a race condition in `_save_cache`: both tools ran in parallel and the last writer stomped the other's entry. Now does read-merge-write atomically.
+- Verified FP exclusions: Maigret **36 sites**, Sherlock **3 sites**, Blackbird **1 site**.
+- Socialscan confirmed **0 FP** (uses real registration-flow checks, not HTTP heuristics — no filter needed).
+- Garbage username (`zzqxwv847629nonexistent`) before filter: ~43 Maigret hits; after: **6 slip through** (sites whose broken detection isn't exposed by the hex-format control probe — known limitation).
+
+**Steps 2 & 3** (og:image photo enrichment, frontend confidence labels, PDF status column, lead reverification) were implemented in the prior sprint and remain unchanged.
+
+**Test count: 71 pytest tests passing** (was 48 → 59 → 71).
+
+### 2026-07-01 Sprint 5 — name-search fixes, Serper URL extraction, frontend (`context.md` Section 16)
+
+This sprint fixes a cluster of bugs that made name-seed investigations slow, visually empty, and miss the most obvious profiles (LinkedIn, Instagram).
+
+### 1. Name-seed profiles had no `metadata["name"]` → 0 correlation signals → invisible results
+
+The correlation engine's `exact_name_match` signal (35 pts) reads `p.metadata["name"]`. The orchestrator stamped `metadata["email"]`, `metadata["username"]`, etc. for every seed type, but `"name"` was not in the list, so every Serper profile for a name seed had an empty metadata dict and scored 0 against every other profile. All three Serper profiles (LinkedIn, Instagram, Twitter) were REJECT singletons — the UI showed nothing.
+
+Fix (`backend/pipeline/orchestrator.py`): added `"name"` to the seed-stamp loop:
+
+```python
+if seed_type in {"email", "phone", "username", "name"}:
+    for p in profiles:
+        if seed_type not in p.metadata:
+            p.metadata[seed_type] = value
+```
+
+Now `exact_name_match` fires between all three Serper profiles → 35 pts each pair, 2 signals → qualifies for a HIGH cluster under the red-herring rule (≥ 2 signals, ≥ 50 pts).
+
+### 2. Serper profiles stored page titles as `value`, not the actual handle → username correlation missed everything
+
+Before this fix, `SerperScraper._run_live()` stored the Google page title ("Vismay HS - Student at PES University | LinkedIn") as the profile `value`. When the correlation engine's `_username_signal()` compared that against the GitHub/Maigret value `"VismayHS"`, the fuzzy ratio was 23% → no match. The LinkedIn profile was missed even when it was the top result.
+
+Fix (`backend/ingestion/serper_scraper.py`): added `_extract_social_username(url, platform)` which parses the URL path and returns the handle portion.
+
+- LinkedIn: `/in/{username}/...` → `parts[1]` (requires `parts[0] == "in"`)
+- Instagram/Twitter/TikTok: `/{username}` if `parts[0]` not in `_NON_USERNAME_SEGMENTS`
+- GitHub/GitLab: `/{username}` for single-segment paths
+- Reddit: `/u/{username}` or `/user/{username}`
+- Instagram post URLs (`/p/abc123`, `/reel/...`) → `None` (blocked by denylist)
+
+`_NON_USERNAME_SEGMENTS` denylist covers: `p`, `reel`, `reels`, `explore`, `stories`, `i`, `tv`, `watch`, `channel`, `user`, `c`, `hashtag`, `trending`, `shorts`, `status`, `intent`, `search`, `home`, `feed`, `jobs`, `company`, `school`, `posts`, `pulse`, `wiki`, `comments`, `r`.
+
+The extracted handle becomes the profile `value`; the original page title is saved in `metadata["title"]` for display. When no handle can be extracted, the page title falls back as before (graceful degradation for unexpected URL shapes).
+
+Combined effect for a `name` seed `"VismayHS"`:
+
+- LinkedIn `/in/vismayhs` → `value = "vismayhs"` → `username_exact_match` vs Maigret (45 pts) + `exact_name_match` (35 pts) = **80 pts, 2 signals → HIGH**
+
+### 3. Wayback archive check ran on Serper (web_mention) profiles → ~15 s wasted per name search
+
+The orchestrator iterated over all profiles for Wayback deduplication, including `web_mention` type. Serper results are always live (they're Google search results), so checking their archive status is meaningless — and with 20 profiles it added up to 15 seconds of dead-wait.
+
+Fix (`backend/pipeline/orchestrator.py`): filter out `web_mention` type from the set of URLs fed to Wayback:
+
+```python
+seen_account_urls = {p.source_url for p in all_profiles
+                     if p.source_url and p.source_url.startswith("http")
+                     and p.type != "web_mention"}
+```
+
+### 4. "UNLINKED ACCOUNTS" section auto-collapsed when no clusters existed → blank page on name searches
+
+When a name search produced 3 singleton LOW profiles (or 0 clusters before the metadata fix), the UI showed a blank "complete" state because the unlinked section was collapsed by default. Users had to know to click "▸ expand" to see anything.
+
+Fix (`frontend/app/cases/[id]/page.js`):
+
+- Auto-expand the unlinked section when `status === "complete" && multi.length === 0`
+- Toggle button label updates to reflect auto-expand state
+- Account cards now show the page title as a subtitle (`metadata.title`) in smaller dim text beneath the handle, so users can see "Vismay HS - Student at PES University..." alongside `vismayhs`
+- Unlinked reason text: "Single signal — insufficient to link across platforms" (was "Not enough signals to link across platforms") for profiles with signals, or "No corroborating signals found" for true singletons
+
+**What the "PES University" keyword came from:**
+
+`forensics.summarize()` extracts keywords from all entity snippets and bios. Serper returns the Google snippet of the indexed LinkedIn page ("Vismay HS · Student at PES University, Bengaluru"), which becomes the entity's `metadata["snippet"]`. The forensics engine pulls "PES University" from that snippet. This happens **without visiting LinkedIn** — it's data from Google's index.
+
+**No test regressions:** 71 tests still pass after all changes.

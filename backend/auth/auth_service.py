@@ -14,7 +14,7 @@ import datetime
 import uuid
 
 import bcrypt
-from jose import JWTError, jwt
+from jose import jwt
 
 from backend import config
 from backend.database import get_db
@@ -22,13 +22,16 @@ from backend.database import get_db
 _ALGO = "HS256"
 
 
+# bcrypt only considers the first 72 bytes and modern versions RAISE on longer
+# input. Truncate consistently on both hash and check so a long password can
+# never crash registration or cause an inconsistent login.
 def _hash_pw(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(password.encode()[:72], bcrypt.gensalt()).decode()
 
 
 def _check_pw(password: str, hashed: str) -> bool:
     try:
-        return bcrypt.checkpw(password.encode(), hashed.encode())
+        return bcrypt.checkpw(password.encode()[:72], hashed.encode())
     except Exception:
         return False
 
@@ -78,5 +81,8 @@ def decode_token(token: str) -> str | None:
     try:
         payload = jwt.decode(token, config.JWT_SECRET, algorithms=[_ALGO])
         return payload.get("sub")
-    except JWTError:
+    except Exception:
+        # JWTError covers bad signature/expiry, but a malformed token can also
+        # raise other exceptions; any failure means "not authenticated" (401),
+        # never a 500 with a leaked stack trace.
         return None

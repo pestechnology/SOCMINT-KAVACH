@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS audit_ledger (
     input_hash TEXT,
     output_hash TEXT,
     previous_hash TEXT,
+    chain_hash TEXT,
     actor TEXT,
     timestamp TEXT
 );
@@ -114,6 +115,12 @@ def init_db() -> None:
         # WAL lets readers (polling) and a writer (orchestrator) proceed concurrently.
         conn.execute("PRAGMA journal_mode = WAL;")
         conn.executescript(_SCHEMA)
+        # Migration: older DBs predate the audit_ledger.chain_hash column (which
+        # seals each row — including the last — against silent tampering). Add it
+        # if absent. CREATE TABLE IF NOT EXISTS never alters an existing table.
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(audit_ledger)").fetchall()]
+        if "chain_hash" not in cols:
+            conn.execute("ALTER TABLE audit_ledger ADD COLUMN chain_hash TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -121,4 +128,4 @@ def init_db() -> None:
 
 if __name__ == "__main__":
     init_db()
-    print(f"OK — initialised {config.DB_PATH}")
+    print(f"OK - initialised {config.DB_PATH}")

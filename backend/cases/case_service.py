@@ -113,5 +113,11 @@ def get_results(case_id: str, user_id: str) -> dict | None:
     for c in clusters:
         c["entity_ids"] = json.loads(c.get("entity_ids_json") or "[]")
         c["signals"] = json.loads(c.get("signals_json") or "{}")
+    # forensic summary (tone/sentiment, keywords, activity, engagement) for the UI
+    try:
+        from backend.analysis.forensics import summarize as _forensics
+        forensics = _forensics(entities)
+    except Exception:
+        forensics = {}
     return {"case": case, "entities": entities, "clusters": clusters,
-            "status": case.get("status")}
+            "forensics": forensics, "status": case.get("status")}

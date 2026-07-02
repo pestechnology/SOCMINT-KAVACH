@@ -11,6 +11,19 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# Trust the OS certificate store for all outbound TLS. On managed/corporate
+# networks (e.g. a TLS-inspection proxy) or for hosts that serve an incomplete
+# chain, Python's bundled certifi store rejects certs that the OS store accepts,
+# so httpx scrapers fail with CERTIFICATE_VERIFY_FAILED and (being fail-safe)
+# silently return []. truststore makes Python use the OS store instead. This
+# STILL verifies certificates — it is not the same as disabling verification.
+# No-op if truststore is unavailable or injection fails.
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+
 # Load .env if python-dotenv is available (optional dependency).
 try:
     from dotenv import load_dotenv
@@ -43,6 +56,12 @@ HIBP_API_KEY: str = _get("HIBP_API_KEY")
 NUMVERIFY_KEY: str = _get("NUMVERIFY_KEY")
 TELEGRAM_API_ID: str = _get("TELEGRAM_API_ID")
 TELEGRAM_API_HASH: str = _get("TELEGRAM_API_HASH")
+# Reddit app-only OAuth (free "script"/"web" app). When set, the Reddit scraper uses
+# oauth.reddit.com instead of the public endpoint, which avoids the anti-bot 403s that
+# block datacenter IPs and makes activity analysis reliable on any network.
+REDDIT_CLIENT_ID: str = _get("REDDIT_CLIENT_ID")
+REDDIT_CLIENT_SECRET: str = _get("REDDIT_CLIENT_SECRET")
+REDDIT_USER_AGENT: str = _get("REDDIT_USER_AGENT", "VERTEX-OSINT/1.0 (CIDECODE)")
 
 # ---- LLM model names (NVIDIA Cloud, OpenAI-compatible) ----
 LLM_EXTRACT_MODEL: str = _get("LLM_EXTRACT_MODEL", "meta/llama-3.3-70b-instruct")
