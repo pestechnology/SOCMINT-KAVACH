@@ -63,6 +63,12 @@ REDDIT_CLIENT_ID: str = _get("REDDIT_CLIENT_ID")
 REDDIT_CLIENT_SECRET: str = _get("REDDIT_CLIENT_SECRET")
 REDDIT_USER_AGENT: str = _get("REDDIT_USER_AGENT", "VERTEX-OSINT/1.0 (CIDECODE)")
 
+# Deeper breach coverage (paid APIs; both scrapers return [] with no key configured —
+# see dehashed_scraper.py / leakcheck_scraper.py for the fail-safe stub behaviour).
+DEHASHED_EMAIL: str = _get("DEHASHED_EMAIL")
+DEHASHED_API_KEY: str = _get("DEHASHED_API_KEY")
+LEAKCHECK_API_KEY: str = _get("LEAKCHECK_API_KEY")
+
 # ---- LLM model names (NVIDIA Cloud, OpenAI-compatible) ----
 LLM_EXTRACT_MODEL: str = _get("LLM_EXTRACT_MODEL", "meta/llama-3.3-70b-instruct")
 LLM_EXPLAIN_MODEL: str = _get("LLM_EXPLAIN_MODEL", "deepseek-ai/deepseek-v4-pro")
@@ -95,6 +101,8 @@ _OPTIONAL = {
     "NUMVERIFY_KEY": NUMVERIFY_KEY,
     "TELEGRAM_API_ID": TELEGRAM_API_ID,
     "TELEGRAM_API_HASH": TELEGRAM_API_HASH,
+    "DEHASHED_API_KEY": DEHASHED_API_KEY,
+    "LEAKCHECK_API_KEY": LEAKCHECK_API_KEY,
 }
 
 

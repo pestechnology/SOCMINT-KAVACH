@@ -44,6 +44,11 @@ _SIGNAL_PHRASES = {
     "breach_co_occurrence": "appear together in the same data breaches",
     "bio_keyword_overlap": "use the same distinctive phrases",
     "reciprocal_mention": "mention each other",
+    "face_match": "show the same face in their profile photos",
+    "bio_url_match": "link directly to each other in their bio",
+    "employer_overlap": "list the same employer or school",
+    "city_match": "mention the same city in their bios",
+    "mutual_connections": "share several of the same followers",
 }
 
 
@@ -144,6 +149,58 @@ class LLMClient:
             raise ValueError("not a list")
         except Exception:  # noqa: BLE001 - any LLM failure -> deterministic regex fallback
             return _regex_entities(text)
+
+    def extract_facts(self, text: str) -> dict:
+        """Tightly-constrained NER-style extraction: ORG (employer/school) and GPE
+        (city) entities only. Chosen over spaCy (see fact_enrich.py's module docstring
+        for the reasoning) — this reuses the LLM client already in the pipeline instead
+        of adding a second heavy ML dependency + model-download step.
+
+        Because this is LLM-derived (not a deterministic NER library), the caller
+        (correlation_engine.py's employer_overlap/city_match) treats it as
+        context-tier evidence, never a hard anchor — same discipline as every other
+        LLM-derived signal in this codebase (see reranker.py).
+
+        Returns {"employers": [...], "locations": [...]}, both possibly empty.
+        Never raises.
+        """
+        empty = {"employers": [], "locations": []}
+        if not text or not text.strip():
+            return empty
+        try:
+            content = self._chat_with_failover(
+                config.LLM_EXTRACT_MODEL,
+                [
+                    {"role": "system", "content":
+                     "Extract ONLY two kinds of entities from the text: "
+                     "(1) employers or schools/universities the person is affiliated with, "
+                     "(2) cities or towns mentioned as where the person lives or is from. "
+                     "Do NOT extract country names, do NOT extract vague regions, do NOT guess — "
+                     "only extract what is explicitly stated. "
+                     'Output ONLY valid JSON: {"employers": ["..."], "locations": ["..."]}. '
+                     "Empty arrays if nothing found. No prose."},
+                    {"role": "user", "content": text[:2000]},
+                ],
+                temperature=0.0, max_tokens=300,
+            )
+            content = content.strip()
+            if content.startswith("```"):
+                content = content.strip("`")
+                if content.startswith("json"):
+                    content = content[4:]
+            start, end = content.find("{"), content.rfind("}")
+            if start < 0 or end <= start:
+                return empty
+            data = json.loads(content[start:end + 1])
+            if not isinstance(data, dict):
+                return empty
+            employers = [str(x).strip() for x in (data.get("employers") or [])
+                        if str(x).strip()][:5]
+            locations = [str(x).strip() for x in (data.get("locations") or [])
+                        if str(x).strip()][:5]
+            return {"employers": employers, "locations": locations}
+        except Exception:  # noqa: BLE001 - any LLM failure -> no facts, never a crash
+            return empty
 
     def extract_keywords(self, text: str, entities: list[dict] = None) -> list[str]:
         """Use LLM to extract top identifying keywords and personal names from case entities."""

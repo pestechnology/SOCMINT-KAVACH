@@ -7,10 +7,14 @@ FastAPI BackgroundTasks). Flow:
   1. read case seeds
   2. for each seed, fan out the applicable scrapers in parallel (asyncio.gather,
      return_exceptions=True so one failure never kills the batch)
-  3. one-level cascade: any derived username/phone seed (e.g. from a UPI) is run
-     through its own tools
+  2.8. bio-link cascade: URLs self-disclosed in bios that point to NOT-yet-discovered
+     accounts are fed back in as new cascade seeds (see extract_bio_urls)
+  3. one-level cascade: any derived username/phone seed (e.g. from a UPI, or a
+     bio-link above) is run through its own tools
   4. LLM entity-extraction on free-text blobs (bios/snippets) -> extra seeds folded in
-  5. dedup -> persist entities (streaming: written as soon as scraping is done)
+  5. dedup -> enrich (photo pHash + face embedding, structured facts) -> persist
+     entities (streaming: written as soon as scraping is done); a "face" seed's
+     reference photo is added as its own profile here so it's compared like any other
   6. correlate -> score -> persist clusters with LLM/template explanations
   7. ledger-log each major step; mark the case complete
 
@@ -26,7 +30,7 @@ from backend import config
 from backend.cases.case_service import set_status
 from backend.correlation.correlation_engine import correlate
 from backend.database import get_db
-from backend.ingestion.base_module import RawProfile
+from backend.ingestion.base_module import RawProfile, make_profile
 from backend.ingestion.github_scraper import GitHubScraper
 from backend.ingestion.hibp_scraper import HIBPScraper
 from backend.ingestion.maigret_scraper import MaigretScraper
@@ -44,8 +48,13 @@ from backend.ingestion.xposedornot_scraper import XposedOrNotScraper
 from backend.ingestion.holehe_scraper import HoleheScraper
 from backend.ingestion.sherlock_scraper import SherlockScraper
 from backend.ingestion.variants import username_variants
-from backend.ingestion.photo_enrich import enrich_photos
+from backend.ingestion.photo_enrich import enrich_photos, build_face_seed_profile
 from backend.ingestion.profile_page_fetcher import enrich_profiles_from_page
+from backend.ingestion.fact_enrich import enrich_facts
+from backend.ingestion.dehashed_scraper import DehashedScraper
+from backend.ingestion.leakcheck_scraper import LeakcheckScraper
+from backend.correlation.correlation_engine import extract_bio_urls
+from backend.ingestion.url_scraper import extract_handle
 from backend.ledger.audit_ledger import log_action, save_artifact
 from backend.llm.llm_client import LLMClient
 from backend.pipeline.lead_reverification import reverify_leads
@@ -60,13 +69,19 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
     _sherlock = sherlock or SherlockScraper()
     _blackbird = blackbird or BlackbirdUsernameScraper()
     live = {
-        "email":    [HIBPScraper(), XposedOrNotScraper(), HoleheScraper(), BlackbirdEmailScraper(), GitHubScraper(), SerperScraper('"{q}"')],
+        # DehashedScraper/LeakcheckScraper are fail-safe no-ops without their API keys
+        # (return [] — see each module's docstring); wired here so the moment a key is
+        # added to .env, deeper breach coverage activates with zero other changes.
+        "email":    [HIBPScraper(), XposedOrNotScraper(), DehashedScraper(), LeakcheckScraper(),
+                     HoleheScraper(), BlackbirdEmailScraper(), GitHubScraper(), SerperScraper('"{q}"')],
         # NumVerify (carrier/line-type/country) works with the configured key; a PLAIN
         # Serper search returns real web mentions, whereas the old site:truecaller.com
         # dork returned nothing (Truecaller blocks indexing). PhoneInfoga/ignorant stay
-        # (fail-safe if their server/CLI is absent); HIBP is email-only and the Facebook
-        # checker is a stub, so both are dropped from the phone path.
-        "phone":    [NumVerifyScraper(), PhoneInfogaScraper(), IgnorantScraper(), SerperScraper('"{q}"')],
+        # (fail-safe if their server/CLI is absent); the Facebook checker is a stub, so
+        # it's dropped from the phone path. DehashedScraper/LeakcheckScraper also cover
+        # phone-indexed breach records where the provider supports it.
+        "phone":    [NumVerifyScraper(), PhoneInfogaScraper(), IgnorantScraper(),
+                     DehashedScraper(), LeakcheckScraper(), SerperScraper('"{q}"')],
         "username": [_maigret, _sherlock, _blackbird, SocialscanScraper(), RedditScraper(), TelethonScraper(), GitHubScraper(), SerperScraper('"{q}"')],
         "upi":      [UPIScraper(), SerperScraper('"{q}"')],
         "name":     [SerperScraper('site:linkedin.com/in "{q}"'),
@@ -77,8 +92,23 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
                      SerperScraper('site:youtube.com "{q}"'),
                      SerperScraper('site:t.me "{q}"'),
                      SerperScraper('site:facebook.com "{q}"'),
+                     # Documents (resumes/CVs, official filings) — genuinely additive,
+                     # not covered by any site: profile dork above.
+                     SerperScraper('filetype:pdf "{q}"'),
+                     SerperScraper('filetype:doc "{q}"'),
+                     # Additional platforms not reachable via the generic username
+                     # enumerators (Medium requires a distinct dork; Pinterest profiles
+                     # aren't in Maigret/Sherlock's site lists in this deployment).
+                     SerperScraper('site:medium.com "{q}"'),
+                     SerperScraper('site:pinterest.com "{q}"'),
+                     # Leaked-credential mentions — lower confidence (could be stale or
+                     # unrelated) AND higher sensitivity (may surface PII), so every
+                     # result is stamped metadata["sensitive_source"]=True for the
+                     # report/UI to flag distinctly rather than presenting it like a
+                     # verified profile.
+                     SerperScraper('site:pastebin.com "{q}"', sensitive=True),
                      SerperScraper('"{q}"')],
-        "face":     [],   # handled separately (pHash against collected photos)
+        "face":     [],   # handled separately — see build_face_seed_profile() below
         "url":      [URLScraper(), WaybackScraper()],
     }
     if config.DATA_MODE == "mock":
@@ -402,7 +432,39 @@ async def run_investigation(case_id: str) -> dict:
             log_action(case_id, "variant_expansion",
                        {"variants": variant_set}, {"found": found}, "system")
 
-    # 3: one-level cascade for derived seeds (e.g. UPI -> username/phone)
+    # 2.8: bio-link cascade — a bio/description self-discloses a URL to an account we
+    # have NOT already discovered (e.g. a GitHub bio linking a personal Twitter). Feed
+    # any new handle back in as a "derived"+cascade profile, reusing exactly the same
+    # one-level-cascade mechanism the loop below already applies to UPI-derived seeds
+    # — no new cascade machinery needed, this just seeds it with more candidates.
+    # (Bio URLs that DO match an already-discovered profile are handled separately by
+    # correlation_engine.py's bio_url_match signal — that's corroboration, this is
+    # finding NEW accounts.)
+    existing_handles = {p.value.lower() for p in all_profiles if p.value}
+    bio_link_count = 0
+    for p in list(all_profiles):
+        text = " ".join(str((p.metadata or {}).get(k) or "") for k in ("bio", "snippet"))
+        if not text:
+            continue
+        for url in extract_bio_urls(text):
+            found = extract_handle(url)
+            if not found:
+                continue
+            _, handle = found
+            if not _is_valid_expansion_handle(handle) or handle.lower() in existing_handles:
+                continue
+            existing_handles.add(handle.lower())
+            all_profiles.append(make_profile("username", handle, "derived", url,
+                                metadata={"derived_from_bio": p.value, "cascade": True}))
+            bio_link_count += 1
+            if bio_link_count >= 5:   # hard cap, mirrors every other expansion step
+                break
+        if bio_link_count >= 5:
+            break
+    if bio_link_count:
+        log_action(case_id, "bio_link_cascade", {"found": bio_link_count}, None, "system")
+
+    # 3: one-level cascade for derived seeds (e.g. UPI -> username/phone, bio-link above)
     derived = [p for p in all_profiles if p.platform == "derived"
                and p.metadata.get("cascade")]
     for d in derived:
@@ -598,6 +660,31 @@ async def run_investigation(case_id: str) -> dict:
                        {"photos_hashed": hashed}, "system")
         except Exception:  # fail-safe: photo hashing must never stop a run
             pass
+        try:
+            facts = await enrich_facts(profiles)
+            log_action(case_id, "fact_enrichment", {"candidates": len(profiles)},
+                       {"profiles_with_facts": facts}, "system")
+        except Exception:  # fail-safe: fact extraction must never stop a run
+            pass
+
+        # 5c: face seed (investigator-supplied reference photo). Added as its own
+        # RawProfile so the existing pairwise correlate()/score() pipeline compares it
+        # against every discovered profile's face_embedding with zero special-casing —
+        # same pattern every other seed-derived profile already uses.
+        for s in seeds:
+            if s.get("type") == "face" and s.get("value"):
+                try:
+                    face_profile = await build_face_seed_profile(s["value"])
+                except Exception:
+                    face_profile = None
+                if face_profile:
+                    profiles.append(face_profile)
+                    log_action(case_id, "face_seed_processed", {"value": s["value"]},
+                               {"embedding_extracted": True}, "system")
+                else:
+                    log_action(case_id, "face_seed_processed", {"value": s["value"]},
+                               {"embedding_extracted": False,
+                                "reason": "fetch failed or no face detected"}, "system")
 
         def _has_content_metadata(p: RawProfile) -> bool:
             if p.type not in ("social_account", "username"):

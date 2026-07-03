@@ -5,6 +5,10 @@ Handles both seeds:
   - email     -> /search/users?q={email}+in:email  (find the account that used it)
   - username  -> /users/{username}                  (rich profile: name, bio, avatar, ...)
 
+Also pulls up to 100 follower logins into metadata["followers_sample"] (one bounded
+API page) — feeds correlation_engine.py's mutual_connections signal: two DIFFERENT
+accounts sharing several specific followers is real social-graph evidence.
+
 Token (config.GITHUB_TOKEN) raises the rate limit to 5000/h but is optional for
 public data. Returns [] on any failure.
 """
@@ -64,9 +68,27 @@ async def _recent_activity(client: httpx.AsyncClient, login: str) -> list[dict]:
         return []
 
 
+_FOLLOWERS_SAMPLE_SIZE = 100   # one page — bounds the mutual_connections comparison cost
+
+
+async def _followers_sample(client: httpx.AsyncClient, login: str) -> list[str]:
+    """Up to 100 follower logins (one API page) for the mutual_connections signal in
+    correlation_engine.py. Never raises; [] on any failure (rate limit, 404, etc.) —
+    the signal simply doesn't fire for that profile, same as any missing metadata."""
+    try:
+        r = await client.get(f"{_API}/users/{login}/followers",
+                             params={"per_page": _FOLLOWERS_SAMPLE_SIZE})
+        if r.status_code != 200:
+            return []
+        return [u.get("login") for u in r.json() if u.get("login")]
+    except Exception:
+        return []
+
+
 async def _profile_from_user(client: httpx.AsyncClient, user: dict) -> RawProfile:
     login = user.get("login", "")
     activity = await _recent_activity(client, login) if login else []
+    followers_sample = await _followers_sample(client, login) if login else []
     meta = {
         "name": user.get("name"),
         "location": user.get("location"),
@@ -80,6 +102,8 @@ async def _profile_from_user(client: httpx.AsyncClient, user: dict) -> RawProfil
     }
     if activity:
         meta["recent_posts"] = activity
+    if followers_sample:
+        meta["followers_sample"] = followers_sample
     return make_profile("social_account", login, "github", user.get("html_url", ""), metadata=meta)
 
 

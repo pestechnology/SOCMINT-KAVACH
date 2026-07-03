@@ -64,7 +64,7 @@ export default function Login() {
 
           <div className="mt-8 space-y-1">
             {[
-              "15-signal correlation engine",
+              "20-signal correlation engine",
               "BSA-63 court-admissible PDF output",
               "SHA-256 tamper-evident audit chain",
             ].map((t) => (

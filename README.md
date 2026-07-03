@@ -12,7 +12,7 @@ An investigator enters **one** thing they know about a suspect — a username, e
 number, UPI ID, full name, or social-media URL — and VERTEX:
 
 1. **Collects** publicly available OSINT data for that identifier across dozens of platforms.
-2. **Correlates** every account/trace it finds using a 15-signal engine.
+2. **Correlates** every account/trace it finds using a 20-signal engine.
 3. **Decides** which accounts belong to the **same person** — and refuses to link on weak
    evidence (the *red-herring rejection*).
 4. **Produces** a **court-admissible evidence PDF** under India's **Bharatiya Sakshya
@@ -25,9 +25,12 @@ rather refuse a link than over-claim one that couldn't survive in court.
 
 ## Key features
 
-- **15-signal correlation engine** — shared phone/email/UPI, username similarity (exact /
-  substring / fuzzy), profile photo perceptual-hash, posting-hour overlap, stylometry,
-  breach co-occurrence, bio keywords, real-name match, location overlap.
+- **20-signal correlation engine** — shared phone/email/UPI, username similarity (exact /
+  substring / fuzzy), profile photo perceptual-hash, face-embedding match (same person,
+  different photo), bio self-disclosed links, posting-hour overlap, stylometry, breach
+  co-occurrence, bio keywords, real-name match, location overlap, employer/city NER match,
+  mutual-connections overlap. Every signal is classified as a **hard anchor** (standalone-
+  sufficient evidence) or **context** (corroborating only, never alone-sufficient).
 - **Red-herring rejection** — a single signal (e.g. only a matching username) is never enough
   to link accounts; it is flagged LOW but kept separate.
 - **Confidence tiers** — HIGH / MEDIUM / LOW / REJECT, each with a plain-English explanation.
@@ -96,7 +99,7 @@ echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
 npm install && npm run dev           # http://localhost:3000
 
 # 7. Tests
-python -m pytest tests/ -q           # 71 tests
+python -m pytest tests/ -q           # 101 tests
 ```
 
 **Offline demo:** set `DATA_MODE=mock` in `.env`, restart the backend, run an investigation.
@@ -116,20 +119,24 @@ backend/
   cases/               case CRUD + owner access control
   ingestion/           BaseDataSource + all scrapers (maigret, sherlock, blackbird,
                        socialscan, github, serper, hibp, xposedornot, holehe,
-                       phone_scrapers, wayback, reddit, telethon, upi, url,
-                       variants, photo_enrich, profile_page_fetcher, fp_filter, mock)
+                       dehashed, leakcheck, phone_scrapers, wayback, reddit, telethon,
+                       upi, url, variants, photo_enrich (pHash + face embedding),
+                       fact_enrich (NER-style employer/city), profile_page_fetcher,
+                       fp_filter, mock)
   analysis/            forensics.py — stylometry, sentiment, keywords, activity
-  correlation/         pairwise 15-signal computation
+  correlation/         pairwise 20-signal computation
   scoring/             clustering + tiers + red-herring rule (DO NOT MODIFY)
   llm/                 NVIDIA client with regex/template fallbacks
   pipeline/            orchestrator + lead_reverification
   ledger/              tamper-evident hash chain + artifact hashing
   report/              BSA-63 PDF generator
+  models/              face-matching ONNX models (gitignored; run scripts/ below)
+  scripts/             download_face_models.py — one-time face-model fetch
   main.py              FastAPI entrypoint
 frontend/              Next.js 14 + Tailwind dashboard
 scripts/               create_admin, seed_demo_case
-tests/                 71 pytest tests
-context.md             full engineering onboarding doc (read §15-17 for latest)
+tests/                 101 pytest tests
+context.md             full engineering onboarding doc (read §19-20 for latest)
 SETUP.md               step-by-step run guide including Blackbird setup
 TRANSFER_CHECKLIST.md  checklist for zip/GitHub transfers to a new machine
 LEGAL_VERIFICATION.md  BSA-63 legal claims verified against primary sources

@@ -11,10 +11,14 @@ engine consumes the fired-signal dict; it does not re-derive anything here.
 from __future__ import annotations
 
 import difflib
+import math
+import re
 from dataclasses import dataclass, field
 
 from backend.ingestion.base_module import RawProfile
 from backend.analysis.forensics import stylometry_similarity as _stylometry_similarity
+from backend.ingestion.photo_enrich import FACE_COSINE_THRESHOLD as _FACE_COSINE_THRESHOLD
+from backend.ingestion.url_scraper import extract_handle as _extract_handle
 
 # Optional accelerators ------------------------------------------------------
 try:
@@ -48,6 +52,24 @@ SIGNAL_WEIGHTS = {
     "breach_co_occurrence": 18,
     "bio_keyword_overlap": 12,
     "reciprocal_mention": 15,
+    # ---- Sprint 7: more signal, more data (see scoring_engine.py's
+    # HARD_ANCHOR_SIGNALS / _CONTEXT_SIGNALS for each signal's tier) ----
+    # Biometric match via SFace embedding (photo_enrich.py) — same PERSON even in a
+    # different photo. Independent of profile_photo_phash (same IMAGE FILE reused);
+    # both can fire on the same pair from different evidence.
+    "face_match": 40,
+    # A bio/description that links to another account's OWN discovered profile URL —
+    # self-disclosure, one of the strongest signals available (close to an exact
+    # identifier match, hence weighted near exact_email_match).
+    "bio_url_match": 55,
+    # NER-derived employer/school and city mentions extracted from free text (LLM
+    # path — see fact_enrich.py). More specific than generic bio_keyword_overlap but
+    # LLM-derived, so kept below the deterministic exact/fuzzy name signals.
+    "employer_overlap": 16,
+    "city_match": 14,
+    # Shared GitHub followers — ceiling weight for a 5+-overlap; see
+    # _mutual_connections() below for the tiered curve and its reasoning.
+    "mutual_connections": 20,
 }
 
 
@@ -188,6 +210,92 @@ def _photo_match(ma: dict, mb: dict) -> bool:
     return bool(ua and ub and ua == ub)
 
 
+def _cosine(a: list, b: list) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _face_match(ma: dict, mb: dict) -> bool:
+    """SFace embedding cosine similarity >= FACE_COSINE_THRESHOLD (photo_enrich.py's
+    documented, model-calibrated cutoff — see that module's docstring for the source).
+    Two profiles with NO embedding (no photo, or no face detected in the photo) are
+    'no signal', never a match — see photo_enrich.py's fail-open-to-unset design."""
+    ea, eb = ma.get("face_embedding"), mb.get("face_embedding")
+    if not isinstance(ea, list) or not isinstance(eb, list):
+        return False
+    try:
+        return _cosine(ea, eb) >= _FACE_COSINE_THRESHOLD
+    except Exception:
+        return False
+
+
+_URL_RE = re.compile(r'https?://[^\s<>"\')\]]+', re.IGNORECASE)
+
+
+def extract_bio_urls(text: str) -> list[str]:
+    """Every http(s) URL embedded in free text (a bio/description field)."""
+    return _URL_RE.findall(text or "")
+
+
+def _bio_links_to(bio_text: str, target: RawProfile) -> bool:
+    """True if `bio_text` contains a URL whose (platform, handle) — via the SAME
+    parser url_scraper.py uses for its own cascade seeds — matches `target`'s own
+    (platform, value). Self-disclosure: someone's GitHub bio linking to the exact
+    Twitter account we independently discovered is strong standalone evidence."""
+    t_plat, t_val = _norm(target.platform), _norm(target.value)
+    if not t_plat or not t_val:
+        return False
+    for url in extract_bio_urls(bio_text):
+        found = _extract_handle(url)
+        if found and _norm(found[0]) == t_plat and _norm(found[1]) == t_val:
+            return True
+    return False
+
+
+def _employer_overlap(ma: dict, mb: dict) -> bool:
+    """metadata['employer_candidates'] is a NER-extracted list (fact_enrich.py), noisy
+    by nature — require an exact (normalized) shared entry, not substring/fuzzy."""
+    ea = {_norm(x) for x in (ma.get("employer_candidates") or []) if _norm(x)}
+    eb = {_norm(x) for x in (mb.get("employer_candidates") or []) if _norm(x)}
+    return bool(ea & eb)
+
+
+def _city_match(ma: dict, mb: dict) -> bool:
+    """Same as _employer_overlap but for metadata['location_candidates'] — NER-derived
+    city mentions from free text, DISTINCT from the structured `location` field that
+    location_overlap already reads (a bio can mention a city with no structured
+    location field set at all)."""
+    la = {_norm(x) for x in (ma.get("location_candidates") or []) if _norm(x)}
+    lb = {_norm(x) for x in (mb.get("location_candidates") or []) if _norm(x)}
+    return bool(la & lb)
+
+
+def _mutual_connections(ma: dict, mb: dict) -> int | None:
+    """Shared GitHub followers, weighted by overlap COUNT (not mere presence).
+
+    Reasoning: any two moderately-followed tech accounts are likely to share a couple
+    of ubiquitous followers by pure chance (a popular org bot, a well-known figure who
+    follows thousands of people) — that is not evidence of a shared identity. But
+    GitHub's follower graph has a long tail; two DIFFERENT unrelated people sharing
+    5+ specific followers is a low-probability coincidence and starts to look like
+    real social-graph evidence (the same person's alt account, or accounts followed
+    by the same small real-world circle). Below 2 shared followers we treat it as
+    noise (no signal at all); 2-4 is weak corroboration; 5+ is the ceiling weight.
+    """
+    fa = {_norm(x) for x in (ma.get("followers_sample") or []) if _norm(x)}
+    fb = {_norm(x) for x in (mb.get("followers_sample") or []) if _norm(x)}
+    overlap = len(fa & fb)
+    if overlap < 2:
+        return None
+    if overlap < 5:
+        return 10
+    return SIGNAL_WEIGHTS["mutual_connections"]  # 20 — 5+ shared, ceiling weight
+
+
 def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
     ma, mb = a.metadata or {}, b.metadata or {}
     fired: dict = {}
@@ -208,9 +316,29 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
     if usig:
         fired[usig[0]] = usig[1]
 
-    # photo
+    # photo — two independent signals: exact image reuse, and same-person-different-photo.
     if _photo_match(ma, mb):
         fired["profile_photo_phash"] = SIGNAL_WEIGHTS["profile_photo_phash"]
+    if _face_match(ma, mb):
+        fired["face_match"] = SIGNAL_WEIGHTS["face_match"]
+
+    # bio self-disclosure: A's bio links to B's own account, or vice versa
+    bio_a = " ".join(str(ma.get(k) or "") for k in ("bio", "snippet"))
+    bio_b = " ".join(str(mb.get(k) or "") for k in ("bio", "snippet"))
+    if _bio_links_to(bio_a, b) or _bio_links_to(bio_b, a):
+        fired["bio_url_match"] = SIGNAL_WEIGHTS["bio_url_match"]
+
+    # NER-derived employer / city (fact_enrich.py) — distinct from the generic
+    # bio_keyword_overlap and the structured-field location_overlap below.
+    if _employer_overlap(ma, mb):
+        fired["employer_overlap"] = SIGNAL_WEIGHTS["employer_overlap"]
+    if _city_match(ma, mb):
+        fired["city_match"] = SIGNAL_WEIGHTS["city_match"]
+
+    # shared GitHub followers, weighted by overlap size
+    mutual_pts = _mutual_connections(ma, mb)
+    if mutual_pts is not None:
+        fired["mutual_connections"] = mutual_pts
 
     # posting hours
     if _hours_jaccard(ma.get("posting_hours"), mb.get("posting_hours")) > 0.6:

@@ -20,7 +20,9 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 Required for a strong demo: `SERPER_API_KEY`, `GITHUB_TOKEN`, `NVIDIA_API_KEY`, `JWT_SECRET`.
 
-Optional: `HIBP_API_KEY`, `TELEGRAM_API_ID/HASH`, `NUMVERIFY_KEY`, `REDDIT_CLIENT_ID/SECRET`.
+Optional: `HIBP_API_KEY`, `TELEGRAM_API_ID/HASH`, `NUMVERIFY_KEY`, `REDDIT_CLIENT_ID/SECRET`,
+`DEHASHED_EMAIL`/`DEHASHED_API_KEY`, `LEAKCHECK_API_KEY` (deeper breach coverage — the
+pipeline runs identically, just with fewer breach hits, if these are unset).
 
 > If any key was ever pasted into chat/screenshots, ROTATE it before use.
 
@@ -35,6 +37,12 @@ python -m venv venv
 pip install -r requirements.txt
 pip install pytest pytest-asyncio    # test deps (NOT in requirements.txt)
 # maigret, sherlock-project, holehe, socialscan already in requirements.txt
+
+# Face-matching models (one-time, ~37 MB, NOT committed to git — see
+# backend/ingestion/photo_enrich.py's docstring for why OpenCV's YuNet+SFace models
+# were chosen over face_recognition/dlib). Optional: if this is skipped, face
+# matching is simply disabled — every other signal is unaffected.
+python backend/scripts/download_face_models.py
 
 # ignorant (phone registration checker — pip-packaged):
 pip install ignorant
@@ -134,16 +142,22 @@ shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
 
 ## 9. What's built
 
-**Built and tested (71 pytest tests passing):**
+**Built and tested (101 pytest tests passing):**
 
-- Config, DB, auth, cases, data-source interface, mock scraper, correlation (15 signals),
-  scoring (red-herring rule), LLM client (with fallbacks), orchestrator, audit ledger
-  (hash chain), BSA-63 PDF.
-- Live scrapers: GitHub, Serper, HIBP, XposedOrNot, Holehe, Maigret, Sherlock,
-  Blackbird (username + email), Socialscan, ignorant, PhoneInfoga, UPI, Wayback,
-  Reddit, Telethon, URL scraper.
+- Config, DB, auth, cases, data-source interface, mock scraper, correlation (20
+  signals — 7 hard-anchor, 7 context-tier, see context.md §17.12), scoring
+  (red-herring rule + hard-anchor gating), LLM client (with fallbacks), orchestrator,
+  audit ledger (hash chain), BSA-63 PDF.
+- Live scrapers: GitHub (incl. followers sample for mutual-connections), Serper
+  (incl. filetype/medium/pinterest/pastebin dorks), HIBP, XposedOrNot, DeHashed,
+  LeakCheck (both stubbed pending API keys), Holehe, Maigret, Sherlock, Blackbird
+  (username + email), Socialscan, ignorant, PhoneInfoga, UPI, Wayback, Reddit,
+  Telethon, URL scraper.
 - False-positive filter: Maigret (36 excluded sites), Sherlock (3), Blackbird (1).
-- Profile photo og:image enrichment + frontend avatar display.
+- Profile photo og:image enrichment, perceptual-hash matching, and face-embedding
+  matching (OpenCV YuNet+SFace — see §3 above) + frontend avatar display.
+- Bio-link extraction (self-disclosed cross-platform links) and NER-style
+  employer/city fact extraction (LLM-based, context-tier evidence only).
 - Confidence labels: CONFIRMED / POSSIBLE LEAD / UNCONFIRMED.
 - Lead reverification pipeline.
 - Username extraction from Serper result URLs (LinkedIn/Instagram/Twitter/GitHub handles).

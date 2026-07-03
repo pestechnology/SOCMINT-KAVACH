@@ -95,9 +95,15 @@ def _extract_social_username(url: str, platform: str) -> str | None:
 class SerperScraper(BaseDataSource):
     name = "serper"
 
-    def __init__(self, query_template: str = '"{q}"'):
+    def __init__(self, query_template: str = '"{q}"', sensitive: bool = False):
         # e.g. 'site:truecaller.com "{q}"' or 'site:linkedin.com/in "{q}"'
         self.query_template = query_template
+        # A paste-site hit (e.g. site:pastebin.com) is lower-confidence (could be
+        # unrelated, could be stale) AND higher-sensitivity (may surface leaked
+        # credentials/PII) than a normal social-profile dork. Stamped onto every
+        # result so the report/UI can flag it distinctly rather than presenting it
+        # with the same confidence as a verified profile page.
+        self.sensitive = sensitive
 
     async def _run_live(self, identifier: str) -> list[RawProfile]:
         if not config.SERPER_API_KEY:
@@ -133,5 +139,7 @@ class SerperScraper(BaseDataSource):
             meta     = {"snippet": item.get("snippet"), "query": query}
             if username:
                 meta["title"] = item.get("title", "")
+            if self.sensitive:
+                meta["sensitive_source"] = True
             out.append(make_profile("web_mention", value, platform, url, metadata=meta))
         return out

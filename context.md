@@ -815,15 +815,27 @@ Muted text token `dim` `#4A5568` → `#8693A8`; `.panel-label` → `#8693A8`; `.
 
 The body (§1–10) is the original snapshot. Where it conflicts with the list below, **this section is correct** (verified against the code 2026-07-01).
 
-## 14.1 Correlation signal weights — §6 line ~407 is WRONG. Actual `SIGNAL_WEIGHTS` (15 signals):
+## 14.1 Correlation signal weights — §6 line ~407 is WRONG. Actual `SIGNAL_WEIGHTS`
+(**20 signals** as of the Sprint 8 "more signal, more data" build — see §20):
 ```
 exact_phone_match      = 60      exact_email_match      = 60      exact_upi_match       = 60
 username_exact_match   = 45      username_substring_match = 20    username_fuzzy_match  = 15
 exact_name_match       = 35      fuzzy_name_match       = 20      location_overlap      = 15
 profile_photo_phash    = 35      posting_hours_overlap  = 15      stylometry_cosine     = 20
 breach_co_occurrence   = 18      bio_keyword_overlap    = 12      reciprocal_mention    = 15
+face_match             = 40      bio_url_match          = 55      employer_overlap      = 16
+city_match             = 14      mutual_connections     = 10 or 20 (tiered, see §20.4)
 ```
-(The §6 numbers — phone=40, email=35, etc. — and the omission of `exact_name_match`/`fuzzy_name_match`/`location_overlap` are stale.)
+(The §6 numbers — phone=40, email=35, etc. — and the omission of `exact_name_match`/`fuzzy_name_match`/`location_overlap` are stale. The last 5 rows above were added in §20 and are not in the original §6 body at all.)
+
+**Hard-anchor vs. context tier (added §19 — did NOT exist before that; a signal used to
+either count as evidence or not, with no reliability tier):** `HARD_ANCHOR_SIGNALS` =
+`{exact_email_match, exact_phone_match, exact_upi_match, profile_photo_phash,
+breach_co_occurrence, face_match, bio_url_match}` — at least one of these (or an
+exact/fuzzy name match plus 1-2 corroborating context signals, see §19.3) is required
+before a cluster can exceed MEDIUM. `_CONTEXT_SIGNALS` = `{location_overlap,
+bio_keyword_overlap, stylometry_cosine, posting_hours_overlap, employer_overlap,
+city_match, mutual_connections}` — real evidence, but never standalone-sufficient.
 
 ## 14.2 Other §6 / §7 corrections
 - **Stylometry** is now char n-grams + function-word distribution (`forensics.stylometry_similarity`), fired at **> 0.6** over each profile's `bio + text_sample` (length gate 25 chars). NOT "TF-IDF > 0.75 / bios > 15".
@@ -840,23 +852,35 @@ breach_co_occurrence   = 18      bio_keyword_overlap    = 12      reciprocal_men
 Cover → 1. Search Manifest → 2. Findings Summary → **2A. Digital Footprint & Exposure** → **2B. Linguistic & Behavioural Forensics** → Annexure A → Certificate Part A → Part B → 3. Chain of Custody → Document Integrity Statement.
 
 ## 14.5 File map (§2) — current ingestion + analysis modules
-`backend/ingestion/` actually contains: base_module, mock_scraper, github_scraper, serper_scraper, hibp_scraper, **xposedornot_scraper**, **holehe_scraper**, maigret_scraper, **sherlock_scraper**, **socialscan_scraper**, **blackbird_scraper**, **reddit_scraper**, **telethon_scraper**, **wayback_scraper**, **url_scraper**, **variants.py**, **photo_enrich.py**, upi_module, phone_scrapers, plus three **dead/unwired files still on disk**: `epieos_scraper.py`, `facebook_scraper.py`, `user_scanner_scraper.py` (stubs/bot-token — not in the seed map). New package **`backend/analysis/`** → `forensics.py`.
+`backend/ingestion/` actually contains: base_module, mock_scraper, github_scraper, serper_scraper, hibp_scraper, **xposedornot_scraper**, **holehe_scraper**, maigret_scraper, **sherlock_scraper**, **socialscan_scraper**, **blackbird_scraper**, **reddit_scraper**, **telethon_scraper**, **wayback_scraper**, **url_scraper**, **variants.py**, **photo_enrich.py**, upi_module, phone_scrapers, **dehashed_scraper.py** (§20.6), **leakcheck_scraper.py** (§20.6), **fact_enrich.py** (§20.3), plus three **dead/unwired files still on disk**: `epieos_scraper.py`, `facebook_scraper.py`, `user_scanner_scraper.py` (stubs/bot-token — not in the seed map). New package **`backend/analysis/`** → `forensics.py`. New file **`backend/scripts/download_face_models.py`** (one-time setup helper, §20.1).
 
-## 14.6 Current live seed → tool map (`orchestrator._seed_tool_map`)
+## 14.6 Current live seed → tool map (`orchestrator._seed_tool_map`) — updated §20
+
 ```
-email    : HIBP, XposedOrNot, Holehe, BlackbirdEmail, GitHub, Serper('"{q}"')
-phone    : NumVerify, PhoneInfoga, Ignorant, Serper('"{q}"')
+email    : HIBP, XposedOrNot, Dehashed, Leakcheck, Holehe, BlackbirdEmail, GitHub, Serper('"{q}"')
+phone    : NumVerify, PhoneInfoga, Ignorant, Dehashed, Leakcheck, Serper('"{q}"')
 username : Maigret, Sherlock, BlackbirdUsername, Socialscan, Reddit, Telethon, GitHub, Serper('"{q}"')
 upi      : UPI parser, Serper('"{q}"')
-name     : Serper(site:linkedin.com/in), Serper(site:instagram.com), Serper(site:twitter.com)
+name     : Serper(site:linkedin.com/in), Serper(site:instagram.com), Serper(site:twitter.com),
+           Serper(site:github.com), Serper(site:reddit.com/user), Serper(site:youtube.com),
+           Serper(site:t.me), Serper(site:facebook.com), Serper(filetype:pdf),
+           Serper(filetype:doc), Serper(site:medium.com), Serper(site:pinterest.com),
+           Serper(site:pastebin.com, sensitive=True), Serper('"{q}"')
 url      : URLScraper, Wayback
-face     : []   (no matcher runs; pHash matches photos discovered via other seeds)
+face     : []   (handled separately — build_face_seed_profile() adds the reference
+           photo's embedding as its own RawProfile, see §20.1)
 ```
-Pipeline order: per-seed fan-out → **variant expansion** (live; fast tools = GitHub/Reddit/socialscan/blackbird; ≤8 variants) → derived-seed cascade → **archive check** (Wayback, ≤20 URLs) → LLM entity-extraction (≤10 blobs) + bio-link expansion (≤5) → dedup → **photo pHash enrichment** (live) → persist → correlate → score → forensics.
+Dehashed/Leakcheck are fully implemented but STUBBED in every environment without
+`DEHASHED_API_KEY`/`LEAKCHECK_API_KEY` set — they return `[]`, identical to every other
+optional-key scraper's fail-safe behaviour (see §20.6).
+
+Pipeline order: per-seed fan-out → **variant expansion** (live; fast tools = GitHub/Reddit/socialscan/blackbird; ≤8 variants) → **bio-link cascade** (§20.2, ≤5 new handles) → derived-seed cascade → **archive check** (Wayback, ≤20 URLs) → LLM entity-extraction (≤10 blobs) → dedup → **photo pHash + face-embedding enrichment** (live, §20.1) → **fact enrichment** (live, ≤15 profiles, §20.3) → **face-seed profile injection** (live, §20.1) → persist → correlate → score → forensics.
 
 ## 14.7 Test count
 
-**71** (was 48 → 59 → 71). pytest/pytest-asyncio install separately (not in requirements.txt).
+**101** as of §20 (was 48 → 59 → 71 → 76 → 78 → 84 → 101 — see §18.2, §19.4, §20.7 for
+the checkpoints after this section was last fully rewritten). pytest/pytest-asyncio
+install separately (not in requirements.txt). Run: `python -m pytest tests/ -q`.
 
 ---
 
@@ -1332,38 +1356,59 @@ If Blackbird returns nothing:
 
 **False-positive filter (username tools only):** Maigret, Sherlock, and Blackbird each run a random 20-char hex control username in parallel. Sites that fire for the control are "broken detectors" and are excluded from real results. Cached 6 h in `reports/false_positive_sites.json`. Socialscan and ignorant have no FP filter (they use real registration-flow checks, not HTTP heuristics).
 
-## 17.12 Correlation signals reference
+## 17.12 Correlation signals reference — UPDATED §20 (20 signals, was 14 listed here)
 
-| Signal | Points | Fires when |
-| --- | --- | --- |
-| exact_phone_match | 60 | Last 10 digits of phone match |
-| exact_email_match | 60 | Normalised email strings match |
-| exact_upi_match | 60 | UPI IDs match |
-| username_exact_match | 45 | Normalised `value` strings are identical |
-| username_substring_match | 20 | One is a substring of the other |
-| username_fuzzy_match | 15 | thefuzz ratio ≥ 80 (difflib fallback) |
-| exact_name_match | 35 | `metadata["name"]` values match exactly |
-| fuzzy_name_match | 20 | Name fuzzy ratio ≥ 80 |
-| location_overlap | 15 | `metadata["location"]` values match/contain each other |
-| profile_photo_phash | 35 | Perceptual-hash Hamming distance < 8 OR same photo URL |
-| posting_hours_overlap | 15 | Jaccard index of active hours > 0.6 |
-| stylometry_cosine | 20 | Char n-gram + function-word cosine > 0.6 |
-| breach_co_occurrence | 18 | Shared breach (rare or ≥ 2 shared; mega-breaches excluded) |
-| bio_keyword_overlap | 12 | ≥ 2 non-stopword bio tokens in common |
+| Signal | Points | Tier | Fires when |
+| --- | --- | --- | --- |
+| exact_phone_match | 60 | hard anchor | Last 10 digits of phone match |
+| exact_email_match | 60 | hard anchor | Normalised email strings match |
+| exact_upi_match | 60 | hard anchor | UPI IDs match |
+| bio_url_match | 55 | hard anchor | A's bio links to B's own discovered profile URL (or vice versa) — §20.2 |
+| username_exact_match | 45 | — | Normalised `value` strings are identical |
+| face_match | 40 | hard anchor | SFace embedding cosine ≥ 0.363 — same PERSON, possibly different photo — §20.1 |
+| exact_name_match | 35 | conditional anchor | `metadata["name"]` values match exactly |
+| profile_photo_phash | 35 | hard anchor | Perceptual-hash Hamming distance < 6 (tightened from <8, §19.5) OR same photo URL |
+| mutual_connections | 10 or 20 | context | Shared GitHub followers: 2-4 shared → 10, 5+ → 20 (tiered, §20.4) |
+| username_substring_match | 20 | — | One is a substring of the other AND the shorter side is ≥ 4 chars (§19.6) |
+| fuzzy_name_match | 20 | conditional anchor | Name fuzzy ratio ≥ 80 |
+| stylometry_cosine | 20 | context | Char n-gram + function-word cosine > 0.6 |
+| breach_co_occurrence | 18 | hard anchor | Shared breach (rare or ≥ 2 shared; mega-breaches excluded) |
+| employer_overlap | 16 | context | LLM-extracted employer/school candidates share an exact entry — §20.3 |
+| username_fuzzy_match | 15 | — | thefuzz ratio ≥ 80 (difflib fallback) |
+| location_overlap | 15 | context | `metadata["location"]` values match/contain each other |
+| posting_hours_overlap | 15 | context | Jaccard index of active hours > 0.6 |
+| reciprocal_mention | 15 | — | **Defined but never fires** — no scraper supplies mention-graph data |
+| city_match | 14 | context | LLM-extracted city candidates share an entry — distinct from `location_overlap`'s structured field, §20.3 |
+| bio_keyword_overlap | 12 | context | ≥ 2 non-stopword bio tokens in common |
+
+**Hard-anchor rule (added §19 — this concept did not exist before then):** a cluster can
+only exceed MEDIUM if at least one `HARD_ANCHOR_SIGNALS` member fired, OR an
+`exact_name_match` fired alongside ≥1 context signal, OR a `fuzzy_name_match` (common
+names, less reliable) fired alongside ≥2 independent context signals. Context-tier
+signals (`location_overlap`, `bio_keyword_overlap`, `stylometry_cosine`,
+`posting_hours_overlap`, `employer_overlap`, `city_match`, `mutual_connections`) can
+never, by themselves or combined, push a cluster past MEDIUM — see §19.3 for why this
+was added (two unrelated people sharing a common name + evening posting hours were
+previously hard-anchored and could reach HIGH).
 
 **Red-herring rule (hard-coded, DO NOT CHANGE):** linking requires BOTH `num_signals ≥ 2` AND `raw_points ≥ 50`. A single signal — even a 60-pt phone match — is flagged at LOW but never merges accounts into a cluster. This is the system's primary defensive claim for court use.
 
 **Tiers:** HIGH > 75 pts | MEDIUM 50–75 | LOW 25–50 | REJECT < 25
 
-## 17.13 Known limitations and honest non-features
+## 17.13 Known limitations and honest non-features — UPDATED §20
 
 - **Maigret/Sherlock/Blackbird "false positives" that slip through the control probe:** ~6 sites whose broken detection uses heuristics that happen to fire on realistic-looking usernames but not on the 20-char hex control. They appear as LOW singletons and are clearly not linked.
 - **Instagram / LinkedIn / Twitter profiles in name searches:** The system finds them via Serper (Google's index) and extracts the handle from the URL for correlation. It does NOT log in, call private APIs, or scrape beyond what is publicly indexed.
 - **Telegram:** The Telethon scraper works only for public channels/groups and requires the API credentials from §17.5. It cannot resolve arbitrary phone numbers to users.
-- **Face/photo seed:** Accepted as a seed type but no matcher runs on it. Profile photos discovered via other seeds are pHash-compared to each other.
+- **Face/photo seed — NO LONGER A LIMITATION as of §20.1:** a `"face"` seed's reference photo now has its face embedding extracted and compared against every discovered profile's own `face_embedding` (from photo_enrich.py) via the standard `face_match` signal. Requires the ONNX models to be present (`python backend/scripts/download_face_models.py`, ~37 MB, one-time, not committed to git) — if absent, this specific feature is disabled but nothing else in the pipeline is affected.
+- **Face matching accuracy ceiling:** the SFace embedding model detects and embeds the *largest* face in an image (a heuristic for "the subject," not guaranteed correct on group photos). Two profiles with no photo, or a photo with no detectable face (logo, meme, group shot where the subject isn't largest), simply have no `face_embedding` — treated as "no signal," never a false match.
+- **employer_overlap / city_match are LLM-extracted, not deterministic NER:** spaCy was considered and deliberately not added (see requirements.txt's comment) to avoid a second binary-model-download dependency in one pass. LLM extraction is noisier than a proper NER library, which is exactly why these two signals are pinned to context-tier and can never anchor a cluster alone.
+- **mutual_connections only implemented for GitHub:** other platforms with cheap public follower/following APIs (were any added) would need their own `followers_sample` population — the correlation-engine side is platform-agnostic already.
+- **DeHashed / LeakCheck (deeper breach coverage) are implemented but INACTIVE without a paid API key** (`DEHASHED_EMAIL`+`DEHASHED_API_KEY` or `LEAKCHECK_API_KEY` in `.env`) — both return `[]` with no key set, identical to HIBP's own fail-safe behaviour with a dummy key.
 - **Reddit:** Without `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET`, Reddit returns 403 from datacenter/VPN IPs. Set up a free "script" app at reddit.com/prefs/apps.
 - **PhoneInfoga:** Requires a local Docker container running the PhoneInfoga REST server on port 5000. `docker pull sundowndev/phoneinfoga:latest && docker run -p 5000:5000 sundowndev/phoneinfoga serve`.
 - **UPI name lookup:** Returns only the registered name from the UPI payment rail — it does not expose account numbers or bank details.
+- **Pastebin dork results are lower-confidence:** `site:pastebin.com` hits are stamped `metadata["sensitive_source"]=True` (§20.5) but the frontend does not yet render a distinct visual flag for this — currently surfaced only in the raw entity metadata, not the UI.
 
 # 18. SPRINT 6 & THURSDAY HOTFIXES (2026-07-02)
 
@@ -1385,3 +1430,319 @@ If Blackbird returns nothing:
 ## 18.2 Verification & Test Status
 - All **76 automated unit and integration tests** passing cleanly (`pytest tests/`).
 - Frontend production build (`npm run build`) compiles with zero TypeScript or bundling errors.
+
+---
+
+# 19. CORRELATION-ACCURACY PRECISION AUDIT (2026-07-02)
+
+> Full audit of every matching/scoring function in `correlation_engine.py`,
+> `scoring_engine.py`, `fp_filter.py`, and `reranker.py`, tracing each signal for two
+> failure modes: **false positives** (unrelated accounts merged) and **false
+> negatives** (real matches missed). Six real bugs found and fixed, most-severe-first.
+> 78 → **84 tests** (6 new regressions added, none removed).
+
+## 19.1 SEVERE — the LLM reranker could single-handedly confirm an unlinked account
+
+`backend/analysis/reranker.py`, old lines ~315-318: for any singleton with **zero**
+hard signals, `if relevance > confidence and relevance >= 50` did
+`c.confidence_score = relevance; c.tier = _tier(relevance)`. An LLM relevance score of
+90 on a bare singleton became `tier=HIGH` — the frontend renders HIGH+strong-signal as
+"● CONFIRMED". **The LLM alone became the sole justification for a confirmed link.**
+
+**Fix:** LLM relevance is now kept ONLY in `relevance_score`/`relevance_reason` (its
+own fields, for lead-ordering) and surfaced in the explanation as *"LLM lead
+(NN/100 — a lead to verify, not a confirmed link)"*. It never touches
+`confidence_score` or `tier`. Regression: `test_llm_relevance_does_not_confirm_a_singleton`
+(`tests/test_reranker_precision.py`).
+
+## 19.2 SEVERE — promoting a singleton into a cluster upgraded the cluster's tier on LLM evidence alone
+
+`reranker.py`, old lines ~270-274: merging a promoted singleton added
+`semantic_rerank_match: 30` and recomputed `tier = _tier(sum(signals))` — with NO
+`_has_hard_anchor` check (unlike `score()`). A MEDIUM cluster (≤75 pts) + 30 → ≥100 →
+HIGH, driven entirely by two LLM calls.
+
+**Fix:** promotion still adds the member (recall preserved) but `confidence`/`tier`
+are now **pinned to the pre-promotion cluster's values**
+(`confidence = nc.confidence_score; tier = nc.tier`). `semantic_rerank_match` is
+recorded in `signals` for transparency but never summed into the score. Regression:
+`test_llm_promotion_does_not_upgrade_cluster_tier`.
+
+## 19.3 MODERATE — a common (fuzzy) name + one trivial signal counted as a hard anchor
+
+`scoring_engine._has_hard_anchor`: `has_name = exact OR fuzzy` + any ONE context
+signal → anchor. Two unrelated "Rahul Sharma" / "Rahul Verma" accounts both posting
+evenings (`posting_hours_overlap` is trivially shared by most humans) were
+hard-anchored and could reach HIGH.
+
+**Fix:** split by reliability. `exact_name_match` (distinctive) still anchors with
+**1** context signal. `fuzzy_name_match` (fires at ratio≥80, hits common names) now
+needs **2** independent context signals. See `_CONTEXT_SIGNALS` tuple + the updated
+`_has_hard_anchor()`. Regression: `test_common_name_plus_hours_not_hard_anchor`,
+`test_common_name_evening_hours_capped_below_high`.
+
+## 19.4 MODERATE — photo-pHash hard-anchor threshold too loose
+
+`correlation_engine._photo_match`: Hamming distance `< 8` of 64 bits. The same image
+re-encoded moves ~1-4 bits; two DIFFERENT look-alike avatars sit ~8-12 bits apart — so
+`<8` sat inside the ambiguous band, and this is a HARD ANCHOR (one more signal → HIGH).
+
+**Fix:** tightened to `< 6` (`_PHASH_MAX_HAMMING = 6`, see `_photo_match()`). Still
+tolerant of re-encoding, now excludes look-alikes. Two profiles with NO photo remain
+"no signal," never a match (verified, unchanged). Regression:
+`test_photo_phash_lookalike_not_matched`.
+
+## 19.5 LOW — username substring matched on fragments as short as 2 characters
+
+`_username_signal`: any containment fired `username_substring_match` (20 pts) —
+"jo" in "john123", "raj" in "brajesh".
+
+**Fix:** require the shorter string ≥ 4 chars; shorter fragments fall through to the
+fuzzy path, which demands high OVERALL similarity, not mere containment. Regression:
+`test_short_username_fragment_not_substring_match`.
+
+## 19.6 LOW — Jaro-Winkler produced a negative match window for very short strings
+
+`jaro_winkler()`: `match_distance = max(len)//2 - 1` went negative for `len ≤ 2`
+strings, corrupting the matching window.
+
+**Fix:** floored at 0 (`match_distance = max(0, ...)`).
+
+## 19.7 Verified correct — no change needed
+
+- Empty/missing data is "no signal" everywhere checked (`_hours_jaccard`,
+  `_keywords`, `_photo_match`, stylometry) — never a false match or false mismatch.
+- Seed-identifier stamping (`orchestrator._scrape_seed`, lines ~113-129) populates
+  `metadata[email/phone/username]` on every profile discovered FROM that seed, so
+  exact-match signals fire correctly across scrapers found via the same seed.
+- `_dedup()` keys social accounts on `(platform, value)` — two scrapers finding the
+  same account (e.g. Maigret + Sherlock both finding the same GitHub) merge correctly;
+  distinct real profiles never collide.
+- `fp_filter.control_username()` generates a fresh random unclaimed handle per
+  stale-cache refresh with a 6-hour TTL — a real negative sample, not a no-op.
+
+## 19.8 Test status after this audit
+
+**84 tests passing** (`python -m pytest tests/ -q`), 6 new regressions added in
+`tests/test_scoring.py` and a new `tests/test_reranker_precision.py` (LLM stubbed for
+determinism — no live network calls in the test suite). The red-herring rule
+(`LINK_MIN_SIGNALS ≥ 2`, `LINK_MIN_POINTS ≥ 50`) was NOT touched.
+
+---
+
+# 20. MORE SIGNAL, MORE DATA — six new evidence sources (2026-07-02)
+
+> Follow-up to §19: having tightened precision, this pass adds genuinely new,
+> API-verified evidence sources without reopening the false-positive holes just
+> closed. Every new signal is weighted in `SIGNAL_WEIGHTS`, classified as a hard
+> anchor or context-tier signal in `scoring_engine.py`, and fails safe (returns
+> `None`/`[]`/`[skip]` on any error, never raises). 84 → **101 tests**
+> (17 new regressions in `tests/test_new_signals.py`, none removed).
+
+## 20.1 Real face matching — `face_match` (hard anchor, weight 40)
+
+**Files:** `backend/ingestion/photo_enrich.py` (rewritten), `correlation_engine.py`,
+`scoring_engine.py`, `requirements.txt`, `.gitignore`,
+`backend/scripts/download_face_models.py`, `SETUP.md`.
+
+**Problem:** the only photo signal was `imagehash.phash`, which catches the SAME
+IMAGE FILE reused across platforms but is blind to "same person, different photo" —
+the common real-world case.
+
+**Model choice — and why NOT `face_recognition`/dlib:** confirmed live in this
+environment (`pip install --dry-run dlib`) that dlib resolves only a source `.tar.gz`
+sdist for this Python/Windows combination, with no `cmake`/`cl.exe` (MSVC) on PATH —
+the exact same build-toolchain failure this project already hit once with
+scikit-learn. Instead: **OpenCV's own pretrained ONNX models from the OpenCV Zoo**
+(github.com/opencv/opencv_zoo, Apache-2.0):
+
+- `face_detection_yunet_2023mar.onnx` (YuNet detector, ~230 KB)
+- `face_recognition_sface_2021dec.onnx` (SFace embedding, ~37 MB, 128-d vector)
+
+`opencv-python-headless` is a pure-wheel Windows install (no GUI deps, no C++
+toolchain) and was ALREADY an implicit dependency in this venv (confirmed via
+`pip list`) — now pinned explicitly in `requirements.txt`
+(`opencv-python-headless==4.13.0.92`). Both models load through `cv2.dnn`, zero new
+Python dependencies beyond OpenCV itself.
+
+**Threshold — cited, not guessed:** cosine similarity ≥ **0.363**. This is OpenCV
+Zoo's own documented, calibrated default for `FaceRecognizerSF_FR_COSINE` (SFace:
+Zhong et al., "SFace: Sigmoid-Constrained Hypersphere Loss for Robust Face
+Recognition," IEEE TIP 2021 — 99.60% accuracy on the LFW same/different-person
+benchmark). Defined once as `photo_enrich.FACE_COSINE_THRESHOLD` and imported by
+`correlation_engine.py` so detection and correlation always agree.
+
+**Verified live in this session:**
+
+```text
+same person, different image size (torvalds avatar, 2 CDN variants)  -> cosine 1.0000
+different real people (torvalds vs. gaearon/Dan Abramov)             -> cosine 0.1761
+non-human avatar (octocat mascot)                                    -> no face detected (None), correctly
+```
+
+**Design:**
+- `photo_enrich._hash_one()` now computes BOTH `photo_phash` and `face_embedding`
+  (independent signals — same pair can fire both `profile_photo_phash` AND
+  `face_match` from different evidence).
+- No face detected (logo, group photo, meme) → `face_embedding` stays completely
+  unset. Never a whole-image hash pretending to be a face.
+- `extract_face_embedding_from_bytes()` picks the LARGEST face if multiple are
+  detected (group photo heuristic — profile photos are overwhelmingly single-subject).
+- Models are lazily loaded once per process (`_face_models_cache`), gracefully
+  return `(None, None)` if the `.onnx` files are absent — `face_matching_available()`
+  exposes this for health checks.
+- **The `"face"` seed hook (`orchestrator._seed_tool_map()["face"] = []`, previously
+  dead) is now wired**: `build_face_seed_profile(url)` downloads an investigator-
+  supplied reference photo, extracts its embedding, and returns it as an ordinary
+  `RawProfile(type="face", platform="seed_photo", ...)`. This is appended to
+  `profiles` in the orchestrator (step 5c, live only, after photo/fact enrichment)
+  BEFORE `correlate()` runs — so the EXISTING pairwise `face_match` logic compares it
+  against every discovered profile with **zero special-casing**. Same pattern every
+  other seed-derived profile already uses.
+
+**Model files are NOT committed to git** (`.gitignore`: `backend/models/*.onnx`) —
+fetched once via `python backend/scripts/download_face_models.py`. If skipped, face
+matching is cleanly disabled; every other signal is completely unaffected.
+
+## 20.2 Bio/description link extraction — `bio_url_match` (hard anchor, weight 55)
+
+**Files:** `url_scraper.py` (refactored), `correlation_engine.py`, `orchestrator.py`.
+
+**Problem:** every scraper already fetches `metadata["bio"]`, but the correlation
+engine only did bag-of-words keyword overlap on it — URLs embedded in bios (people
+routinely link their other socials in their bio) were never extracted.
+
+**Refactor:** `url_scraper.py`'s platform/handle regexes were pulled out of the
+`URLScraper._build()` method into a module-level `extract_handle(url) ->
+(platform, handle) | None`, so both the URL scraper's own cascade logic AND the new
+bio-link matcher normalize a URL identically (verified: `tests/test_url_scraper.py`'s
+existing 3 tests still pass unchanged after the refactor — behavior preserved).
+
+**New signal:** `_bio_links_to(bio_text, target_profile)` — extracts every URL from a
+bio (`extract_bio_urls()`, a `https?://` regex), runs each through `extract_handle()`,
+and checks whether the resulting `(platform, handle)` matches the OTHER profile's own
+`(platform, value)`. Self-disclosure — a GitHub bio linking to the exact Twitter
+account independently discovered — is comparably strong to an exact identifier match,
+hence weighted near `exact_email_match` (55 vs 60) and classified as a hard anchor.
+
+**Bio-link cascade (recall side):** bio URLs that do NOT match an already-discovered
+profile are fed back in as new `"derived"`+`cascade=True` seeds — reusing the EXACT
+same one-level-cascade mechanism `orchestrator.py` already applies to UPI-derived
+seeds (step 3's `derived = [p for p in all_profiles if p.platform == "derived" and
+p.metadata.get("cascade")]` loop needed zero changes; the new step 2.8 just appends
+more candidates to `all_profiles` before that loop runs). Capped at 5 new handles per
+run, same order of magnitude as every other expansion step.
+
+## 20.3 Structured fact extraction — `employer_overlap` (context, 16), `city_match` (context, 14)
+
+**Files:** `llm_client.py` (`extract_facts` method), new `fact_enrich.py`.
+
+**requirements.txt had spaCy commented out as planned-but-unbuilt.** Deliberately did
+**NOT** add it: `en_core_web_sm` needs a separate `python -m spacy download` step —
+the exact same "bundle a binary the user must fetch" problem this pass already solved
+once for the face-recognition ONNX models. Reused the LLM client already wired into
+this pipeline stage instead, with a tightly-constrained prompt (`extract_facts`)
+asking ONLY for ORG (employer/school) and GPE (city) entities, temperature 0.
+
+**Why this doesn't cost accuracy at the tier level:** because LLM-derived facts are
+inherently less reliable than a deterministic NER library, `employer_overlap`/
+`city_match` are `_CONTEXT_SIGNALS` (never a hard anchor) REGARDLESS of extraction
+method — spaCy would not have earned a higher tier here either, per the same
+discipline established in §19.1-19.2 for reranker LLM output.
+
+`metadata["employer_candidates"]` / `["location_candidates"]` are LISTS (NER is
+noisy — never collapsed to one guessed value). `employer_overlap` requires an EXACT
+normalized shared entry between two profiles' candidate lists (`_employer_overlap()`,
+no substring/fuzzy matching — kept simple since the extraction itself is already
+lossy). `city_match` reads `location_candidates` (free-text NER), verified DISTINCT
+from `location_overlap`'s structured `metadata["location"]` field — a test
+(`test_city_match_distinct_from_location_overlap_field`) confirms the two signals
+don't cross-fire on the same underlying data.
+
+`fact_enrich.enrich_facts()` mirrors `photo_enrich.py`'s structure (mutate
+`p.metadata` in place, bounded — capped at 15 profiles per run to keep the LLM call
+budget predictable), and only runs in `DATA_MODE=live`.
+
+## 20.4 Mutual connections — `mutual_connections` (context, tiered 10/20)
+
+**File:** `github_scraper.py`.
+
+**Problem:** `metadata["followers"]` was already fetched but only as a COUNT, never a
+list — so shared-connections evidence (a real social-graph signal) was unavailable.
+
+**Fix:** `_followers_sample()` fetches `/users/{login}/followers?per_page=100` (one
+bounded page, ≤100 logins), stored as `metadata["followers_sample"]`.
+
+**Weighting curve (documented reasoning, not a guess):**
+
+```text
+overlap < 2   -> no signal at all (2 tech accounts sharing a couple of ubiquitous
+                 followers — a popular org bot, a well-known figure with 10k+
+                 followers — is common by pure chance; not evidence)
+overlap 2-4   -> 10 pts (weak corroboration)
+overlap >= 5  -> 20 pts (ceiling weight — GitHub's follower graph has a long tail;
+                 5+ SPECIFIC shared followers between two unrelated people is a
+                 low-probability coincidence and starts to look like real
+                 social-graph evidence)
+```
+
+Classified `_CONTEXT_SIGNALS` — real evidence, but probabilistic, never standalone-
+sufficient. Scoped to GitHub only in this pass (the correlation-engine side reading
+`followers_sample` is platform-agnostic; other platforms with cheap public follower
+APIs would need their own population step).
+
+## 20.5 Expanded Google-dork coverage
+
+**Files:** `serper_scraper.py` (new `sensitive` constructor flag), `orchestrator.py`.
+
+Added to the `"name"` seed's dork list (each as its own `SerperScraper(...)` instance
+— dork operators don't combine reliably across `site:` filters in one query):
+`filetype:pdf`, `filetype:doc` (resumes/official documents), `site:medium.com`,
+`site:pinterest.com` (platforms not reachable via Maigret/Sherlock's site lists in
+this deployment), and `site:pastebin.com` (leaked-credential mentions).
+
+`SerperScraper.__init__(query_template, sensitive=False)` — when `sensitive=True`
+(used only for the pastebin dork), every result is stamped
+`metadata["sensitive_source"] = True`, flagging it as lower-confidence (could be
+stale/unrelated) and higher-sensitivity (may surface PII) than a normal profile dork.
+**Not yet surfaced with a distinct visual treatment in the frontend** — currently only
+in the raw entity metadata (see §17.13's limitations note).
+
+## 20.6 Deeper breach coverage — DeHashed + LeakCheck (STUBBED, no key in this environment)
+
+**Files:** new `dehashed_scraper.py`, `leakcheck_scraper.py`, `config.py`,
+`.env.example`.
+
+Both fully implemented against each provider's documented REST API (DeHashed: HTTP
+Basic Auth with account email + API key; LeakCheck: `X-API-Key` header,
+`/api/v2/query/{identifier}`), following the exact `hibp_scraper.py`/
+`xposedornot_scraper.py` fail-safe convention (`[]` on missing key / non-200 /
+malformed response / any exception — never raises). Both feed the SAME
+`metadata["breaches"]` list HIBP/XposedOrNot already populate, so
+`correlation_engine.breach_co_occurrence` (including its `_MEGA_BREACHES` exclusion)
+picks up their results automatically — **zero correlation-engine changes needed.**
+
+Wired into `orchestrator._seed_tool_map()`'s `"email"` and `"phone"` lists.
+`config.py` gained `DEHASHED_EMAIL`, `DEHASHED_API_KEY`, `LEAKCHECK_API_KEY` in
+`_OPTIONAL` (warns, never crashes, if absent).
+
+**BLOCKED:** no real DeHashed or LeakCheck account/key is available in this
+environment, so both scrapers return `[]` on every run here — identical to how
+`HIBPScraper` behaves with the project's dummy `HIBP_API_KEY`. The moment a real key
+is added to `.env`, both activate with zero other code changes.
+
+## 20.7 Test status after this build
+
+**101 tests passing** (`python -m pytest tests/ -q`), verified moments before this
+section was written. 17 new regressions in `tests/test_new_signals.py` covering: face_
+match fires/rejects/no-signal-on-missing-data + is-hard-anchor + alone-capped-LOW;
+bio-URL extraction + handle matching + fires-in-pair-signals + is-hard-anchor;
+employer_overlap exact-match-only + city_match distinct-from-location_overlap +
+both-are-context-tier; mutual_connections below/weak/strong tiers +
+is-context-tier. Frontend `npm run build` reconfirmed clean (0 errors) — no frontend
+files were touched in this backend-only pass.
+
+**Signal count: 20** (was 15 going into §19). Full current weight table: §14.1 /
+§17.12. `SIGNAL_WEIGHTS`, `HARD_ANCHOR_SIGNALS`, and `_CONTEXT_SIGNALS` were all
+re-read directly from the running code (not from memory) immediately before writing
+this section, to guarantee this documentation matches the actual code exactly.

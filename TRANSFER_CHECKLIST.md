@@ -51,8 +51,13 @@ python3 -m venv venv
 source venv/bin/activate
 
 pip install --upgrade pip
-pip install -r requirements.txt        # includes maigret, sherlock-project, holehe, socialscan, truststore, vaderSentiment
+pip install -r requirements.txt        # includes maigret, sherlock-project, holehe, socialscan, truststore, vaderSentiment, opencv-python-headless
 pip install pytest pytest-asyncio      # test deps (NOT in requirements.txt)
+
+# Face-matching models (one-time, ~37 MB) — a zip transfer will already include
+# backend/models/*.onnx if the sender didn't delete it (large binary, not a secret,
+# safe to keep). If missing, fetch it:
+python backend/scripts/download_face_models.py
 
 # ignorant (phone registration checker — pip-packaged):
 pip install ignorant
@@ -90,6 +95,9 @@ Then edit `.env`:
 - **(Optional) Reddit** — set `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` (free "script" app
   at reddit.com/prefs/apps) so Reddit activity analysis works on any network; otherwise
   Reddit may return 403 from datacenter/VPN IPs.
+- **(Optional) Deeper breach coverage** — `DEHASHED_EMAIL`/`DEHASHED_API_KEY` and/or
+  `LEAKCHECK_API_KEY` (both paid). Without them, those two scrapers cleanly return no
+  results — every other feature is unaffected.
 
 > If the original keys were ever shared more widely than your team, **rotate them** in each
 > provider's console.
@@ -120,7 +128,7 @@ uvicorn backend.main:app --reload --port 8000      # http://localhost:8000/docs
 # frontend (separate terminal)
 cd frontend && npm run dev                          # http://localhost:3000 (3001 if 3000 busy)
 # tests
-python -m pytest tests/ -q                          # 71 tests
+python -m pytest tests/ -q                          # 101 tests
 ```
 
 ---

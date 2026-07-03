@@ -432,4 +432,89 @@ Fix (`frontend/app/cases/[id]/page.js`):
 - Restored real-time scanning progress feed (`logLines`) in the left panel of `frontend/app/cases/[id]/page.js` while a case is running.
 - Middle panel now displays the interactive `<NetworkGraph />` correlation chart by default when no card is selected, smoothly transitioning to Account Details upon clicking a node, with an **✕ Close Details** button.
 
+**Test status:** 76 tests pass. `npm run build` clean.
+
+---
+
+## 2026-07-02 Correlation-accuracy precision audit
+
+Full audit of every matching/scoring function in `correlation_engine.py`,
+`scoring_engine.py`, `fp_filter.py`, and `reranker.py`, tracing each signal for false
+positives (unrelated accounts merged) and false negatives (real matches missed). Full
+detail: `context.md` §19.
+
+### 1. SEVERE — LLM reranker could single-handedly confirm an unlinked account (`backend/analysis/reranker.py`)
+
+A high-relevance singleton with zero hard signals had its `confidence_score`/`tier`
+directly overwritten by the raw LLM relevance number — the LLM alone could produce a
+"HIGH"/"CONFIRMED" cluster. Fixed: LLM relevance now lives only in `relevance_score`
+(a lead-ordering field, surfaced as "a lead to verify, not a confirmed link") and
+never touches `confidence_score`/`tier`.
+
+### 2. SEVERE — promoting a singleton into a cluster upgraded that cluster's tier on LLM evidence alone (`reranker.py`)
+
+Merging a promoted singleton added a `semantic_rerank_match` signal and recomputed the
+tier from the new point total, with no hard-anchor check — two LLM calls could push a
+MEDIUM cluster to HIGH. Fixed: promotion adds the member (recall) but `confidence`/
+`tier` are pinned to the pre-promotion values (precision).
+
+### 3. MODERATE — common name + one weak signal counted as a hard anchor (`scoring_engine._has_hard_anchor`)
+
+Two different "Rahul Sharma"/"Rahul Verma" accounts both posting in the evening could
+hard-anchor and reach HIGH. Fixed: `fuzzy_name_match` (common names) now needs 2
+independent context signals to anchor; `exact_name_match` still needs only 1.
+
+### 4. MODERATE — photo pHash hard-anchor threshold too loose (`correlation_engine._photo_match`)
+
+Hamming distance `<8` sat inside the ambiguous same-vs-different-photo band. Tightened
+to `<6`.
+
+### 5-6. LOW — two smaller fixes
+
+Username substring matching on 2-char fragments, and a negative Jaro-Winkler match
+window on very short strings. Both fixed.
+
+**Test status:** 84 tests pass (6 new regressions, `tests/test_reranker_precision.py` + additions to `tests/test_scoring.py`). Red-herring rule untouched.
+
+---
+
+## 2026-07-02 "More signal, more data" — six new evidence sources
+
+Added six new, API-verified correlation signals without reopening the precision fixes
+above. Every new signal is weighted and classified hard-anchor/context in
+`scoring_engine.py`; every new scraper/enrichment step fails safe when its API
+key/model is absent. Full detail: `context.md` §20.
+
+1. **Real face matching** (`face_match`, hard anchor, weight 40) — `photo_enrich.py`
+   now computes a 128-d SFace face embedding (OpenCV Zoo's YuNet+SFace ONNX models,
+   chosen over `face_recognition`/dlib because dlib has no prebuilt Windows wheel here
+   and needs a CMake/MSVC toolchain this machine doesn't have). Threshold cosine
+   ≥ 0.363 is OpenCV's own calibrated same-person cutoff, not guessed. The `"face"`
+   seed type (previously a dead hook) is now wired: a reference photo's embedding is
+   compared against every discovered profile automatically. Models are ~37 MB,
+   fetched once via `python backend/scripts/download_face_models.py`, not committed
+   to git.
+2. **Bio/description link extraction** (`bio_url_match`, hard anchor, weight 55) —
+   self-disclosed cross-platform links in a bio (e.g. a GitHub bio linking the exact
+   Twitter account independently discovered) now fire a signal; bio URLs to
+   NOT-yet-discovered accounts are cascaded in as new seeds.
+3. **Structured fact extraction** (`employer_overlap` weight 16, `city_match` weight
+   14, both context-tier) — LLM-based NER-style extraction of employer/school and city
+   mentions from bio text (`fact_enrich.py`), chosen over spaCy to avoid a second
+   binary-model-download dependency in one pass.
+4. **Mutual connections** (`mutual_connections`, context-tier, 10/20 tiered) — GitHub
+   followers sample (≤100), weighted by shared-follower count: <2 is noise, 2-4 is
+   weak, 5+ is the ceiling weight.
+5. **Expanded Google-dork coverage** — `filetype:pdf/doc`, `site:medium.com`,
+   `site:pinterest.com`, `site:pastebin.com` (flagged `sensitive_source` — lower
+   confidence, higher sensitivity) added to the name-seed dork list.
+6. **DeHashed + LeakCheck breach scrapers** — fully implemented, feed the same
+   `metadata["breaches"]` field HIBP/XposedOrNot already populate (zero
+   correlation-engine changes needed). **Stubbed in this environment** — no paid key
+   available; both return `[]` exactly like every other optional-key scraper does.
+
+**Test status:** 101 tests pass (17 new regressions in `tests/test_new_signals.py`).
+`npm run build` reconfirmed clean — no frontend files touched in this backend-only
+pass. Signal count: 15 → 20.
+
 **Test Status:** 76/76 unit and integration tests passing cleanly. Next.js production build (`npm run build`) compiles with zero errors.

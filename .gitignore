@@ -47,6 +47,9 @@ data/synthetic_dataset.json
 artifacts/
 *.har
 
+# ---- Pretrained model binaries (downloaded by setup, not committed) ----
+backend/models/*.onnx
+
 # ---- Node / Next.js frontend ----
 node_modules/
 .next/

@@ -23,6 +23,13 @@ python-Levenshtein==0.26.1
 scikit-learn==1.6.1
 imagehash==4.3.1
 pillow==11.1.0
+# Face detection + embedding (YuNet + SFace, OpenCV Zoo pretrained ONNX models).
+# Chosen over face_recognition/dlib: dlib has no prebuilt Windows wheel and requires
+# CMake + a C++ toolchain to build from source (see photo_enrich.py's docstring).
+# opencv-python-headless is a pure wheel install (no GUI deps, no C++ toolchain).
+# Run `python backend/scripts/download_face_models.py` once after install to fetch
+# the two small model files (not committed to git — see SETUP.md).
+opencv-python-headless==4.13.0.92
 
 # ---- Report (BSA-63 PDF) ----
 reportlab>=4.4.3,<5.0.0
@@ -39,5 +46,12 @@ holehe>=1.61                 # email -> registered services (replaces Epieos stu
 sherlock-project>=0.16.0     # 2nd username enumerator (corroborates Maigret)
 # ignorant + PhoneInfoga + Blackbird are installed separately (see SETUP.md)
 
-# ---- NER pre-pass (optional; orchestrator degrades gracefully if absent) ----
-# spacy==3.8.4   # then: python -m spacy download en_core_web_sm
+# ---- NER (employer / city extraction) ----
+# spaCy was considered but NOT added: en_core_web_sm is a ~12 MB model requiring a
+# separate `python -m spacy download` step — the same "bundle a binary" problem this
+# project already solved once for the face-recognition ONNX models above. Employer/
+# city extraction instead reuses the LLM client already in the pipeline (see
+# backend/ingestion/fact_enrich.py) with a tightly-constrained prompt, and its output
+# is deliberately kept at a lower (context-tier, never hard-anchor) evidence weight in
+# scoring_engine.py to reflect LLM extraction being less reliable than a deterministic
+# NER library. No new dependency needed for this feature.

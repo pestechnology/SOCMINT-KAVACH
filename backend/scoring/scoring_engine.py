@@ -78,6 +78,11 @@ _SIGNAL_PHRASES = {
     "bio_keyword_overlap": "use the same distinctive phrases in their bios",
     "reciprocal_mention": "mention each other",
     "semantic_rerank_match": "were identified as the same person through semantic analysis of their profiles",
+    "face_match": "show the same face in their profile photos",
+    "bio_url_match": "link directly to each other in their bio",
+    "employer_overlap": "list the same employer or school",
+    "city_match": "mention the same city in their bios",
+    "mutual_connections": "share several of the same followers",
 }
 
 
@@ -107,11 +112,28 @@ HARD_ANCHOR_SIGNALS = {
     "exact_upi_match",
     "profile_photo_phash",
     "breach_co_occurrence",
+    # face_match: biometric identity match (photo_enrich.py's SFace embedding,
+    # cosine >= the model's own calibrated same-person threshold) — standalone strong
+    # evidence, same tier as an exact image-hash match.
+    "face_match",
+    # bio_url_match: a profile's OWN bio links to the other discovered account's own
+    # URL — self-disclosure, comparably strong to an exact identifier match.
+    "bio_url_match",
 }
 
 
 _CONTEXT_SIGNALS = ("location_overlap", "bio_keyword_overlap",
-                    "stylometry_cosine", "posting_hours_overlap")
+                    "stylometry_cosine", "posting_hours_overlap",
+                    # employer_overlap / city_match: NER-derived from free text (LLM
+                    # path — see fact_enrich.py). More specific than generic keyword
+                    # overlap but LLM extraction confidence is lower than a
+                    # deterministic identifier, so these stay context-tier, never a
+                    # hard anchor by themselves.
+                    "employer_overlap", "city_match",
+                    # mutual_connections: real social-graph evidence but probabilistic
+                    # (see correlation_engine.py's _mutual_connections for the overlap-
+                    # count weighting) — corroborating, not standalone-sufficient.
+                    "mutual_connections")
 
 
 def _has_hard_anchor(signals: dict) -> bool:
