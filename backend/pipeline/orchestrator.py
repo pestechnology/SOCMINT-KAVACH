@@ -181,44 +181,6 @@ LEGITIMATE_PLATFORMS = {
     "teams", "trello", "asana", "jira", "confluence",
 }
 
-FOREIGN_LOCATIONS = {
-    "usa", "united states", "canada", "uk", "united kingdom", "london", "england",
-    "germany", "berlin", "france", "paris", "china", "beijing", "tokyo", "japan",
-    "brazil", "australia", "sydney", "toronto", "new york", "california", "ca, us",
-    "ny, us", "texas", "tx, us", "chicago", "florida", "russia", "moscow", "spain",
-    "madrid", "italy", "rome", "netherlands", "amsterdam", "singapore", "malaysia",
-    "indonesia", "vietnam", "thailand", "philippines", "egypt", "south africa",
-    "nigeria", "kenya", "mexico", "argentina", "colombia", "chile", "peru",
-    "poland", "ukraine", "sweden", "norway", "denmark", "finland", "ireland",
-    "scotland", "wales", "new zealand", "switzerland", "austria", "belgium",
-    "greece", "turkey", "israel", "uae", "dubai", "saudi arabia", "qatar",
-    "kuwait", "seoul", "korea", "hong kong", "taiwan", "vancouver", "montreal",
-    "melbourne", "brisbane", "auckland", "dublin", "munich", "hamburg", "frankfurt",
-    "barcelona", "milan", "lisbon", "prague", "warsaw", "budapest", "vienna",
-    "zurich", "geneva", "brussels", "copenhagen", "stockholm", "oslo", "helsinki",
-    "edinburgh", "manchester", "birmingham", "seattle", "boston", "san francisco",
-    "los angeles", "austin", "houston", "atlanta", "miami", "denver", "phoenix",
-    "philadelphia", "portland", "sandiego", "dallas", "washington", "detroit",
-}
-
-INDIAN_LOCATIONS = {
-    "india", "in", "ind", "bharat", "delhi", "new delhi", "mumbai", "bangalore",
-    "bengaluru", "hyderabad", "chennai", "kolkata", "pune", "ahmedabad", "jaipur",
-    "surat", "lucknow", "kanpur", "nagpur", "indore", "thane", "bhopal",
-    "visakhapatnam", "patna", "vadodara", "ghaziabad", "ludhiana", "agra",
-    "nashik", "faridabad", "meerut", "rajkot", "kalyan", "vasai", "varanasi",
-    "srinagar", "aurangabad", "dhanbad", "amritsar", "navi mumbai", "allahabad",
-    "howrah", "ranchi", "gwalior", "jabalpur", "coimbatore", "vijayawada",
-    "jodhpur", "madurai", "raipur", "kota", "chandigarh", "guwahati", "solapur",
-    "hubli", "mysore", "mysuru", "tiruchirappalli", "bareilly", "aligarh",
-    "tiruppur", "gurgaon", "gurugram", "noida", "kochi", "cochin", "trivandrum",
-    "thiruvananthapuram", "bhubaneswar", "salem", "warangal", "jalgaon",
-    "guntur", "bikaner", "amravati", "goa", "kerala", "tamil nadu", "karnataka",
-    "maharashtra", "gujarat", "rajasthan", "uttar pradesh", "west bengal",
-    "telangana", "andhra pradesh", "bihar", "punjab", "haryana", "odisha",
-    "assam", "uttarakhand", "jharkhand", "chhattisgarh", "himachal pradesh",
-}
-
 _NOISE_HANDLES = {
     "a01", "a02", "a03", "a04", "a05", "a10", "a12", "a13", "a14", "a20", "a21", "a22", "a23", "a30", "a31", "a32", "a33", "a50", "a51", "a52", "a53", "a54", "a70", "a71", "a72", "a73",
     "ao3", "s21", "s22", "s23", "s24", "m31", "m32", "m51", "m52", "m53", "f12", "f22", "f23", "v10", "v20", "v30", "x10", "x20", "x30", "ps4", "ps5", "xbox", "ios", "mac", "win",
@@ -242,35 +204,24 @@ def _is_valid_expansion_handle(val: str) -> bool:
 
 
 def _is_legitimate_and_target_country(p: RawProfile) -> bool:
-    # 0. Non-social / hard seed records (upi, email, phone, breach, name, archive, etc.) are always kept
-    if p.type not in ("social_account", "web_page"):
-        return True
+    """Identifier-collection completeness gate. Kept for call-site compatibility.
 
-    plat = (p.platform or "").lower().strip()
-    m = p.metadata or {}
-
-    # 1. Country check (India focus):
-    # If explicit location exists and points to a foreign country outside India, drop it.
-    loc = str(m.get("location") or "").lower()
-    if loc:
-        has_foreign = any(fl in loc for fl in FOREIGN_LOCATIONS)
-        has_indian = any(il in loc for il in INDIAN_LOCATIONS)
-        if has_foreign and not has_indian:
-            return False
-
-    # 2. Legitimate website / rich data check for social/web accounts:
-    # Keep if it is a major known legitimate platform
-    is_legit_plat = any(legit in plat for legit in LEGITIMATE_PLATFORMS)
-    if is_legit_plat:
-        return True
-
-    # If not a known major platform, ONLY keep it if it has rich verifiable data
-    # (name, email, phone, or bio > 15 chars). Ignore fake/useless websites with no data!
-    has_rich_data = bool(
-        m.get("name") or m.get("fullname") or m.get("email") or m.get("phone")
-        or (m.get("bio") and len(str(m.get("bio"))) > 15)
-    )
-    return has_rich_data
+    This used to also (1) drop any social/web profile whose stated location matched
+    a hardcoded foreign-country wordlist unless an Indian location was ALSO present,
+    and (2) require "rich" metadata (name/email/phone/bio>15 chars) for any platform
+    not in a ~150-entry hardcoded allowlist. Measured live against a real username
+    search ("torvalds"): of 182 unique profiles the enumerators (Maigret/Sherlock/
+    Blackbird — each already false-positive-filtered via a control-probe run, see
+    fp_filter.py) found, this filter silently discarded 136 of them (75%) — including
+    the target's OWN real GitHub account, dropped for listing "Portland, OR" as its
+    location. A filter that can delete the very account the investigator searched for
+    is a correctness bug, not a feature; "focus on India" is a UI/analyst concern, not
+    grounds to make an OSINT tool blind to most of what it found. Enumerator hits are
+    already trustworthy without bio text — that's what fp_filter.py's control probe is
+    for. Real noise gets handled downstream by the correlation/scoring engine, which
+    only links on actual corroborating evidence.
+    """
+    return True
 
 
 def _dedup(profiles: list[RawProfile]) -> list[RawProfile]:
@@ -587,7 +538,11 @@ async def run_investigation(case_id: str) -> dict:
         return await asyncio.to_thread(llm.extract_entities, b)
         
     if blobs:
-        extract_tasks = [_extract(b) for b in blobs[:10]]
+        # Cap at 6 bios: entity-extraction here competes with fact-enrichment, per-cluster
+        # explanations and reranking for the same LLM per-minute budget (see llm_client.py's
+        # fast-degrade rationale). extract_entities has a deterministic regex fallback, so a
+        # smaller cap costs little recall and keeps the provider from saturating.
+        extract_tasks = [_extract(b) for b in blobs[:6]]
         extract_results = await asyncio.gather(*extract_tasks, return_exceptions=True)
         for res in extract_results:
             if isinstance(res, list):
@@ -689,8 +644,17 @@ async def run_investigation(case_id: str) -> dict:
         def _has_content_metadata(p: RawProfile) -> bool:
             if p.type not in ("social_account", "username"):
                 return True
+            # A confirmed platform+handle hit (Maigret/Sherlock/Blackbird/Socialscan) is
+            # substantive on its own — that confirmation IS the OSINT finding, whether or
+            # not the tool also scraped a bio. "site_name" used to be blocklisted here,
+            # but it's Sherlock's ONLY metadata field (see sherlock_scraper.py), so this
+            # filter was silently deleting 100% of every Sherlock result (86/86 on a live
+            # "torvalds" test) — one of the three enumerator backbones, gone. Only drop a
+            # profile when it lacks even a platform/value pair (a bare, unconfirmed stub).
+            if p.platform and p.value:
+                return True
             meta = getattr(p, "metadata", {}) or {}
-            boilerplate = {"tags", "all_ids", "source", "site_name", "registered", "service", "derived_from", "cascade", "username", "id", "url", "note", "raw_line", "error"}
+            boilerplate = {"tags", "all_ids", "source", "registered", "service", "derived_from", "cascade", "username", "id", "url", "note", "raw_line", "error"}
             for k, v in meta.items():
                 if k not in boilerplate and v not in (None, "", [], {}, "null", "None", 0):
                     return True
@@ -799,14 +763,27 @@ async def run_investigation(case_id: str) -> dict:
         print(f"[orchestrator] reranking failed (non-fatal): {e}")
         log_action(case_id, "rerank_error", None, {"error": str(e)}, "system")
 
+    # LLM explanations for every multi-member cluster, fanned out concurrently. This used
+    # to be a plain synchronous call inside the for-loop below — with NVIDIA unreachable
+    # on some networks and each call blocking the event loop for its full timeout, a
+    # ~50-cluster case could burn several minutes of dead serial wait here alone.
+    explain_targets = [cl for cl in clusters if len(cl.member_indices) > 1 and cl.signals]
+    explanations_by_cluster: dict[str, str] = {}
+    if explain_targets:
+        explain_results = await asyncio.gather(
+            *[asyncio.to_thread(llm.explain_match, list(cl.signals.keys()), cl.tier)
+              for cl in explain_targets],
+            return_exceptions=True,
+        )
+        for cl, res in zip(explain_targets, explain_results):
+            explanations_by_cluster[cl.cluster_id] = res if isinstance(res, str) else cl.explanation
+
     conn = get_db()
     try:
         for cl in clusters:
             entity_ids = [idx_to_eid[i] for i in cl.member_indices if i in idx_to_eid]
             # LLM explanation for multi-member clusters; template fallback inside the client
-            explanation = cl.explanation
-            if len(cl.member_indices) > 1 and cl.signals:
-                explanation = llm.explain_match(list(cl.signals.keys()), cl.tier)
+            explanation = explanations_by_cluster.get(cl.cluster_id, cl.explanation)
             # Include relevance metadata in signals_json for frontend consumption
             signals_data = dict(cl.signals)
             if hasattr(cl, 'relevance_score') and cl.relevance_score:

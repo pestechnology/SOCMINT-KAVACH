@@ -87,13 +87,36 @@ def test_weights_present():
 
 
 def test_seed_matching_subword_and_metadata():
-    # Simulate finding LinkedIn profile with generated suffix or matching metadata fullname
+    """A singleton whose handle/name matches the search seed is surfaced as a LEAD
+    (relevance_score, ranked first) but must NOT get a fabricated confidence/tier —
+    it has zero corroborating signals with any other account, so REJECT/0 is honest."""
     a = make_profile("social_account", "ashwin-harish-a628a72b2", "linkedin", "https://linkedin.com/in/ashwin-harish-a628a72b2", {"name": "Ashwin Harish - AI intern @GREYWIZ"})
     seeds = [{"type": "name", "value": "Ashwin Harish"}]
     clusters = score([a], correlate([a]), seeds=seeds)
     assert len(clusters) == 1
-    assert clusters[0].confidence_score == 100.0
-    assert clusters[0].tier == "HIGH"
+    assert clusters[0].tier == "REJECT"
+    assert clusters[0].confidence_score == 0.0
+    assert clusters[0].relevance_score == 100
+    assert "search input" in clusters[0].explanation
+
+
+def test_seed_matching_never_merges_unrelated_strangers():
+    """REGRESSION: seed-matching must NEVER union or HIGH-confidence two DIFFERENT,
+    otherwise-uncorrelated accounts just because each loosely contains a short
+    fragment of the search seed (e.g. seed "ash29_03" -> cleaned "ash2903" spuriously
+    contains "ash" and "290"). This previously fabricated a 100%-confidence HIGH
+    'primary target' cluster out of total strangers — the exact failure mode the
+    red-herring rule exists to prevent."""
+    real = make_profile("social_account", "ash29_03", "github", "https://github.com/ash29_03", {"username": "ash29_03"})
+    stranger1 = make_profile("social_account", "ash", "instagram", "https://instagram.com/ash", {"username": "ash"})
+    stranger2 = make_profile("social_account", "290", "twitter", "https://twitter.com/290", {"username": "290"})
+    seeds = [{"type": "username", "value": "ash29_03"}]
+    profiles = [real, stranger1, stranger2]
+    clusters = score(profiles, correlate(profiles), seeds=seeds)
+    # every cluster must be a singleton — nothing merged on seed-fragment noise alone
+    assert all(len(c.member_indices) == 1 for c in clusters)
+    assert all(c.tier != "HIGH" for c in clusters)
+    assert all(c.confidence_score < 50 for c in clusters)
 
 
 # ---- precision regressions (correlation-accuracy audit) ----

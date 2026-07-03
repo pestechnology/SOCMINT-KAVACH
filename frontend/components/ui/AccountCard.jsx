@@ -29,7 +29,7 @@ function truncate(str, n = 80) {
   return str.length > n ? `${str.slice(0, n - 1)}…` : str;
 }
 
-export default function AccountCard({ entity = {}, selected = false, onClick }) {
+export default function AccountCard({ entity = {}, selected = false, onClick, exactMatch = false }) {
   const meta = entity.metadata || {};
   const platform = entity.platform || entity.type || "account";
   const tier = entity._tier || tierFromConfidence(entity.confidence);
@@ -59,11 +59,18 @@ export default function AccountCard({ entity = {}, selected = false, onClick }) 
             {platform}
           </span>
         </span>
-        {isLive && (
-          <span className="shrink-0 text-[10px] font-mono uppercase tracking-wide text-emerald-400 border border-emerald-400/40 rounded px-1.5 py-0.5">
-            Live
-          </span>
-        )}
+        <span className="inline-flex items-center gap-1.5 shrink-0">
+          {exactMatch && (
+            <span className="text-[10px] font-mono uppercase tracking-wide text-cyan-300 border border-cyan-400/40 bg-cyan-400/10 rounded px-1.5 py-0.5">
+              ★ Exact
+            </span>
+          )}
+          {isLive && (
+            <span className="text-[10px] font-mono uppercase tracking-wide text-emerald-400 border border-emerald-400/40 rounded px-1.5 py-0.5">
+              Live
+            </span>
+          )}
+        </span>
       </div>
 
       {/* Row 2: primary display */}

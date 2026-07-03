@@ -17,7 +17,7 @@ import AccountCard from "@/components/ui/AccountCard";
 import ConfidenceBadge from "@/components/ui/ConfidenceBadge";
 import EmptyState from "@/components/ui/EmptyState";
 import PivotPill from "@/components/ui/PivotPill";
-import { labelFor, iconFor } from "@/lib/signalLabels";
+import { labelFor, iconFor, tierFor } from "@/lib/signalLabels";
 
 const NetworkGraph = dynamic(() => import("@/components/Graph"), { ssr: false });
 const Timeline = dynamic(() => import("@/components/Timeline"), { ssr: false });
@@ -39,6 +39,8 @@ export default function CaseView() {
   const [tab, setTab] = useState("summary");
   const [signalFilter, setSignalFilter] = useState(null);
   const [showAllNodes, setShowAllNodes] = useState(false);
+  const [tierFilter, setTierFilter] = useState("all");   // all | HIGH | MEDIUM
+  const [platformFilter, setPlatformFilter] = useState("all");
 
   // ---------- POLLING (UNCHANGED) ----------
   const load = useCallback(async () => {
@@ -86,19 +88,24 @@ export default function CaseView() {
 
   // §4.4.3 — identity-list grouping by cluster tier.
   const groupName = (i) => (i < 26 ? String.fromCharCode(65 + i) : `#${i + 1}`);
+  // Priority-1 = exact match: a cluster containing the account that literally matches the
+  // search input (relevance.score === 100) sorts ahead of everything in its tier, then by
+  // confidence. This is what "exact match first" means in the results list.
+  const isExactMatch = (c) => (c.relevance?.score || 0) >= 100;
+  const byExactThenConfidence = (a, b) =>
+    (isExactMatch(b) - isExactMatch(a)) || ((b.confidence_score || 0) - (a.confidence_score || 0));
   const multiClusters = clusters.filter((c) => (c.entity_ids || []).length >= 2);
-  const strongClusters = multiClusters
-    .filter((c) => c.tier === "HIGH")
-    .sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0));
-  const possibleClusters = multiClusters
-    .filter((c) => c.tier === "MEDIUM")
-    .sort((a, b) => (b.confidence_score || 0) - (a.confidence_score || 0));
+  const strongClusters = multiClusters.filter((c) => c.tier === "HIGH").sort(byExactThenConfidence);
+  const possibleClusters = multiClusters.filter((c) => c.tier === "MEDIUM").sort(byExactThenConfidence);
   const letterByCluster = {};
   [...strongClusters, ...possibleClusters].forEach((c, i) => { letterByCluster[c.cluster_id] = groupName(i); });
   const clusterMembers = (c) => (c.entity_ids || []).map((eid) => entById[eid]).filter(Boolean);
   const accountedIds = new Set();
   [...strongClusters, ...possibleClusters].forEach((c) => (c.entity_ids || []).forEach((eid) => accountedIds.add(eid)));
-  const notLinkedEntities = entities.filter((e) => !accountedIds.has(e.entity_id));
+  const isExactEntity = (e) => ((infoByEntity[e.entity_id]?.cluster?.relevance?.score) || 0) >= 100;
+  const notLinkedEntities = entities
+    .filter((e) => !accountedIds.has(e.entity_id))
+    .sort((a, b) => isExactEntity(b) - isExactEntity(a));   // exact seed match(es) first
   const strongCount = strongClusters.reduce((s, c) => s + clusterMembers(c).length, 0);
   const possibleCount = possibleClusters.reduce((s, c) => s + clusterMembers(c).length, 0);
   const autoExpandNotLinked = strongClusters.length + possibleClusters.length === 0;
@@ -125,14 +132,30 @@ export default function CaseView() {
       : null;
   const analysisCluster = selCluster || selEntityMulti;
 
+  // Platform list present in this case (for the platform filter dropdown).
+  const allPlatforms = Array.from(new Set(entities.map((e) => (e.platform || "").toLowerCase()).filter(Boolean))).sort();
+  const clusterHasPlatform = (c, plat) =>
+    plat === "all" || clusterMembers(c).some((e) => (e.platform || "").toLowerCase() === plat);
+  const entityHasPlatform = (e, plat) => plat === "all" || (e.platform || "").toLowerCase() === plat;
+
   // §4.4.4.1 evidence quick-link filter — narrow the identity list to clusters that fired a signal.
   const clusterHasSignal = (c, sig) => !!(c.signals && Object.prototype.hasOwnProperty.call(c.signals, sig));
-  const filteredStrong = signalFilter ? strongClusters.filter((c) => clusterHasSignal(c, signalFilter)) : strongClusters;
-  const filteredPossible = signalFilter ? possibleClusters.filter((c) => clusterHasSignal(c, signalFilter)) : possibleClusters;
-  const filteredNotLinked = signalFilter ? [] : notLinkedEntities;
+  // Compose all three filters: evidence signal (quick-links) + confidence tier + platform.
+  const applyFilters = (list) => list
+    .filter((c) => !signalFilter || clusterHasSignal(c, signalFilter))
+    .filter((c) => clusterHasPlatform(c, platformFilter));
+  const filteredStrong = tierFilter === "MEDIUM" ? [] : applyFilters(strongClusters);
+  const filteredPossible = tierFilter === "HIGH" ? [] : applyFilters(possibleClusters);
+  // "Not linked" is hidden whenever any evidence/tier filter is active (those are, by
+  // definition, accounts with no qualifying link); still honor the platform filter.
+  const filteredNotLinked = (signalFilter || tierFilter !== "all")
+    ? []
+    : notLinkedEntities.filter((e) => entityHasPlatform(e, platformFilter));
   const filteredStrongCount = filteredStrong.reduce((s, c) => s + clusterMembers(c).length, 0);
   const filteredPossibleCount = filteredPossible.reduce((s, c) => s + clusterMembers(c).length, 0);
   const onToggleSignal = (sig) => setSignalFilter((s) => (s === sig ? null : sig));
+  const anyFilterActive = !!signalFilter || tierFilter !== "all" || platformFilter !== "all";
+  const clearAllFilters = () => { setSignalFilter(null); setTierFilter("all"); setPlatformFilter("all"); };
 
   // §4.4.4.3/§4.4.4.4 — Timeline shown only with per-entity posting_hours; Writing
   // shown only when forensics has any populated field (else hide the tab, §5.4).
@@ -231,10 +254,51 @@ export default function CaseView() {
               Discovered accounts ({total})
             </div>
             <div className="mt-0.5 mb-3 text-xs text-slate-500">Click any account to inspect.</div>
-            {signalFilter && (
+
+            {/* Filters — confidence tier + platform */}
+            <div className="mb-3 space-y-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500 w-14 shrink-0">Confidence</span>
+                {[
+                  { id: "all", label: "All" },
+                  { id: "HIGH", label: "Strong", color: "#00ff88" },
+                  { id: "MEDIUM", label: "Possible", color: "#ffb703" },
+                ].map((o) => (
+                  <button
+                    key={o.id}
+                    onClick={() => setTierFilter(o.id)}
+                    className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${
+                      tierFilter === o.id
+                        ? "border-cyan-400/60 bg-cyan-400/10 text-cyan-200"
+                        : "border-slate-700 text-slate-400 hover:text-slate-200"
+                    }`}
+                    style={tierFilter === o.id && o.color ? { color: o.color, borderColor: `${o.color}66` } : undefined}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500 w-14 shrink-0">Platform</span>
+                <select
+                  value={platformFilter}
+                  onChange={(e) => setPlatformFilter(e.target.value)}
+                  className="flex-1 text-[11px] bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200 focus:border-cyan-400/60 outline-none"
+                >
+                  <option value="all">All platforms ({allPlatforms.length})</option>
+                  {allPlatforms.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {(signalFilter || anyFilterActive) && (
               <div className="mb-3 flex items-center justify-between rounded-md bg-cyan-400/10 border border-cyan-400/30 px-2 py-1">
-                <span className="text-[11px] text-cyan-400">Filtered: {labelFor(signalFilter)}</span>
-                <button onClick={() => setSignalFilter(null)} className="text-[11px] text-cyan-400 hover:underline">Clear</button>
+                <span className="text-[11px] text-cyan-400 truncate">
+                  {signalFilter ? `Evidence: ${labelFor(signalFilter)}` : "Filtered"}
+                </span>
+                <button onClick={clearAllFilters} className="text-[11px] text-cyan-400 hover:underline shrink-0 ml-2">Clear all</button>
               </div>
             )}
             <IdentityList
@@ -455,6 +519,7 @@ function IdentityList({
                 entity={{ ...e, _tier: infoByEntity[e.entity_id]?.tier }}
                 selected={selectedEntityId === e.entity_id}
                 onClick={() => onSelectEntity(e.entity_id)}
+                exactMatch={((infoByEntity[e.entity_id]?.cluster?.relevance?.score) || 0) >= 100}
               />
             ))}
             {notLinkedEntities.length === 0 && (
@@ -469,13 +534,21 @@ function IdentityList({
 
 // A single cluster's clickable header + its member AccountCards.
 function ClusterGroup({ cluster, letter, members, selectedEntityId, onSelectEntity, onSelectCluster }) {
+  const exact = (cluster.relevance?.score || 0) >= 100;
   return (
     <div className="mb-3">
       <button
         onClick={() => onSelectCluster(cluster.cluster_id)}
-        className="w-full text-left text-xs text-slate-300 hover:text-slate-100 mb-1.5"
+        className="w-full text-left mb-1.5 flex items-center gap-2 flex-wrap"
       >
-        Identity group {letter} · {members.length} {members.length === 1 ? "account" : "accounts"}
+        <span className="text-xs text-slate-300 hover:text-slate-100">
+          Identity group {letter} · {members.length} {members.length === 1 ? "account" : "accounts"}
+        </span>
+        {exact && (
+          <span className="text-[9px] font-mono uppercase tracking-wider text-cyan-300 border border-cyan-400/40 bg-cyan-400/10 rounded px-1.5 py-0.5">
+            ★ Exact match
+          </span>
+        )}
       </button>
       <div className="space-y-2">
         {members.map((e) => (
@@ -502,8 +575,9 @@ function sigPoints(v) {
 function AnalysisPanel({ cluster, letter, members, entity }) {
   // State B — cluster selected
   if (cluster) {
+    // Only REAL corroborating signals — `_`-prefixed keys are internal ranking metadata.
     const signals = cluster.signals || {};
-    const sigEntries = Object.entries(signals);
+    const sigEntries = Object.entries(signals).filter(([name]) => !name.startsWith("_"));
     return (
       <div>
         <div className="flex items-center justify-between gap-2">
@@ -675,11 +749,31 @@ function SummaryTab({ entities, clusters, signalFilter, onToggleSignal }) {
     (m.city_candidates || []).forEach(addLoc);
   });
 
-  // Evidence quick-links — signals that fired across multi-member clusters (§4.4.4.1)
+  // Evidence quick-links (§4.4.4.1) — the moat. Count, for every REAL corroborating
+  // signal, how many identity groups it links and how many accounts those groups hold.
+  // `_`-prefixed keys are internal ranking metadata (relevance), NOT evidence — excluded.
   const multi = clusters.filter((c) => (c.entity_ids || []).length >= 2);
-  const sigCounts = {};
-  multi.forEach((c) => Object.keys(c.signals || {}).forEach((s) => { sigCounts[s] = (sigCounts[s] || 0) + 1; }));
-  const sigPills = Object.entries(sigCounts).sort((a, b) => b[1] - a[1]);
+  const sigStat = {}; // signal -> { groups, accounts }
+  multi.forEach((c) => {
+    const members = (c.entity_ids || []).length;
+    Object.keys(c.signals || {}).forEach((s) => {
+      if (s.startsWith("_")) return;
+      if (!sigStat[s]) sigStat[s] = { groups: 0, accounts: 0 };
+      sigStat[s].groups += 1;
+      sigStat[s].accounts += members;
+    });
+  });
+  const EVIDENCE_TIERS = [
+    { key: "hard", label: "Decisive evidence", hint: "Standalone-strong — one is enough to anchor a link" },
+    { key: "identity", label: "Identity signals", hint: "Same handle or real name across platforms" },
+    { key: "context", label: "Corroborating context", hint: "Supporting only — never sufficient alone" },
+  ];
+  const sigByTier = { hard: [], identity: [], context: [] };
+  Object.entries(sigStat).forEach(([sig, st]) => {
+    (sigByTier[tierFor(sig)] || sigByTier.context).push([sig, st]);
+  });
+  Object.values(sigByTier).forEach((arr) => arr.sort((a, b) => b[1].accounts - a[1].accounts || b[1].groups - a[1].groups));
+  const hasEvidence = Object.keys(sigStat).length > 0;
 
   return (
     <div>
@@ -749,21 +843,49 @@ function SummaryTab({ entities, clusters, signalFilter, onToggleSignal }) {
         </MatrixCard>
       </div>
 
-      {sigPills.length > 0 && (
-        <GlassPanel className="p-4 mt-3">
-          <div className="text-[11px] font-mono uppercase tracking-wide text-slate-400 mb-2">Evidence quick-links</div>
-          <div className="flex flex-wrap gap-2">
-            {sigPills.map(([sig, n]) => (
-              <PivotPill key={sig} icon={iconFor(sig)} active={signalFilter === sig} onClick={() => onToggleSignal(sig)}>
-                {labelFor(sig)} ({n} {n === 1 ? "group" : "groups"})
-              </PivotPill>
-            ))}
+      {hasEvidence && (
+        <GlassPanel className="p-4 mt-3 border border-cyan-400/20">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[11px] font-mono uppercase tracking-wide text-cyan-300">
+              🔎 Evidence quick-links
+            </div>
+            {signalFilter && (
+              <button
+                onClick={() => onToggleSignal(signalFilter)}
+                className="text-[11px] font-mono uppercase tracking-wide text-cyan-400 hover:text-cyan-200 border border-cyan-400/40 rounded px-2 py-0.5"
+              >
+                ✕ Clear filter
+              </button>
+            )}
           </div>
-          {signalFilter && (
-            <button onClick={() => onToggleSignal(signalFilter)} className="mt-2 text-xs text-cyan-400 hover:underline">
-              Clear filter
-            </button>
-          )}
+          <div className="text-[11px] text-slate-500 mb-3">
+            Click any evidence type to isolate the identity groups it links. Each linkage is
+            traced to the exact signal that produced it — nothing is asserted without evidence.
+          </div>
+
+          {EVIDENCE_TIERS.map(({ key, label, hint }) => {
+            const rows = sigByTier[key];
+            if (!rows.length) return null;
+            const accent = key === "hard" ? "#00ff88" : key === "identity" ? "#38bdf8" : "#94a3b8";
+            return (
+              <div key={key} className="mb-3 last:mb-0">
+                <div className="flex items-baseline gap-2 mb-1.5">
+                  <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: accent }}>{label}</span>
+                  <span className="text-[10px] text-slate-600">{hint}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {rows.map(([sig, st]) => (
+                    <PivotPill key={sig} icon={iconFor(sig)} active={signalFilter === sig} onClick={() => onToggleSignal(sig)}>
+                      <span className="font-medium">{labelFor(sig)}</span>
+                      <span className="ml-1.5 text-[10px] opacity-70">
+                        {st.groups} {st.groups === 1 ? "group" : "groups"} · {st.accounts} {st.accounts === 1 ? "account" : "accounts"}
+                      </span>
+                    </PivotPill>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </GlassPanel>
       )}
     </div>

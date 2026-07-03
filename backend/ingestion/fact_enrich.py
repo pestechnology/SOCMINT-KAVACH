@@ -36,8 +36,12 @@ import asyncio
 
 from backend.llm.llm_client import LLMClient
 
-_MAX_PROFILES = 15   # same order of magnitude as orchestrator.py's blobs[:10] entity-
-                      # extraction cap — keeps the LLM call budget bounded and predictable.
+_MAX_PROFILES = 6    # Keeps the per-investigation LLM call budget small. This fires one
+                      # call per profile; combined with entity-extraction + per-cluster
+                      # explanations + rerank, a higher cap saturates the LLM provider's
+                      # free-tier per-minute limit and forces the whole run onto slow
+                      # 429-retry paths. 6 covers the richest-bio profiles, which is where
+                      # employer/city facts actually come from.
 
 
 def _text_of(meta: dict) -> str:

@@ -69,6 +69,10 @@ _BOILERPLATE_NOISE = {
     "only", "own", "other", "another", "same", "different", "new", "old",
 }
 _STOP = _FUNCTION_SET | _BOILERPLATE_NOISE
+# Public alias — correlation_engine.py's bio_keyword_overlap signal reuses this
+# curated ~250-word list (function words + social-media boilerplate) instead of
+# maintaining its own much smaller stopword set.
+BIO_STOPWORDS = _STOP
 _HASHTAG_RE = re.compile(r"#(\w{2,40})")
 _WORD_RE = re.compile(r"[A-Za-z']{3,}")
 

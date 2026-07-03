@@ -205,8 +205,11 @@ def rerank_and_promote(
     promoted_reasons: dict[int, str] = {}
 
     high_relevance = [r for r in rerank_results if r["relevance"] >= PROMOTION_THRESHOLD]
-    # Cap targeted checks at 15 to allow LLM to check more candidates
-    high_relevance = high_relevance[:15]
+    # Cap targeted per-candidate confirmation calls. These run sequentially against Groq;
+    # 6 is enough to promote the genuinely strong leads (already relevance>=65 from the
+    # batch rerank) while keeping the burst under Groq's per-minute limit so the run
+    # doesn't spend its time backing off 429s.
+    high_relevance = high_relevance[:6]
 
     if high_relevance and confirmed_clusters:
         # Find the strongest confirmed cluster

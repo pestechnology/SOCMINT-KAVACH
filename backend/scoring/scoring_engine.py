@@ -175,7 +175,24 @@ def score(profiles: list[RawProfile], pairs: list[CandidatePair], seeds: list[di
     n = len(profiles)
     uf = _UnionFind(n)
 
-    # 1. Identify seed target usernames (e.g., "ash29_03" -> "ash29_03" and "ash2903")
+    # Link ONLY on MEDIUM+ pairs (>=2 signals, >=50 pts) — the red-herring rule is the
+    # entire point of this engine, so nothing may bypass LINK_MIN_SIGNALS/LINK_MIN_POINTS.
+    for p in pairs:
+        if p.num_signals >= LINK_MIN_SIGNALS and p.raw_points >= LINK_MIN_POINTS:
+            uf.union(p.i, p.j)
+
+    # Identify which profiles literally match the investigator's search seed — used
+    # ONLY for ranking (surface the account that IS the searched-for identifier first)
+    # and an explanatory note, NEVER to merge accounts or inflate confidence/tier.
+    # A shared username/name string alone is a red herring by design (see this file's
+    # docstring); an earlier version of this function unioned seed-matching profiles
+    # directly and forced their tier to HIGH/confidence to 100, which let two total
+    # strangers who each merely contained a short fragment of the seed (e.g. seed
+    # "ash2903" loosely matching unrelated handles "ash" / "290") get merged into a
+    # fabricated 100%-confidence "primary target" cluster. Matching here must never
+    # affect uf.union() or Cluster.confidence_score/tier — see relevance_score/
+    # relevance_reason below for the (non-authoritative) lead-ranking fields, mirroring
+    # the same fix already applied to the LLM reranker's relevance vs. confidence split.
     seed_usernames = set()
     if seeds:
         for s in seeds:
@@ -196,32 +213,24 @@ def score(profiles: list[RawProfile], pairs: list[CandidatePair], seeds: list[di
         muc = "".join(ch for ch in mu if ch.isalnum())
         meta_name = str((p.metadata or {}).get("name") or (p.metadata or {}).get("fullname") or (p.metadata or {}).get("title") or "").strip().lower()
         meta_clean = "".join(ch for ch in meta_name if ch.isalnum())
-        
+
+        # Containment is only meaningful when BOTH the seed fragment and the candidate
+        # field are >=4 chars — mirrors the same floor correlation_engine.py's
+        # username_substring_match already enforces. Below that, containment is
+        # coincidental noise (e.g. "ash" / "290" both sit inside "ash2903").
+        def _loose(u: str, field: str) -> bool:
+            return len(u) >= 4 and len(field) >= 4 and (u in field or field in u)
+
         for u in seed_usernames:
             if u in (v, vc, mu, muc, meta_name, meta_clean):
                 return True
-            if len(u) >= 4:
-                if u in vc or vc in u or u in muc or (muc and muc in u):
-                    return True
-                if u in meta_clean or (meta_clean and len(meta_clean) >= 4 and meta_clean in u):
-                    return True
-                if u in v or u in mu or u in meta_name:
-                    return True
+            if _loose(u, vc) or _loose(u, muc) or _loose(u, meta_clean):
+                return True
+            if _loose(u, v) or _loose(u, mu) or _loose(u, meta_name):
+                return True
         return False
 
-    # Link only on MEDIUM+ pairs (>=2 signals, >=50 pts), OR if both profiles match the exact seed ID!
-    for p in pairs:
-        if p.num_signals >= LINK_MIN_SIGNALS and p.raw_points >= LINK_MIN_POINTS:
-            uf.union(p.i, p.j)
-        elif seed_usernames and _matches_seed_id(p.i) and _matches_seed_id(p.j):
-            uf.union(p.i, p.j)
-
-    # Also explicitly group all exact seed accounts on social/web platforms into Cluster #1
-    seed_indices = [idx for idx in range(n) if _matches_seed_id(idx) and profiles[idx].type in ("social_account", "web_page", "username", "name", "url", "person")]
-    if len(seed_indices) > 1:
-        base = seed_indices[0]
-        for idx in seed_indices[1:]:
-            uf.union(base, idx)
+    seed_indices = [idx for idx in range(n) if _matches_seed_id(idx)]
 
     # Group member indices by union-find root.
     groups: dict[int, list[int]] = {}
@@ -251,24 +260,24 @@ def score(profiles: list[RawProfile], pairs: list[CandidatePair], seeds: list[di
         if len(members) > 1:
             confidence = min(100.0, float(sum(agg.values())))
             single_signal = len(agg) == 1
+            tier = _tier(confidence)
+            if single_signal:
+                tier = _cap_tier(tier, "LOW")
+            if not _has_hard_anchor(agg):
+                confidence = min(confidence, 65.0)
+                tier = _cap_tier(tier, "MEDIUM")
+            explanation = _explain(agg, tier, single_signal)
             if is_seed_cluster:
-                # This is the primary cluster for the investigator's exact ID! Give 100 confidence, rank #1!
-                confidence = max(confidence, 100.0)
-                tier = "HIGH"
-            else:
-                tier = _tier(confidence)
-                if single_signal:
-                    tier = _cap_tier(tier, "LOW")
-                if not _has_hard_anchor(agg):
-                    confidence = min(confidence, 65.0)
-                    tier = _cap_tier(tier, "MEDIUM")
+                explanation += " Includes the account matching your search input."
             clusters.append(Cluster(
                 cluster_id=uuid.uuid4().hex,
                 member_indices=sorted(members),
                 confidence_score=round(confidence, 1),
                 tier=tier,
                 signals=agg,
-                explanation="Primary target persona matching exact seed ID across legitimate platforms." if is_seed_cluster else _explain(agg, tier, single_signal),
+                explanation=explanation,
+                relevance_score=100 if is_seed_cluster else 0,
+                relevance_reason="Matches your search input directly." if is_seed_cluster else "",
             ))
         else:
             # singleton — carry its best attempted pair so the UI can say why it's NOT linked
@@ -278,23 +287,28 @@ def score(profiles: list[RawProfile], pairs: list[CandidatePair], seeds: list[di
             confidence = min(100.0, float(sum(sigs.values())))
             single_signal = len(sigs) == 1
             is_single_seed = idx in seed_indices
+            tier = _tier(confidence) if sigs else "REJECT"
+            if single_signal:
+                tier = _cap_tier(tier, "LOW")
+            if sigs and not _has_hard_anchor(sigs):
+                confidence = min(confidence, 65.0)
+                tier = _cap_tier(tier, "MEDIUM")
+            # A literal seed match is a useful LEAD (it's what the investigator typed),
+            # not evidence of a cross-platform link — surfaced via relevance_score/reason
+            # only, same non-authoritative pattern as the LLM reranker uses (see
+            # reranker.py). confidence_score/tier reflect corroborating signals ONLY.
+            explanation = _explain(sigs, tier, single_signal) if sigs else "Standalone account — no signals link it to any other account."
             if is_single_seed:
-                confidence = max(confidence, 100.0)
-                tier = "HIGH"
-            else:
-                tier = _tier(confidence) if sigs else "REJECT"
-                if single_signal:
-                    tier = _cap_tier(tier, "LOW")
-                if sigs and not _has_hard_anchor(sigs):
-                    confidence = min(confidence, 65.0)
-                    tier = _cap_tier(tier, "MEDIUM")
+                explanation += " This account's identifier matches your search input directly."
             clusters.append(Cluster(
                 cluster_id=uuid.uuid4().hex,
                 member_indices=[idx],
                 confidence_score=round(confidence, 1),
                 tier=tier,
                 signals=sigs,
-                explanation="Primary target persona matching exact seed ID." if is_single_seed else (_explain(sigs, tier, single_signal) if sigs else "Standalone account — no signals link it to any other account."),
+                explanation=explanation,
+                relevance_score=100 if is_single_seed else 0,
+                relevance_reason="Matches your search input directly." if is_single_seed else "",
             ))
 
     # Strongest clusters first; exact seed cluster always #1!

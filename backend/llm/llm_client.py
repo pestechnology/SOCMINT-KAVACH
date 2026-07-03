@@ -17,11 +17,19 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 
 import httpx
 
 from backend import config
+
+# One investigation fans out dozens of LLM calls (per-bio fact/entity extraction,
+# per-cluster explanations, reranking). Groq's free tier has a real per-minute request
+# cap; firing them all at once 429s a chunk of the run. Capping in-flight HTTP calls
+# smooths the burst without serializing the whole pipeline (still much faster than the
+# old fully-sequential explain_match loop it replaces — see orchestrator.py).
+_LLM_CONCURRENCY = threading.Semaphore(3)
 
 _PHONE_RE = re.compile(r"(?:(?:\+|00)\d{1,3}[\s-]?)?(?:\d[\s-]?){10}")
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
@@ -83,6 +91,13 @@ def _template_explanation(signals: list[str], tier: str) -> str:
 class LLMClient:
     """Dual-provider LLM client with automatic failover."""
 
+    # Circuit-breaker state is CLASS-level (shared across all instances) on purpose: one
+    # investigation constructs ~5 separate LLMClient objects (orchestrator, fact_enrich,
+    # reranker, forensics, report). If the breaker were per-instance, EACH would re-pay
+    # NVIDIA's full timeout to independently rediscover it's unreachable — ~5×45s of dead
+    # wait per run. Shared, the very first NVIDIA failure short-circuits it for everyone.
+    _nvidia_down = False
+
     def __init__(self):
         self.nvidia_key = config.NVIDIA_API_KEY
         self.nvidia_url = config.NVIDIA_BASE_URL.rstrip("/")
@@ -90,6 +105,17 @@ class LLMClient:
         self.groq_url = config.GROQ_BASE_URL.rstrip("/")
         self.groq_model = config.GROQ_MODEL
         self.timeout = config.LLM_TIMEOUT_SECONDS
+        # Provider strategy (measured, not guessed): NVIDIA's build-tier inference for
+        # llama-3.3-70b here answers correctly but takes ~80s+ per call and queues hard
+        # (3 back-to-back calls didn't finish in 5 min), while Groq serves the SAME model
+        # class in ~0.2s. So Groq is the PRIMARY fast path and NVIDIA is a real fallback
+        # for when Groq is rate-limited — not the other way around. The old order tried
+        # NVIDIA first on every call and paid its latency every time.
+        #
+        # Circuit breaker: one LLMClient is created per investigation and makes dozens of
+        # calls; once NVIDIA has timed out/failed ONCE this run, stop dialing it (each
+        # attempt otherwise blocks up to self.timeout) and stay on Groq + deterministic
+        # fallbacks for the rest of the process (see class-level _nvidia_down above).
 
     def _chat(self, model: str, messages: list[dict], temperature: float,
               max_tokens: int, provider: str = "nvidia", timeout: float | None = None) -> str:
@@ -105,25 +131,59 @@ class LLMClient:
             url = f"{self.nvidia_url}/chat/completions"
             key = self.nvidia_key
 
-        resp = httpx.post(
-            url,
-            headers={"Authorization": f"Bearer {key}",
-                     "Content-Type": "application/json"},
-            json={"model": model, "messages": messages,
-                  "temperature": temperature, "max_tokens": max_tokens},
-            timeout=timeout if timeout is not None else self.timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        eff_timeout = timeout if timeout is not None else self.timeout
+        # One short retry on 429 (honoring Retry-After if it's small). Deliberately NOT
+        # long/exponential: an investigation fires 30-40 calls and a free tier saturates
+        # for a full minute+, so aggressive backoff just makes EVERY call slow. When the
+        # provider is genuinely rate-limited we want to fail FAST here and let the
+        # caller's deterministic fallback (regex entities / template explanations /
+        # frequency-based keywords) take over — a fast, complete run beats a slow one
+        # waiting on an exhausted quota. Brief one-off bursts still recover on the retry.
+        with _LLM_CONCURRENCY:
+            for attempt in range(2):
+                resp = httpx.post(
+                    url,
+                    headers={"Authorization": f"Bearer {key}",
+                             "Content-Type": "application/json"},
+                    json={"model": model, "messages": messages,
+                          "temperature": temperature, "max_tokens": max_tokens},
+                    timeout=eff_timeout,
+                )
+                if resp.status_code == 429 and attempt == 0:
+                    try:
+                        wait = float(resp.headers.get("retry-after", ""))
+                    except (TypeError, ValueError):
+                        wait = 1.5
+                    if wait > 3.0:      # provider says it'll be a while — don't wait, degrade now
+                        resp.raise_for_status()
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"]
 
     def _chat_with_failover(self, model: str, messages: list[dict],
                             temperature: float, max_tokens: int) -> str:
-        """Try NVIDIA first with a fast timeout (8s), fall back to Groq if NVIDIA fails."""
+        """Groq first (fast), NVIDIA as fallback when Groq is unavailable.
+
+        `model` is the NVIDIA model id (used only if we actually fall back); Groq uses
+        its own configured model. Raises if BOTH providers fail — every caller has a
+        deterministic fallback, so raising here is the intended 'no LLM' signal."""
         try:
-            return self._chat(model, messages, temperature, max_tokens, "nvidia", timeout=min(self.timeout, 8.0))
-        except Exception as e:
-            print(f"[llm] nvidia failover triggered ({e}), falling back to groq...")
             return self._chat(self.groq_model, messages, temperature, max_tokens, "groq")
+        except Exception as groq_err:
+            if self._nvidia_down or not self.nvidia_key:
+                raise
+            print(f"[llm] groq failed ({groq_err}); falling back to nvidia (slow)...")
+            try:
+                # Bounded discovery cost: NVIDIA either answers in ~80s+ or not at all on
+                # this network, so a short timeout just confirms "unreachable" cheaply and
+                # trips the shared breaker — we won't wait the full self.timeout to learn it.
+                return self._chat(model, messages, temperature, max_tokens, "nvidia",
+                                  timeout=min(self.timeout, 10.0))
+            except Exception as nv_err:
+                LLMClient._nvidia_down = True   # class-level: share across all instances
+                print(f"[llm] nvidia fallback also failed ({nv_err}); using deterministic path.")
+                raise
 
     def extract_entities(self, text: str) -> list[dict]:
         if not text or not text.strip():
@@ -330,7 +390,7 @@ The confirmed target persona has these characteristics:
 
 Below are unlinked candidate profiles. For each one, assess how likely it belongs to the SAME PERSON as the target persona. Consider:
 - Exact Username Match on Legitimate Platforms: If a candidate on a major platform (like Instagram, LinkedIn, GitHub, Twitter, Facebook, YouTube) matches the seed username EXACTLY or very closely, score it HIGH (>= 75) even if the account is private or has an empty bio!
-- Country/Location Focus: Over 99% of our investigations focus on India. If a candidate explicitly lists a foreign location outside India (e.g., USA, UK, Canada, Europe), penalize it heavily unless there is overwhelming proof of international relocation.
+- Location: treat it as ONE data point among many, not a filter — a real target can genuinely have foreign-hosted accounts, travel, or list an employer's HQ city. Only let location count AGAINST a candidate when it actively CONTRADICTS other strong evidence (e.g. a confirmed-India target and a candidate with a detailed bio anchoring them to a specific unrelated foreign life). Never penalize a candidate for foreign location alone.
 - Semantic similarity of bio/keywords (not just exact match — "crypto trader" and "investment advisor" are related)
 - Professional/interest domain overlap
 - Obscure/Random Platforms: Be very skeptical of obscure websites or gaming forums with generic short usernames and no identifying bio or name.
@@ -342,8 +402,11 @@ Return ONLY a valid JSON array. Each element: {{"index": <int>, "relevance": <0-
 Sort by relevance descending. 0 = definitely different person. 100 = almost certainly same person.
 Return [] if no candidates. No prose outside the JSON."""
 
-        # Prefer Groq for reranking (faster, saves NVIDIA quota for extraction)
-        providers = [("groq", self.groq_model), ("nvidia", config.LLM_EXTRACT_MODEL)]
+        # Groq only for reranking. This is an enhancement layer (relevance ordering /
+        # promotion) that fires many calls per run; on Groq rate-limit we must degrade
+        # INSTANTLY to signal-based ordering, never fall back to NVIDIA whose ~80s/call
+        # latency would stall a live investigation across a multi-call loop.
+        providers = [("groq", self.groq_model)]
 
         for provider, model in providers:
             try:
@@ -405,7 +468,9 @@ Analyze: username patterns, bio themes, keywords, location, name, profession, wr
 Return ONLY valid JSON: {{"score": <0-100>, "reason": "<explanation>", "should_link": <true/false>}}
 Score: 0=definitely different, 100=definitely same person. should_link=true only if score>=65."""
 
-        for provider, model in [("groq", self.groq_model), ("nvidia", config.LLM_EXTRACT_MODEL)]:
+        # Groq only — called in a loop by the reranker; NVIDIA's per-call latency would
+        # stall the run. Degrades to score=0 (no promotion) on failure, which is safe.
+        for provider, model in [("groq", self.groq_model)]:
             try:
                 content = self._chat(
                     model,

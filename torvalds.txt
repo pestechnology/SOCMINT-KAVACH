@@ -1,5 +1,9 @@
 https://www.9gag.com/u/torvalds
+https://independent.academia.edu/torvalds
+https://allmylinks.com/torvalds
+https://archiveofourown.org/users/torvalds
 https://forum.arduino.cc/u/torvalds/summary
+https://audiojungle.net/user/torvalds
 https://bitbucket.org/torvalds/
 https://bsky.app/profile/torvalds.bsky.social
 https://www.chess.com/member/torvalds
@@ -41,6 +45,7 @@ https://blog.naver.com/torvalds
 https://pastebin.com/u/torvalds
 https://www.patreon.com/torvalds
 https://www.periscope.tv/torvalds/
+https://www.pinkbike.com/u/torvalds/
 https://pixelfed.social/torvalds/
 https://www.plurk.com/torvalds
 https://pokemonshowdown.com/users/torvalds
@@ -48,27 +53,24 @@ https://www.redbubble.com/people/torvalds
 https://rubygems.org/profiles/torvalds
 https://scratch.mit.edu/users/torvalds
 https://torvalds.slack.com
+https://www.smule.com/torvalds
 https://www.snapchat.com/add/torvalds
 https://soundcloud.com/torvalds
+https://spacehey.com/torvalds
 https://robertsspaceindustries.com/citizens/torvalds
 https://steamcommunity.com/id/torvalds/
 https://torvalds.substack.com/
 https://ch.tetr.io/u/torvalds
-https://www.themoviedb.org/u/torvalds
 https://t.me/torvalds
 https://themeforest.net/user/torvalds
 https://www.tradingview.com/u/torvalds/
-https://www.twitch.tv/torvalds
 https://untappd.com/user/torvalds
-https://vk.com/torvalds
 https://www.virustotal.com/gui/user/torvalds
 https://en.wikipedia.org/wiki/Special:CentralAuth/torvalds?uselang=qqx
 https://torvalds.wordpress.com/
-https://www.wykop.pl/ludzie/torvalds
 https://xboxgamertag.com/search/torvalds
 https://www.couchsurfing.com/people/torvalds
 http://dating.ru/torvalds
-https://devrant.com/users/torvalds
 https://www.drive2.ru/users/torvalds
 https://www.fl.ru/users/torvalds
 https://www.geocaching.com/p/default.aspx?u=torvalds
@@ -76,10 +78,13 @@ https://habr.com/ru/users/torvalds
 https://jbzd.com.pl/uzytkownik/torvalds
 https://www.jeuxvideo.com/profil/torvalds
 https://last.fm/user/torvalds
+https://www.livelib.ru/reader/torvalds
 https://mastodon.cloud/@torvalds
+https://www.npmjs.com/~torvalds
 https://osu.ppy.sh/users/torvalds
+https://pikabu.ru/@torvalds
 https://www.pinterest.com/torvalds/
 https://www.threads.net/@torvalds
 https://torvalds.tumblr.com/
 https://www.baby.ru/u/torvalds
-Total Websites Username Detected On : 84
+Total Websites Username Detected On : 89

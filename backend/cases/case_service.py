@@ -112,7 +112,18 @@ def get_results(case_id: str, user_id: str) -> dict | None:
         e["metadata"] = json.loads(e.get("metadata_json") or "{}")
     for c in clusters:
         c["entity_ids"] = json.loads(c.get("entity_ids_json") or "[]")
-        c["signals"] = json.loads(c.get("signals_json") or "{}")
+        raw_signals = json.loads(c.get("signals_json") or "{}")
+        # Keep `signals` as PURE corroborating evidence. Internal ranking metadata is
+        # written into signals_json under `_`-prefixed keys (see orchestrator.py) so it
+        # rides along to the client, but it is NOT evidence — surfacing it in the
+        # Evidence quick-links / "matching evidence" list (as "Relevance Score",
+        # "Relevance Rank", …) is misleading. Split it into its own `relevance` field.
+        c["signals"] = {k: v for k, v in raw_signals.items() if not k.startswith("_")}
+        c["relevance"] = {
+            "score": raw_signals.get("_relevance_score"),
+            "reason": raw_signals.get("_relevance_reason"),
+            "rank": raw_signals.get("_relevance_rank"),
+        }
     # forensic summary (tone/sentiment, keywords, activity, engagement) for the UI
     try:
         from backend.analysis.forensics import summarize as _forensics

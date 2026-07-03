@@ -114,21 +114,34 @@ def test_hard_anchor_cap():
 
 
 def test_legitimate_and_target_country_filter():
-    """NSA-Grade: Ensure explicit foreign locations are filtered out while Indian and non-social records are preserved."""
+    """REGRESSION: identifier collection must never silently drop a real, already
+    FP-filtered account for its stated location or for lacking bio text on a platform
+    outside a hardcoded allowlist. A prior version of this filter dropped 75% of real
+    enumerator hits for a live "torvalds" search — including the target's OWN GitHub
+    account (dropped for listing "Portland, OR"). Completeness belongs here; precision
+    belongs to the correlation/scoring engine, which only links on real evidence."""
     from backend.ingestion.base_module import RawProfile
     from backend.pipeline.orchestrator import _is_legitimate_and_target_country
 
     p_foreign = RawProfile(type="social_account", value="ash29", platform="instagram", source_url="", metadata={"location": "New York, USA"})
     p_india = RawProfile(type="social_account", value="ash29", platform="instagram", source_url="", metadata={"location": "Bangalore, India"})
-    p_upi = RawProfile(type="upi", value="ash@oksbi", platform="upi", source_url="", metadata={"location": "USA"})  # non-social record bypasses filter
+    p_upi = RawProfile(type="upi", value="ash@oksbi", platform="upi", source_url="", metadata={"location": "USA"})
+    p_no_bio_unlisted_platform = RawProfile(type="social_account", value="torvalds", platform="disqus", source_url="https://disqus.com/torvalds", metadata={})
 
-    assert not _is_legitimate_and_target_country(p_foreign)
+    assert _is_legitimate_and_target_country(p_foreign)
     assert _is_legitimate_and_target_country(p_india)
     assert _is_legitimate_and_target_country(p_upi)
+    assert _is_legitimate_and_target_country(p_no_bio_unlisted_platform)
 
 
-def test_exact_seed_ranked_first_and_linked_high():
-    """NSA-Grade: Ensure exact seed accounts are grouped into Cluster #1 with 100 confidence."""
+def test_exact_seed_ranked_first_not_falsely_merged():
+    """Two accounts sharing ONLY an exact username across different platforms (the
+    classic username-squatting case) must NOT be force-merged into a fabricated HIGH
+    cluster just because both match the search seed — that's exactly what the
+    red-herring rule exists to prevent (README: 42 different torvalds accounts
+    correctly kept separate for sharing only a username). They ARE ranked first via
+    relevance_score (a literal search-input match is a useful lead to check first),
+    but confidence/tier are governed by real corroborating signals only."""
     from backend.correlation.correlation_engine import CandidatePair
     from backend.ingestion.base_module import RawProfile
     from backend.scoring.scoring_engine import score
@@ -137,12 +150,15 @@ def test_exact_seed_ranked_first_and_linked_high():
     p2 = RawProfile(type="social_account", value="ash2903", platform="github", source_url="", metadata={"username": "ash2903"})
     p_other = RawProfile(type="social_account", value="random_guy", platform="medium", source_url="", metadata={"username": "random_guy"})
     pair = CandidatePair(i=0, j=1, signals={"username_exact_match": 45})
-    
+
     clusters = score([p1, p2, p_other], [pair], seeds=[{"type": "username", "value": "ash29_03"}])
-    assert len(clusters) >= 1
-    # Cluster #1 must be our exact seed matches with 100 confidence
-    assert 0 in clusters[0].member_indices and 1 in clusters[0].member_indices
-    assert clusters[0].confidence_score == 100.0
-    assert clusters[0].tier == "HIGH"
+    # single signal (45 pts, one signal) -> below LINK_MIN_SIGNALS=2, so no merge
+    assert len(clusters) == 3
+    assert all(c.tier != "HIGH" for c in clusters)
+    seed_clusters = [c for c in clusters if c.relevance_score == 100]
+    assert {c.member_indices[0] for c in seed_clusters} == {0, 1}
+    # seed matches ranked ahead of the unrelated "random_guy" account
+    assert clusters[0].relevance_score == 100 and clusters[1].relevance_score == 100
+    assert clusters[2].member_indices == [2]
 
 

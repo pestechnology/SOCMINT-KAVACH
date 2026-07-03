@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from backend.ingestion.base_module import RawProfile
 from backend.analysis.forensics import stylometry_similarity as _stylometry_similarity
+from backend.analysis.forensics import BIO_STOPWORDS as _BIO_STOPWORDS
 from backend.ingestion.photo_enrich import FACE_COSINE_THRESHOLD as _FACE_COSINE_THRESHOLD
 from backend.ingestion.url_scraper import extract_handle as _extract_handle
 
@@ -89,8 +90,15 @@ class CandidatePair:
 
 
 # --- helpers ---------------------------------------------------------------
-_STOPWORDS = {"the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "at",
-             "dm", "me", "my", "now", "i", "is", "are", "with"}
+# bio_keyword_overlap used to filter against a tiny 19-word stopword list, so two
+# TOTAL STRANGERS with generic bios ("photos and videos, follow for more" vs "check
+# out my videos and photos, follow me for more") shared >=2 "keywords" (follow,
+# videos, photos, more) and fired a correlation signal on pure social-media
+# boilerplate. forensics.py already maintains a much larger (~250-word) curated
+# list of function words + this exact kind of boilerplate for its keyword-extraction
+# UI panel — reuse it here so the two features can't disagree about what counts as
+# a "distinctive" shared word.
+_STOPWORDS = _BIO_STOPWORDS
 
 # Mega-breaches (hundreds of millions of unrelated accounts) — a lone shared one
 # is not evidence two accounts belong to the same person. Lowercased.
