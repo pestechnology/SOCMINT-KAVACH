@@ -22,13 +22,28 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata = {
   title: "VERTEX — SOCMINT Intelligence Platform",
-  description: "SOCMINT/OSINT suspect-profiling system",
+  description: "SOCMINT / OSINT subject-profiling platform",
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en" className={`${spaceGrotesk.variable} ${jetbrainsMono.variable}`}>
-      <body className="min-h-screen bg-ink text-body font-display antialiased">{children}</body>
+      <head>
+        {/* Redesign fonts (§2.2): Outfit + JetBrains Mono via CDN. next/font above
+            stays loaded as a fallback so nothing goes unstyled mid-migration. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body className="min-h-screen bg-ink text-body font-display antialiased">
+        {/* Ambient background layers (§2.3) — fixed, behind content */}
+        <div className="glow-bg" />
+        <div className="grid-overlay" />
+        <div className="relative z-10">{children}</div>
+      </body>
     </html>
   );
 }

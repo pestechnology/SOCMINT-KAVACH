@@ -1,21 +1,42 @@
 /* app/cases/page.js
-   CHANGED: full rewrite to the "Investigation Registry" — top nav, mono stats strip,
-   row-based case table (no card grid), and an "Initiate Investigation" modal.
-   DECISION: FACE removed everywhere; case numbers derived from display index; username
-   read from localStorage('vertex_user'); api.listCases/createCase used unchanged. */
+   REDESIGN §4.2 + §4.3 — "Investigations" registry (glass card grid, stats strip,
+   plain-English copy) + "New investigation" modal. Killed: "REGISTRY", "OPERATION
+   TITLE", "SEEDS", "INITIATE INVESTIGATION", the all-zero stats strip.
+   PRESERVED: auth guard, api.listCases().cases, 401->login, signOut, vertex_user,
+   and api.createCase(title, seeds, minor, country_filter) -> res.case_id (§1.1, §0.4). */
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getToken, clearToken } from "@/lib/api";
+import GlassPanel from "@/components/ui/GlassPanel";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Label from "@/components/ui/Label";
+import StatusPill from "@/components/ui/StatusPill";
+import EmptyState from "@/components/ui/EmptyState";
+import PivotPill from "@/components/ui/PivotPill";
+import Tooltip from "@/components/ui/Tooltip";
 
+// §4.3 identifier types — Name, Email, Phone, Username, UPI, Face URL (spec order).
 const SEED_TYPES = [
-  { value: "username", label: "USERNAME", placeholder: "e.g. ghost_rider99" },
-  { value: "email", label: "EMAIL", placeholder: "e.g. subject@mail.com" },
-  { value: "phone", label: "PHONE", placeholder: "e.g. +91 98765 43210" },
+  { value: "name", label: "Name", placeholder: "e.g. Arjun Mehta" },
+  { value: "email", label: "Email", placeholder: "e.g. subject@mail.com" },
+  { value: "phone", label: "Phone", placeholder: "e.g. +91 98765 43210" },
+  { value: "username", label: "Username", placeholder: "e.g. ghost_rider99" },
   { value: "upi", label: "UPI", placeholder: "e.g. subject@oksbi" },
-  { value: "name", label: "NAME", placeholder: "e.g. Arjun Mehta" },
-  { value: "url", label: "URL", placeholder: "e.g. https://instagram.com/subject" },
-]; // NOTE: FACE intentionally excluded
+  { value: "face", label: "Face URL", placeholder: "e.g. https://…/photo.jpg" },
+];
+
+// Region maps onto the backend's country_filter (preserved from pre-redesign).
+const REGIONS = [
+  { value: "INDIA", label: "India (Indian + Global platforms)" },
+  { value: "ALL", label: "Global" },
+];
+
+const SELECT_CLS =
+  "w-full rounded-lg bg-slate-900/80 border border-slate-700 px-3 py-2 " +
+  "text-sm text-slate-100 outline-none transition-colors duration-200 " +
+  "focus:border-cyan-400 cursor-pointer";
 
 function fmtTime(iso) {
   if (!iso) return "";
@@ -24,14 +45,6 @@ function fmtTime(iso) {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-
-const STATUS_BAR = { complete: "#27AE60", running: "#D4900A", pending: "#D4900A", error: "#C0392B" };
-const STATUS_TEXT = {
-  complete: { t: "COMPLETE", c: "tier-complete" },
-  running: { t: "RUNNING", c: "tier-high" },
-  pending: { t: "PENDING", c: "tier-reject" },
-  error: { t: "ERROR", c: "tier-error" },
-};
 
 export default function Cases() {
   const router = useRouter();
@@ -57,134 +70,157 @@ export default function Cases() {
     router.replace("/login");
   }
 
-  const filtered = cases.filter((c) => (c.title || "").toLowerCase().includes(search.toLowerCase()));
+  const filtered = cases.filter((c) =>
+    (c.title || "").toLowerCase().includes(search.toLowerCase())
+  );
+  const nTotal = cases.length;
   const nRunning = cases.filter((c) => c.status === "running" || c.status === "pending").length;
   const nComplete = cases.filter((c) => c.status === "complete").length;
 
   return (
-    <div className="min-h-screen bg-ink">
-      {/* NAV */}
-      <nav className="bg-surface border-b border-edge flex items-center justify-between" style={{ padding: "10px 20px" }}>
-        <div className="flex items-center">
-          <span className="display text-head" style={{ fontSize: 18, fontWeight: 600 }}>VERTEX<span className="text-amber">.</span></span>
-          <span style={{ width: 1, height: 16, background: "#2A3148", margin: "0 16px" }} />
-          <span className="mono text-dim" style={{ fontSize: 10, letterSpacing: "0.1em" }}>INVESTIGATION REGISTRY</span>
-        </div>
-        <div className="flex items-center" style={{ gap: 16 }}>
-          <span className="mono text-dim" style={{ fontSize: 10 }}>{username}</span>
-          <button onClick={signOut} className="mono text-crimson" style={{ fontSize: 10 }}>Sign out</button>
-          <AmberButton onClick={() => setShowNew(true)} label="OPEN CASE" />
+    <div className="min-h-screen">
+      {/* TOP BAR (always visible) */}
+      <nav className="flex items-center justify-between px-6 py-3 border-b border-slate-800">
+        <button
+          type="button"
+          onClick={() => router.push("/cases")}
+          className="font-display font-semibold text-slate-100"
+          style={{ fontSize: 20 }}
+        >
+          VERTEX<span className="text-cyan-400">.</span>
+        </button>
+        <div className="flex items-center gap-4">
+          <span className="rounded-md border border-slate-700 bg-slate-900/60 px-2.5 py-1 text-[11px] font-mono text-slate-300">
+            {username}
+          </span>
+          <button onClick={signOut} className="text-[12px] text-slate-400 hover:text-slate-200">
+            Sign out
+          </button>
+          <Button variant="primary" onClick={() => setShowNew(true)} className="text-sm px-4 py-2">
+            + New investigation
+          </Button>
         </div>
       </nav>
 
-      {/* STATS STRIP */}
-      <div className="flex border-b border-edge bg-surface">
-        <Stat n={cases.length} label="CASES" />
-        <Stat n={nRunning} label="RUNNING" color="tier-high" />
-        <Stat n={nComplete} label="COMPLETE" color="tier-complete" />
-      </div>
+      <main className="mx-auto max-w-6xl px-6 py-8">
+        {/* PAGE TITLE */}
+        <h1 className="text-2xl font-semibold text-slate-100">Investigations</h1>
+        <p className="mt-1 text-sm text-slate-500">Your active and completed profiling cases.</p>
 
-      {/* SEARCH */}
-      <div className="flex items-center border-b border-edge" style={{ padding: "10px 24px", gap: 12 }}>
-        <input
-          className="mono bg-lifted text-head flex-1"
-          placeholder="Filter by title…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ border: "1px solid #2A3148", borderRadius: 2, fontSize: 12, padding: "7px 10px", outline: "none" }}
-          onFocus={(e) => (e.currentTarget.style.borderColor = "#D4900A")}
-          onBlur={(e) => (e.currentTarget.style.borderColor = "#2A3148")}
-        />
-      </div>
+        {/* STATS STRIP — only when there is at least one case (§4.2) */}
+        {nTotal > 0 && (
+          <GlassPanel className="p-4 mt-6">
+            <div className="grid grid-cols-3 gap-4">
+              <StatCard n={nTotal} label="Total investigations" />
+              <StatCard n={nRunning} label="In progress" color="#00f2fe" pulse={nRunning > 0} />
+              <StatCard n={nComplete} label="Complete" color="#00ff88" />
+            </div>
+          </GlassPanel>
+        )}
 
-      {/* TABLE */}
-      <div>
-        {filtered.length === 0 ? (
-          <div className="text-center" style={{ padding: "80px 0" }}>
-            <div className="mono text-dim" style={{ fontSize: 11, letterSpacing: "0.12em" }}>NO CASES FOUND</div>
-            <div className="display text-dim" style={{ fontSize: 13, marginTop: 8 }}>Open a new case to begin an investigation.</div>
+        {/* FILTER BAR */}
+        <div className="mt-6">
+          <Input
+            placeholder="Filter by case name..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        {/* CASE GRID / EMPTY STATE */}
+        {nTotal === 0 ? (
+          <div className="mt-10">
+            <EmptyState
+              icon="🗂️"
+              title="No investigations yet"
+              description="Open a new case to begin."
+            >
+              <Button variant="primary" onClick={() => setShowNew(true)}>
+                + New investigation
+              </Button>
+            </EmptyState>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="mt-10">
+            <EmptyState
+              icon="🔍"
+              title="No matching cases"
+              description="No case name matches your filter."
+            />
           </div>
         ) : (
-          filtered.map((c, i) => {
-            const st = STATUS_TEXT[c.status] || { t: (c.status || "—").toUpperCase(), c: "tier-reject" };
-            const seeds = (c.seeds || []).filter((s) => s.type !== "face");
-            return (
-              <div
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map((c) => (
+              <GlassPanel
                 key={c.case_id}
                 onClick={() => router.push(`/cases/${c.case_id}`)}
-                className="case-row flex items-center border-b border-edge cursor-pointer"
-                style={{ padding: "12px 24px", gap: 16 }}
+                className="p-4 cursor-pointer hover:border-cyan-400"
               >
-                <span style={{ width: 3, height: 36, borderRadius: 1, flexShrink: 0, background: STATUS_BAR[c.status] || "#4A5568" }} />
-                <span className="mono text-amber" style={{ fontSize: 12, fontWeight: 500, minWidth: 52 }}>
-                  #{String(i + 1).padStart(3, "0")}
-                </span>
-                <div className="flex flex-col" style={{ flex: 1, minWidth: 0 }}>
-                  <span className="display text-head" style={{ fontSize: 14, fontWeight: 500 }}>{c.title}</span>
-                  <div className="flex flex-wrap" style={{ gap: 4, marginTop: 3 }}>
-                    {seeds.map((s, k) => (
-                      <span key={k} className="mono text-dim" style={{ fontSize: 9, border: "0.5px solid #2A3148", borderRadius: 2, padding: "1px 5px" }}>
-                        [{(s.type || "").toUpperCase()}]
-                      </span>
-                    ))}
-                    {c.country_filter && c.country_filter !== "ALL" && (
-                      <span className="mono text-amber" style={{ fontSize: 9, border: "0.5px solid #D4900A", borderRadius: 2, padding: "1px 5px" }}>
-                        [REGION: {c.country_filter}]
+                {/* Top row: title + status */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-100 truncate">{c.title}</div>
+                    {!!c.minor_involved && (
+                      <span className="mt-1 inline-block text-[10px] font-mono uppercase tracking-wide text-[#ff3366] border border-[rgba(255,51,102,0.35)] rounded px-1.5 py-0.5">
+                        Minor
                       </span>
                     )}
                   </div>
+                  <StatusPill status={c.status} className="shrink-0" />
                 </div>
-                {!!c.minor_involved && (
-                  <span className="mono text-crimson" style={{ fontSize: 8, border: "0.5px solid #C0392B", borderRadius: 2, padding: "1px 5px", letterSpacing: "0.08em" }}>
-                    MINOR
-                  </span>
-                )}
-                {c.status === "complete" && (
-                  <span className="mono text-dim" style={{ fontSize: 10 }}>{c.account_count ?? 0} accounts</span>
-                )}
-                <span className={`mono ${st.c}`} style={{ fontSize: 9, letterSpacing: "0.08em", textAlign: "right" }}>{st.t}</span>
-                <span className="mono text-dim" style={{ fontSize: 9, textAlign: "right", minWidth: 96 }}>{fmtTime(c.created_at)}</span>
-              </div>
-            );
-          })
+
+                {/* ID */}
+                <div className="mt-2 text-xs font-mono text-slate-500">
+                  ID: #{(c.case_id || "").slice(0, 8)}
+                </div>
+
+                {/* Discovered accounts */}
+                <div className="mt-1 text-sm text-slate-300">
+                  Discovered: {c.account_count ?? 0} accounts
+                </div>
+
+                {/* Bottom row: created_at + Open case */}
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="text-xs font-mono text-slate-500">{fmtTime(c.created_at)}</span>
+                  <Button variant="secondary" className="text-xs px-3 py-1.5">
+                    Open case →
+                  </Button>
+                </div>
+              </GlassPanel>
+            ))}
+          </div>
         )}
+      </main>
+
+      {showNew && (
+        <NewInvestigation
+          onClose={() => setShowNew(false)}
+          onCreated={(id) => router.push(`/cases/${id}`)}
+        />
+      )}
+    </div>
+  );
+}
+
+function StatCard({ n, label, color = "#f8fafc", pulse = false }) {
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="text-3xl font-semibold" style={{ color }}>{n}</span>
+        {pulse && <span className="pulse-dot" style={{ color }} />}
       </div>
-
-      {showNew && <NewInvestigation onClose={() => setShowNew(false)} onCreated={(id) => router.push(`/cases/${id}`)} />}
+      <div className="mt-1 text-[11px] font-mono uppercase tracking-wide text-slate-500">{label}</div>
     </div>
-  );
-}
-
-function Stat({ n, label, color = "text-head" }) {
-  return (
-    <div style={{ padding: "10px 20px", borderRight: "1px solid #2A3148" }}>
-      <div className={`mono ${color}`} style={{ fontSize: 20, fontWeight: 500 }}>{n}</div>
-      <div className="mono text-dim" style={{ fontSize: 8, letterSpacing: "0.1em", marginTop: 2 }}>{label}</div>
-    </div>
-  );
-}
-
-function AmberButton({ onClick, label }) {
-  return (
-    <button
-      onClick={onClick}
-      className="mono"
-      style={{ border: "1px solid #D4900A", color: "#D4900A", background: "transparent", fontSize: 10, letterSpacing: "0.08em", padding: "6px 14px", borderRadius: 2 }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(212,144,10,0.10)")}
-      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-    >
-      {label}
-    </button>
   );
 }
 
 function NewInvestigation({ onClose, onCreated }) {
   const [title, setTitle] = useState("");
+  const [region, setRegion] = useState("INDIA");
   const [seeds, setSeeds] = useState([]);
-  const [draftType, setDraftType] = useState("username");
+  const [draftType, setDraftType] = useState("name");
   const [draftValue, setDraftValue] = useState("");
   const [minor, setMinor] = useState(false);
-  const [countryFilter, setCountryFilter] = useState("INDIA");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -197,94 +233,129 @@ function NewInvestigation({ onClose, onCreated }) {
   async function begin() {
     setError(""); setBusy(true);
     try {
-      if (!seeds.length) throw new Error("Add at least one identifier");
-      const res = await api.createCase(title || "Untitled investigation", seeds, minor, countryFilter);
+      if (!seeds.length) throw new Error("Add at least one identifier to continue.");
+      const res = await api.createCase(title || "Untitled investigation", seeds, minor, region);
       onCreated(res.case_id);
     } catch (e) { setError(e.message); setBusy(false); }
   }
 
   const placeholder = SEED_TYPES.find((t) => t.value === draftType)?.placeholder || "";
+  const typeLabel = (v) => SEED_TYPES.find((t) => t.value === v)?.label || v;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(14,17,23,0.80)" }}>
-      <div className="bg-surface" style={{ border: "1px solid #2A3148", maxWidth: 480, width: "92%" }}>
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid #2A3148" }}>
-          <span className="mono text-head" style={{ fontSize: 10, letterSpacing: "0.12em" }}>INITIATE INVESTIGATION</span>
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <GlassPanel className="w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto relative">
+        {/* close */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-4 right-4 text-slate-400 hover:text-slate-200 text-lg leading-none"
+          aria-label="Close"
+        >
+          ✕
+        </button>
+
+        {/* header */}
+        <h2 className="text-lg font-semibold text-slate-100">New investigation</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Enter one or more identifiers to profile a subject.
+        </p>
+
+        {error && (
+          <div
+            className="mt-4 rounded-lg px-3 py-2 text-[13px]"
+            style={{ color: "#ff3366", background: "rgba(255,51,102,0.12)", border: "1px solid rgba(255,51,102,0.35)" }}
+          >
+            {error}
+          </div>
+        )}
+
+        {/* Field 1: Case title */}
+        <div className="mt-5">
+          <Label>Case title</Label>
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Sushil Kumar - phishing case #24"
+          />
         </div>
 
-        <div className="flex flex-col" style={{ padding: 20, gap: 16 }}>
-          {error && <div className="display text-crimson" style={{ fontSize: 11, background: "rgba(192,57,43,0.15)", borderLeft: "2px solid #C0392B", padding: "8px 12px" }}>{error}</div>}
+        {/* Field 2: Region */}
+        <div className="mt-4">
+          <Label>Region</Label>
+          <select value={region} onChange={(e) => setRegion(e.target.value)} className={SELECT_CLS}>
+            {REGIONS.map((r) => (
+              <option key={r.value} value={r.value} className="bg-slate-900">{r.label}</option>
+            ))}
+          </select>
+        </div>
 
-          <div>
-            <label className="mono text-dim block mb-1" style={{ fontSize: 9, letterSpacing: "0.1em" }}>OPERATION TITLE</label>
-            <input className="mono bg-lifted text-head w-full" value={title} onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Investment fraud — complaint #1423"
-              style={{ border: "1px solid #2A3148", borderRadius: 2, fontSize: 13, padding: "10px 12px", outline: "none" }}
-              onFocus={(e) => (e.currentTarget.style.borderColor = "#D4900A")} onBlur={(e) => (e.currentTarget.style.borderColor = "#2A3148")} />
-          </div>
-
-          <div>
-            <label className="mono text-dim block mb-1" style={{ fontSize: 9, letterSpacing: "0.1em" }}>COUNTRY / REGION FILTER</label>
+        {/* Field 3: Identifiers */}
+        <div className="mt-4">
+          <Label>Identifiers</Label>
+          <div className="flex gap-2">
             <select
-              value={countryFilter}
-              onChange={(e) => setCountryFilter(e.target.value)}
-              className="mono bg-lifted text-head w-full"
-              style={{ border: "1px solid #2A3148", borderRadius: 2, fontSize: 12, padding: "8px 10px", outline: "none", cursor: "pointer" }}
-              onFocus={(e) => (e.currentTarget.style.borderColor = "#D4900A")}
-              onBlur={(e) => (e.currentTarget.style.borderColor = "#2A3148")}
+              value={draftType}
+              onChange={(e) => setDraftType(e.target.value)}
+              className={SELECT_CLS + " basis-[30%] shrink-0 px-2"}
             >
-              <option value="INDIA">INDIA (Indian & Common Global Platforms Only)</option>
-              <option value="ALL">ALL (Global Web Search - No Country Restriction)</option>
+              {SEED_TYPES.map((t) => (
+                <option key={t.value} value={t.value} className="bg-slate-900">{t.label}</option>
+              ))}
             </select>
+            <Input
+              className="flex-1"
+              value={draftValue}
+              placeholder={placeholder}
+              onChange={(e) => setDraftValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSeed(); } }}
+            />
+            <Button variant="secondary" onClick={addSeed} className="text-xs px-3 py-2 shrink-0">
+              Add
+            </Button>
           </div>
 
-          <div>
-            <label className="mono text-dim block mb-2" style={{ fontSize: 9, letterSpacing: "0.1em" }}>SEEDS</label>
-            <div className="flex" style={{ gap: 6 }}>
-              <select value={draftType} onChange={(e) => setDraftType(e.target.value)} className="mono bg-lifted text-head"
-                style={{ border: "1px solid #2A3148", borderRadius: 2, fontSize: 11, padding: "8px 6px", outline: "none", width: 110 }}>
-                {SEED_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
-              <input className="mono bg-lifted text-head flex-1" value={draftValue} placeholder={placeholder}
-                onChange={(e) => setDraftValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSeed(); } }}
-                style={{ border: "1px solid #2A3148", borderRadius: 2, fontSize: 12, padding: "8px 10px", outline: "none" }}
-                onFocus={(e) => (e.currentTarget.style.borderColor = "#D4900A")} onBlur={(e) => (e.currentTarget.style.borderColor = "#2A3148")} />
-              <button onClick={addSeed} className="mono" style={{ border: "1px solid #2A3148", color: "#CBD5E0", background: "transparent", fontSize: 10, padding: "0 12px", borderRadius: 2 }}>ADD</button>
-            </div>
-            <div className="flex flex-col" style={{ gap: 6, marginTop: 10 }}>
+          {seeds.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
               {seeds.map((s, i) => (
-                <div key={i} className="flex items-center justify-between mono text-body"
-                  style={{ fontSize: 10, border: "0.5px solid #2A3148", borderRadius: 2, padding: "4px 8px" }}>
-                  <span><span className="text-dim">[{s.type.toUpperCase()}]</span> {s.value}</span>
-                  <button onClick={() => setSeeds(seeds.filter((_, j) => j !== i))} className="text-dim" style={{ fontSize: 12, lineHeight: 1 }}>×</button>
-                </div>
+                <PivotPill key={i}>
+                  <span className="text-slate-400">[{typeLabel(s.type)}]</span> {s.value}
+                  <button
+                    type="button"
+                    onClick={() => setSeeds(seeds.filter((_, j) => j !== i))}
+                    className="ml-1 text-slate-400 hover:text-slate-200"
+                    aria-label="Remove identifier"
+                  >
+                    ×
+                  </button>
+                </PivotPill>
               ))}
             </div>
-          </div>
-
-          <div>
-            <label className="flex items-center" style={{ gap: 8 }}>
-              <input type="checkbox" checked={minor} onChange={(e) => setMinor(e.target.checked)} style={{ accentColor: "#D4900A" }} />
-              <span className="display text-body" style={{ fontSize: 12 }}>Subject is a minor</span>
-            </label>
-            {minor && (
-              <div className="mono text-amber" style={{ fontSize: 9, marginTop: 6, marginLeft: 24 }}>
-                POCSO / JJ Act redaction will apply in generated report
-              </div>
-            )}
-          </div>
+          )}
         </div>
 
-        <div className="flex items-center justify-end" style={{ padding: "12px 20px", borderTop: "1px solid #2A3148", gap: 8 }}>
-          <button onClick={onClose} disabled={busy} className="mono text-dim disabled:opacity-40" style={{ fontSize: 10 }}>CANCEL</button>
-          <button onClick={begin} disabled={busy} className="mono disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ border: "1px solid #D4900A", color: "#D4900A", background: "transparent", fontSize: 10, padding: "8px 20px", borderRadius: 2 }}
-            onMouseEnter={(e) => { if (!busy) e.currentTarget.style.background = "rgba(212,144,10,0.10)"; }}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-            {busy ? "STARTING…" : "BEGIN INVESTIGATION"}
-          </button>
+        {/* Field 4: Minor checkbox + tooltip */}
+        <div className="mt-5">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={minor}
+              onChange={(e) => setMinor(e.target.checked)}
+              style={{ accentColor: "#00f2fe" }}
+            />
+            <span className="text-sm text-slate-200">Subject is a minor</span>
+            <Tooltip content="Enables POCSO Act protections. Identifying details will be redacted in the evidence report." />
+          </label>
         </div>
-      </div>
+
+        {/* Footer */}
+        <div className="mt-6 flex items-center justify-end gap-3">
+          <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={begin} disabled={busy}>
+            {busy ? "Starting..." : "Start investigation"}
+          </Button>
+        </div>
+      </GlassPanel>
     </div>
   );
 }

@@ -1,12 +1,23 @@
 /* app/login/page.js
-   CHANGED: full rewrite to the two-panel "Case Room" sign-in — no floating card; left
-   panel is brand + animated CSS correlation graph + capability lines + IT Act notice.
-   DECISION: capture the typed username into localStorage('vertex_user') here (NOT in
-   api.js) so the registry nav can show it — api.js behavior is untouched. */
+   REDESIGN §4.1 — two-column sign-in: brand block (left 60%) + glass sign-in
+   panel (right 40%). Plain-English copy ("Sign in" / "Create account", not
+   "AUTHENTICATE"). Toggle swaps only the submit fn + labels, no full re-render.
+   PRESERVED: api.login/register wiring, setToken(res.token), vertex_user, and
+   router.replace("/cases") are byte-for-byte the pre-redesign behavior (§1.1). */
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, setToken } from "@/lib/api";
+import GlassPanel from "@/components/ui/GlassPanel";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Label from "@/components/ui/Label";
+
+const BULLETS = [
+  "20-signal correlation engine",
+  "BSA §63 court-admissible evidence",
+  "SHA-256 tamper-evident audit chain",
+];
 
 export default function Login() {
   const router = useRouter();
@@ -16,21 +27,23 @@ export default function Login() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const isLogin = mode === "login";
+
   async function submit(e) {
     e.preventDefault();
     setError("");
     setBusy(true);
     try {
-      const fn = mode === "login" ? api.login : api.register;
+      const fn = isLogin ? api.login : api.register;
       const res = await fn(username, password);
       setToken(res.token);
       try { localStorage.setItem("vertex_user", username); } catch (_) {}
       router.replace("/cases");
     } catch (err) {
       setError(
-        mode === "login"
-          ? "Authentication failed — invalid credentials."
-          : err.message || "Registration failed."
+        isLogin
+          ? "Sign-in failed — please check your username and password."
+          : err.message || "Could not create the account."
       );
     } finally {
       setBusy(false);
@@ -38,117 +51,105 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen">
-      {/* LEFT PANEL */}
-      <div className="hidden md:flex w-1/2 bg-ink relative flex-col justify-center px-12">
+    <div className="min-h-screen lg:flex">
+      {/* LEFT — brand block (60%) */}
+      <div className="hidden lg:flex lg:w-3/5 relative flex-col justify-center px-14">
         <div>
-          <div className="display text-head" style={{ fontSize: 40, fontWeight: 600, lineHeight: 1 }}>
-            VERTEX<span className="text-amber">.</span>
-          </div>
-          <div className="mono text-dim" style={{ fontSize: 11, letterSpacing: "0.1em", marginTop: 6 }}>
-            SOCMINT INTELLIGENCE PLATFORM
+          <h1
+            className="font-display font-bold text-slate-100 leading-none"
+            style={{ fontSize: 48 }}
+          >
+            VERTEX<span className="text-cyan-400">.</span>
+          </h1>
+          <div className="mt-3 font-mono text-[11px] uppercase tracking-[0.14em] text-slate-500">
+            SOCMINT Intelligence Platform · CIDECODE 2026
           </div>
 
-          {/* animated correlation graph — pure CSS */}
-          <svg width="260" height="170" viewBox="0 0 260 170" className="mt-10" aria-hidden>
-            <line className="lg-edge" x1="34" y1="92" x2="96" y2="36" style={{ animationDelay: "0s" }} />
-            <line className="lg-edge" x1="96" y1="36" x2="186" y2="58" style={{ animationDelay: "0.6s" }} />
-            <line className="lg-edge" x1="96" y1="36" x2="124" y2="118" style={{ animationDelay: "1.2s" }} />
-            <line className="lg-edge" x1="124" y1="118" x2="214" y2="128" style={{ animationDelay: "1.8s" }} />
-            <circle className="lg-node" cx="34" cy="92" r="6" style={{ animationDelay: "0s" }} />
-            <circle className="lg-node" cx="96" cy="36" r="9" style={{ animationDelay: "0.4s" }} />
-            <circle className="lg-node" cx="186" cy="58" r="7" style={{ animationDelay: "0.8s" }} />
-            <circle className="lg-node" cx="124" cy="118" r="8" style={{ animationDelay: "1.2s" }} />
-            <circle className="lg-node" cx="214" cy="128" r="6" style={{ animationDelay: "1.6s" }} />
-          </svg>
-
-          <div className="mt-8 space-y-1">
-            {[
-              "20-signal correlation engine",
-              "BSA-63 court-admissible PDF output",
-              "SHA-256 tamper-evident audit chain",
-            ].map((t) => (
-              <div key={t} className="mono text-amber" style={{ fontSize: 10 }}>
-                ↳ {t}
+          <div className="mt-10 space-y-1.5">
+            {BULLETS.map((t) => (
+              <div key={t} className="font-mono text-[12px] text-slate-400">
+                <span className="text-cyan-400">↳</span> {t}
               </div>
             ))}
           </div>
         </div>
 
-        <div className="absolute bottom-8 left-12 right-12 mono text-dim" style={{ fontSize: 9, lineHeight: 1.5 }}>
-          All sessions are logged. Unauthorised access is an offence under Section 43/66, IT Act 2000.
+        <div className="absolute bottom-10 left-14 right-14 text-[11px] leading-relaxed text-slate-500">
+          All sessions are logged. Unauthorised access is an offence under
+          Section 43/66, IT Act 2000.
         </div>
       </div>
 
-      {/* RIGHT PANEL */}
-      <div className="w-full md:w-1/2 bg-surface md:border-l border-edge flex items-center justify-center px-6">
-        <form onSubmit={submit} className="w-full" style={{ maxWidth: 360, padding: 48 }}>
+      {/* RIGHT — sign-in panel (40%) */}
+      <div className="w-full lg:w-2/5 flex items-center justify-center px-6 py-12">
+        <GlassPanel className="w-full max-w-md p-8">
           {/* mobile brand */}
-          <div className="md:hidden display text-head mb-6" style={{ fontSize: 28, fontWeight: 600 }}>
-            VERTEX<span className="text-amber">.</span>
+          <div className="lg:hidden font-display font-bold text-slate-100 mb-6" style={{ fontSize: 30 }}>
+            VERTEX<span className="text-cyan-400">.</span>
           </div>
 
-          <div className="display text-dim mb-6" style={{ fontSize: 14 }}>
-            {mode === "login" ? "Sign in to continue" : "Create an investigator account"}
+          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-slate-500 mb-6">
+            {isLogin ? "Sign in to continue" : "Create an account"}
           </div>
 
           {error && (
             <div
-              className="display text-crimson mb-4"
-              style={{ fontSize: 11, background: "rgba(192,57,43,0.15)", borderLeft: "2px solid #C0392B", padding: "8px 12px" }}
+              className="mb-5 rounded-lg px-3 py-2 text-[13px]"
+              style={{
+                color: "#ff3366",
+                background: "rgba(255,51,102,0.12)",
+                border: "1px solid rgba(255,51,102,0.35)",
+              }}
             >
               {error}
             </div>
           )}
 
-          <Field label="USERNAME" value={username} onChange={setUsername} autoFocus />
-          <Field label="PASSWORD" value={password} onChange={setPassword} type="password" />
+          <form onSubmit={submit}>
+            <div className="mb-4">
+              <Label htmlFor="username">Username</Label>
+              <Input
+                id="username"
+                value={username}
+                autoFocus
+                autoComplete="username"
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </div>
 
-          <button
-            type="submit"
-            disabled={busy || !username || !password}
-            className="mono w-full disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{
-              border: "1.5px solid #D4900A", color: "#D4900A", background: "transparent",
-              fontSize: 12, letterSpacing: "0.08em", padding: 11, borderRadius: 2, marginTop: 8,
-            }}
-            onMouseEnter={(e) => { if (!e.currentTarget.disabled) { e.currentTarget.style.background = "rgba(212,144,10,0.10)"; e.currentTarget.style.color = "#E8A820"; } }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#D4900A"; }}
-          >
-            {busy ? "WORKING…" : "AUTHENTICATE"}
-          </button>
+            <div className="mb-6">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                autoComplete={isLogin ? "current-password" : "new-password"}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+
+            <Button
+              type="submit"
+              variant="primary"
+              className="w-full"
+              disabled={busy || !username || !password}
+            >
+              {busy
+                ? isLogin ? "Signing in…" : "Creating account…"
+                : isLogin ? "Sign in" : "Create account"}
+            </Button>
+          </form>
 
           <button
             type="button"
-            onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }}
-            className="mono text-dim block w-full text-center mt-4"
-            style={{ fontSize: 10 }}
+            onClick={() => { setMode(isLogin ? "register" : "login"); setError(""); }}
+            className="block w-full text-center mt-5 text-[12px] text-slate-400"
           >
-            {mode === "login" ? "No account? " : "Have an account? "}
-            <span className="text-amber">{mode === "login" ? "Register" : "Sign in"}</span>
+            {isLogin ? "No account? " : "Have an account? "}
+            <span className="text-cyan-400">{isLogin ? "Register" : "Sign in"}</span>
           </button>
-        </form>
+        </GlassPanel>
       </div>
-    </div>
-  );
-}
-
-function Field({ label, value, onChange, type = "text", autoFocus = false }) {
-  return (
-    <div className="mb-4">
-      <label className="mono text-dim block mb-1" style={{ fontSize: 9, letterSpacing: "0.1em" }}>
-        {label}
-      </label>
-      <input
-        type={type}
-        value={value}
-        autoFocus={autoFocus}
-        onChange={(e) => onChange(e.target.value)}
-        className="mono w-full text-head bg-lifted"
-        style={{ border: "1px solid #2A3148", borderRadius: 2, fontSize: 13, padding: "10px 12px", outline: "none" }}
-        onFocus={(e) => (e.currentTarget.style.borderColor = "#D4900A")}
-        onBlur={(e) => (e.currentTarget.style.borderColor = "#2A3148")}
-      />
     </div>
   );
 }

@@ -1,36 +1,36 @@
 /* components/Graph.js
-   CHANGED: sigma config only — Case Room tier colors, size-by-confidence for HIGH nodes,
-   tier-weighted edges, mono labels, and enterNode/leaveNode hover events.
-   DECISION: hover/select callbacks held in refs so the graph rebuilds ONLY on the
-   node/cluster signature (not every poll) — no re-layout jitter. */
+   REDESIGN §4.4.4.2 / §1.7 — semantic node colors (HIGH=emerald, MEDIUM=amber,
+   LOW/REJECT=crimson), translucent-cyan edges, selected node = cyan with emerald
+   edges. Selection recolors via sigma node/edge reducers + refresh() so it never
+   re-runs the force layout (no jitter). Rebuild still keyed on node/cluster signature. */
 "use client";
 import { useEffect, useMemo, useRef } from "react";
 import Graph from "graphology";
 import Sigma from "sigma";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 
-// Brightened for contrast against the near-black (#0E1117) canvas: the old LOW
-// (#8A4A2E) and UNLINKED (#4A5568) were nearly invisible, and most nodes are those.
-const NODE_COLOR = { HIGH: "#D4900A", MEDIUM: "#5B9BD5", LOW: "#E08A4A", REJECT: "#8A97AD" };
-const EDGE_COLOR = { HIGH: "#D4900A", MEDIUM: "#5B9BD5", LOW: "#E08A4A", REJECT: "#3A4358" };
+// §1.7 semantic mapping.
+const NODE_COLOR = { HIGH: "#00ff88", MEDIUM: "#ffb703", LOW: "#ff3366", REJECT: "#ff3366" };
+const EDGE_DEFAULT = "rgba(0, 242, 254, 0.4)"; // translucent cyan
+const EDGE_SELECTED = "#00ff88";               // emerald highlight on selected node's edges
+const NODE_SELECTED = "#00f2fe";               // cyan
 
 // entities: [{entity_id, platform, value}], clusters: [{tier, entity_ids, confidence_score}]
-export default function NetworkGraph({ entities, clusters, onSelect, onHover }) {
+export default function NetworkGraph({ entities, clusters, onSelect, onHover, selectedId }) {
   const containerRef = useRef(null);
   const sigmaRef = useRef(null);
   const onSelectRef = useRef(onSelect);
   const onHoverRef = useRef(onHover);
+  const selectedRef = useRef(selectedId);
   onSelectRef.current = onSelect;
   onHoverRef.current = onHover;
+  selectedRef.current = selectedId;
 
   // rebuild only when nodes/clusters actually change, not on every poll
   const signature = useMemo(
     () =>
       (entities || []).map((e) => e.entity_id).join("|") +
       "::" +
-      // include confidence_score: node size / edge weight depend on it, so it
-      // must be part of the signature or the graph keeps stale sizes as scores
-      // firm up during polling.
       (clusters || [])
         .map((c) => `${c.tier}:${Math.round(c.confidence_score || 0)}:${(c.entity_ids || []).join(",")}`)
         .join("|"),
@@ -57,7 +57,7 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover }) 
         g.addNode(e.entity_id, {
           label: (e.platform || "").toUpperCase(),
           size,
-          color: NODE_COLOR[tier] || "#8A97AD",
+          color: NODE_COLOR[tier] || "#ff3366",
           x: Math.cos((i / Math.max(entities.length, 1)) * 2 * Math.PI),
           y: Math.sin((i / Math.max(entities.length, 1)) * 2 * Math.PI),
         });
@@ -72,7 +72,7 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover }) 
         for (let b = a + 1; b < ids.length; b++) {
           const key = `${ids[a]}--${ids[b]}`;
           if (!g.hasEdge(key)) {
-            g.addEdgeWithKey(key, ids[a], ids[b], { size: w, color: EDGE_COLOR[c.tier] || "#2A3148" });
+            g.addEdgeWithKey(key, ids[a], ids[b], { size: w, color: EDGE_DEFAULT });
           }
         }
       }
@@ -87,7 +87,20 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover }) 
       labelColor: { color: "#CBD5E0" },
       labelSize: 11,
       labelFont: "var(--font-mono), 'JetBrains Mono', monospace",
-      defaultEdgeColor: "#2A3148",
+      defaultEdgeColor: EDGE_DEFAULT,
+      // §1.7 — selected node cyan; its edges emerald. Reducers avoid a rebuild/relayout.
+      nodeReducer: (node, data) => {
+        if (selectedRef.current && node === selectedRef.current) {
+          return { ...data, color: NODE_SELECTED, size: (data.size || 6) + 2, zIndex: 2 };
+        }
+        return data;
+      },
+      edgeReducer: (edge, data) => {
+        if (selectedRef.current && g.hasExtremity(edge, selectedRef.current)) {
+          return { ...data, color: EDGE_SELECTED, size: (data.size || 1) + 0.5, zIndex: 1 };
+        }
+        return data;
+      },
     });
     renderer.on("clickNode", ({ node }) => onSelectRef.current && onSelectRef.current(node));
     renderer.on("enterNode", ({ node }) => onHoverRef.current && onHoverRef.current(node));
@@ -97,5 +110,10 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
 
-  return <div ref={containerRef} className="w-full h-full" />;
+  // Recolor on selection change without rebuilding/relaying out the graph.
+  useEffect(() => {
+    if (sigmaRef.current) sigmaRef.current.refresh();
+  }, [selectedId]);
+
+  return <div ref={containerRef} id="network-graph" className="w-full h-full" />;
 }
