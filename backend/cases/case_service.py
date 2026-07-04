@@ -124,6 +124,11 @@ def get_results(case_id: str, user_id: str) -> dict | None:
             "reason": raw_signals.get("_relevance_reason"),
             "rank": raw_signals.get("_relevance_rank"),
         }
+        # AI-adjudicated (LLM-confirmed) link — surfaced distinctly so the UI/report can
+        # label it "AI-assessed", not a forensically-anchored hard-evidence match.
+        c["ai_confirmed"] = bool(raw_signals.get("_ai_confirmed"))
+        c["ai_confidence"] = raw_signals.get("_ai_confidence") or 0
+        c["ai_reason"] = raw_signals.get("_ai_reason") or ""
     clusters.sort(
         key=lambda c: (
             (c.get("relevance", {}).get("score") or 0) >= 100,

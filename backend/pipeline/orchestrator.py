@@ -880,6 +880,10 @@ async def run_investigation(case_id: str) -> dict:
                 signals_data["_relevance_reason"] = cl.relevance_reason
             if hasattr(cl, 'relevance_rank') and cl.relevance_rank:
                 signals_data["_relevance_rank"] = cl.relevance_rank
+            if getattr(cl, 'ai_confirmed', False):
+                signals_data["_ai_confirmed"] = True
+                signals_data["_ai_confidence"] = cl.ai_confidence
+                signals_data["_ai_reason"] = cl.ai_reason
             conn.execute(
                 """INSERT INTO clusters (cluster_id, case_id, entity_ids_json, confidence_score,
                    tier, explanation, signals_json, created_at) VALUES (?,?,?,?,?,?,?,?)""",

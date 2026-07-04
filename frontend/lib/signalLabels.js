@@ -29,6 +29,10 @@ export const SIGNAL_LABELS = {
   bio_keyword_overlap:   { label: "Shared bio keywords",        icon: "🏷️", tier: "context" },
   mutual_connections:    { label: "Shared connections",         icon: "👥", tier: "context" },
   reciprocal_mention:    { label: "Mention each other",         icon: "↔️", tier: "context" },
+
+  // AI adjudication — the LLM examiner judged these the same person holistically.
+  llm_same_person:       { label: "AI-assessed same person",    icon: "🤖", tier: "identity" },
+  semantic_rerank_match: { label: "Semantic profile match",     icon: "🧠", tier: "context" },
 };
 
 export function labelFor(signalName) {

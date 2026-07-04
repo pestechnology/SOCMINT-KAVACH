@@ -679,8 +679,27 @@ function AnalysisPanel({ cluster, letter, members, entity }) {
           <span className="text-sm font-semibold text-slate-100">
             {cluster.member_indices?.length > 1 || (cluster.entity_ids || []).length > 1 || letter !== "•" ? `Identity group ${letter}` : "Account analysis"}
           </span>
-          <ConfidenceBadge tier={cluster.tier} />
+          <span className="flex items-center gap-1.5 shrink-0">
+            {cluster.ai_confirmed && (
+              <span className="text-[10px] font-mono uppercase tracking-wide text-violet-300 border border-violet-400/40 bg-violet-400/10 rounded px-1.5 py-0.5">
+                🤖 AI-assessed
+              </span>
+            )}
+            <ConfidenceBadge tier={cluster.tier} />
+          </span>
         </div>
+
+        {cluster.ai_confirmed && (
+          <div className="mt-3 rounded-lg border border-violet-400/30 bg-violet-400/[0.06] p-3">
+            <div className="text-[10px] font-mono uppercase tracking-wide text-violet-300 mb-1">
+              AI examiner verdict · {cluster.ai_confidence}% confidence
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">{cluster.ai_reason}</p>
+            <p className="mt-1.5 text-[10px] text-slate-500">
+              Assessed from profile context (name, handle, bio, location, interests) — verify before use in a filing.
+            </p>
+          </div>
+        )}
 
         {cluster.explanation && (
           <p className="mt-3 text-sm text-slate-200 leading-relaxed">{cluster.explanation}</p>

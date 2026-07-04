@@ -199,52 +199,54 @@ def rerank_and_promote(
     for r in rerank_results:
         relevance_map[r["index"]] = r
 
-    # Step 4: Targeted similarity checks for high-relevance singletons
-    PROMOTION_THRESHOLD = 65
+    # Step 4: LLM ADJUDICATION of high-relevance singletons against the target.
+    # Policy (user-chosen): a confident adjudication (confidence >= CONFIRM) can CONFIRM a
+    # same-person link on its own — the resulting cluster is tagged ai_confirmed so the UI/
+    # report present it distinctly from a hard-evidence match. A softer positive
+    # (PROMOTE..CONFIRM) still adds the member for recall but does NOT elevate the tier.
+    PROMOTION_THRESHOLD = 60     # relevance floor to even consider a candidate
+    PROMOTE = 65                 # adjudicator P(same) to link as a recall lead
+    CONFIRM = 80                 # adjudicator P(same) to CONFIRM (ai_confirmed) a link
     promoted: list[int] = []
     promoted_reasons: dict[int, str] = {}
+    ai_confirmed_idx: dict[int, dict] = {}   # singleton idx -> {"confidence", "reason"}
 
     high_relevance = [r for r in rerank_results if r["relevance"] >= PROMOTION_THRESHOLD]
-    # Cap targeted per-candidate confirmation calls. These run sequentially against Groq;
-    # 6 is enough to promote the genuinely strong leads (already relevance>=65 from the
-    # batch rerank) while keeping the burst under Groq's per-minute limit so the run
-    # doesn't spend its time backing off 429s.
+    # Bounded to keep the sequential Groq burst under the per-minute limit.
     high_relevance = high_relevance[:6]
 
-    if high_relevance and confirmed_clusters:
-        # Find the strongest confirmed cluster
-        best_cluster = max(confirmed_clusters, key=lambda c: c.confidence_score)
-        # Pick the richest member from the best cluster for comparison
-        best_member_idx = max(
-            best_cluster.member_indices,
-            key=lambda i: len(str(profiles[i].metadata or {}))
-        )
-        best_member = profiles[best_member_idx]
+    # Anchor description handed to the adjudicator (from the confirmed persona / seed).
+    anchor = {
+        "names": target_persona.get("names", []),
+        "usernames": target_persona.get("usernames", []) or ([seed_value] if seed_value else []),
+        "locations": target_persona.get("locations", []),
+        "employers": target_persona.get("employers", []),
+        "interests": target_persona.get("keywords", []),
+        "bios": target_persona.get("bio_samples", []),
+        "platforms": target_persona.get("platforms", []),
+    }
 
+    if high_relevance:
+        from backend.analysis.adjudicator import adjudicate
         for r in high_relevance:
             singleton_idx = r["index"]
             singleton = profiles[singleton_idx]
-
-            context = (
-                f"Investigating {seed_type}: {seed_value}. "
-                f"Target persona keywords: {', '.join(target_persona.get('keywords', [])[:10])}. "
-                f"Reranker assessed relevance={r['relevance']}: {r['reason']}"
-            )
-
-            result = llm.semantic_similarity_check(
-                _profile_to_dict(singleton),
-                _profile_to_dict(best_member),
-                context=context,
-            )
-
-            if result["should_link"] and result["score"] >= 65:
+            verdict = adjudicate(anchor, _profile_to_dict(singleton), llm=llm)
+            conf = verdict["confidence"]
+            if verdict["same_person"] and conf >= CONFIRM:
                 promoted.append(singleton_idx)
-                promoted_reasons[singleton_idx] = result["reason"]
-                print(f"[reranker] PROMOTED {singleton.platform}/{singleton.value} "
-                      f"(score={result['score']}, reason={result['reason'][:80]})")
+                promoted_reasons[singleton_idx] = verdict["reason"]
+                ai_confirmed_idx[singleton_idx] = {"confidence": conf, "reason": verdict["reason"]}
+                print(f"[adjudicator] CONFIRMED {singleton.platform}/{singleton.value} "
+                      f"(P(same)={conf}) — {verdict['reason'][:80]}")
+            elif verdict["same_person"] and conf >= PROMOTE:
+                promoted.append(singleton_idx)
+                promoted_reasons[singleton_idx] = verdict["reason"]
+                print(f"[adjudicator] promoted (lead) {singleton.platform}/{singleton.value} "
+                      f"(P(same)={conf})")
             else:
-                print(f"[reranker] not promoted {singleton.platform}/{singleton.value} "
-                      f"(score={result['score']})")
+                print(f"[adjudicator] not linked {singleton.platform}/{singleton.value} "
+                      f"(P(same)={conf})")
 
     # Step 5: Rebuild clusters with promotions
     new_clusters: list[Cluster] = []
@@ -256,43 +258,73 @@ def rerank_and_promote(
             continue
         new_clusters.append(cl)
 
-    # Merge promoted singletons into confirmed clusters
-    if promoted and confirmed_clusters:
-        best_cluster = max(confirmed_clusters, key=lambda c: c.confidence_score)
+    # Choose the cluster the promoted candidates attach to: the strongest confirmed
+    # cluster if one exists, otherwise the exact-match anchor singleton (the common case —
+    # the target's own account is often unlinked). If neither exists, the promoted
+    # candidates themselves form the target cluster (they all matched the seed persona).
+    def _base_cluster() -> Cluster | None:
+        if confirmed_clusters:
+            return max(confirmed_clusters, key=lambda c: c.confidence_score)
+        exact = [c for c in new_clusters if len(c.member_indices) == 1
+                 and profiles[c.member_indices[0]].metadata.get("exact_seed_match")]
+        return exact[0] if exact else None
 
-        for i, nc in enumerate(new_clusters):
-            if nc.cluster_id == best_cluster.cluster_id:
-                merged_members = list(nc.member_indices) + promoted
-                merged_signals = dict(nc.signals)
-                # Record the semantic signal for transparency in the explanation, but it is
-                # NOT summed into the score below.
-                merged_signals["semantic_rerank_match"] = 30
+    if promoted:
+        base = _base_cluster()
+        any_ai = any(idx in ai_confirmed_idx for idx in promoted)
+        best_ai = max((ai_confirmed_idx[i]["confidence"] for i in promoted if i in ai_confirmed_idx), default=0)
+        ai_reason = "  ".join(ai_confirmed_idx[i]["reason"] for i in promoted if i in ai_confirmed_idx)[:600]
 
-                # PRECISION GUARD: an LLM promotion ADDS MEMBERS for recall but must NOT
-                # upgrade the cluster's tier/confidence. Those stay pinned to what the
-                # deterministic hard signals already earned. Summing semantic_rerank_match
-                # into the score (the old behaviour) let two LLM calls push a MEDIUM cluster
-                # to HIGH with no hard anchor — making the LLM the sole justification for a
-                # "confirmed" link, which is exactly the failure mode this tool must avoid.
-                confidence = nc.confidence_score
-                tier = nc.tier
+        if base is not None:
+            # remove the base (if it was a promoted exact singleton, it's already filtered) and
+            # any promoted singletons, then rebuild the merged cluster.
+            new_clusters = [c for c in new_clusters if c.cluster_id != base.cluster_id]
+            merged_members = sorted(set(base.member_indices) | set(promoted))
+            merged_signals = dict(base.signals)
+            merged_signals["semantic_rerank_match"] = 30
 
-                promoted_names = [
-                    f"{profiles[p].platform}/{profiles[p].value}" for p in promoted
-                ]
-                new_clusters[i] = Cluster(
-                    cluster_id=nc.cluster_id,
-                    member_indices=sorted(merged_members),
-                    confidence_score=round(confidence, 1),
-                    tier=tier,
-                    signals=merged_signals,
-                    explanation=(
-                        nc.explanation +
-                        f" [{len(promoted)} profile(s) promoted via semantic reranking: "
-                        f"{', '.join(promoted_names)}]"
-                    ),
-                )
-                break
+            if any_ai:
+                # AI-CONFIRMED link (user policy: the adjudicator may confirm on its own).
+                # Elevate to a HIGH match but TAG it ai_confirmed so the UI/report show it as
+                # "AI-assessed", distinct from a forensically-anchored (hard-signal) match.
+                merged_signals["llm_same_person"] = best_ai
+                confidence = max(base.confidence_score, float(best_ai))
+                tier = "HIGH"
+            else:
+                # Soft promotion: recall only, tier/confidence stay pinned to hard evidence.
+                confidence = base.confidence_score
+                tier = base.tier
+
+            promoted_names = [f"{profiles[p].platform}/{profiles[p].value}" for p in promoted]
+            note = (" [AI-assessed same person: " + ai_reason + "]") if any_ai else (
+                f" [{len(promoted)} profile(s) promoted via semantic reranking: {', '.join(promoted_names)}]")
+            new_clusters.append(Cluster(
+                cluster_id=base.cluster_id,
+                member_indices=merged_members,
+                confidence_score=round(confidence, 1),
+                tier=tier,
+                signals=merged_signals,
+                explanation=(base.explanation + note),
+                ai_confirmed=any_ai,
+                ai_confidence=best_ai if any_ai else 0,
+                ai_reason=ai_reason if any_ai else "",
+            ))
+        elif any_ai and len(promoted) >= 2:
+            # No anchor cluster/singleton, but the adjudicator confirmed several accounts as
+            # the same target person — form a new AI-assessed cluster from them.
+            new_clusters = [c for c in new_clusters
+                            if not (len(c.member_indices) == 1 and c.member_indices[0] in promoted_set)]
+            new_clusters.append(Cluster(
+                cluster_id=uuid.uuid4().hex,
+                member_indices=sorted(promoted),
+                confidence_score=float(best_ai),
+                tier="HIGH",
+                signals={"llm_same_person": best_ai},
+                explanation="[AI-assessed same person: " + ai_reason + "]",
+                ai_confirmed=True,
+                ai_confidence=best_ai,
+                ai_reason=ai_reason,
+            ))
 
     # Step 6: Assign relevance_rank to all clusters
     # Sort: literal exact query matches first (#1), then partial seed matches, then confirmed multi-member (by confidence), then singletons by LLM relevance

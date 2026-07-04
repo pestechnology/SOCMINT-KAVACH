@@ -42,6 +42,9 @@ class Cluster:
     relevance_rank: int = 0        # assigned by reranker (1 = most relevant)
     relevance_score: int = 0       # LLM relevance score for singletons (0-100)
     relevance_reason: str = ""     # LLM explanation for relevance
+    ai_confirmed: bool = False     # adjudicator judged this a same-person link (labeled distinctly)
+    ai_confidence: int = 0         # adjudicator confidence 0-100
+    ai_reason: str = ""            # adjudicator's plain-English justification
 
 
 def _tier(score: float) -> str:
