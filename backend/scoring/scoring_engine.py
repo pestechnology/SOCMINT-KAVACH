@@ -45,6 +45,13 @@ class Cluster:
     ai_confirmed: bool = False     # adjudicator judged this a same-person link (labeled distinctly)
     ai_confidence: int = 0         # adjudicator confidence 0-100
     ai_reason: str = ""            # adjudicator's plain-English justification
+    # User-facing MATCH CONFIDENCE (LOW/MEDIUM/HIGH) — a DIFFERENT axis from `tier` above.
+    # `tier` is the forensic linkage decision ("same person?"); match_* answers "is this a
+    # correct match for what the investigator searched?". Stamped by scoring/confidence.py
+    # as the final step; exact username/seed match is always HIGH. See that module.
+    match_score: int = 0           # 0-100 blended (algo + LLM), user-facing
+    match_tier: str = "LOW"        # HIGH / MEDIUM / LOW (never REJECT — 3 tiers only)
+    match_reason: str = ""         # plain-English basis for the match tier
 
 
 def _tier(score: float) -> str:

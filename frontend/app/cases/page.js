@@ -31,8 +31,8 @@ const SEED_TYPES = [
 
 // Region maps onto the backend's country_filter (preserved from pre-redesign).
 const REGIONS = [
-  { value: "INDIA", label: "India (Indian + Global platforms)" },
-  { value: "ALL", label: "Global" },
+  { value: "INDIA", label: "India (Indian websites only)" },
+  { value: "ALL", label: "Global (all platforms)" },
 ];
 
 const SELECT_CLS =
@@ -318,26 +318,7 @@ function NewInvestigation({ onClose, onCreated }) {
           Enter identifiers to profile a subject, or let an AI agent browse a web tool for you.
         </p>
 
-        {/* MODE TOGGLE */}
-        <div className="mt-4 flex gap-2 rounded-lg bg-slate-900/60 border border-slate-800 p-1">
-          {[
-            { id: "standard", label: "🛰️ Standard scan" },
-            { id: "agentic", label: "🤖 Agentic web" },
-          ].map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              disabled={!!agTask}
-              onClick={() => { setMode(m.id); setError(""); }}
-              className={`flex-1 rounded-md px-3 py-1.5 text-xs font-mono transition-colors ${
-                mode === m.id ? "bg-cyan-500/15 text-cyan-300 border border-cyan-400/40"
-                              : "text-slate-400 hover:text-slate-200 border border-transparent"
-              } ${agTask ? "opacity-50 cursor-not-allowed" : ""}`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
+        {/* Agentic-web mode disabled for now (browser-agent path unreliable). Standard only. */}
 
         {error && (
           <div

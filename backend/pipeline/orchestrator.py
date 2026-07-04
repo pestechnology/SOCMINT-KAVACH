@@ -59,6 +59,7 @@ from backend.ledger.audit_ledger import log_action, save_artifact
 from backend.llm.llm_client import LLMClient
 from backend.pipeline.lead_reverification import reverify_leads
 from backend.scoring.scoring_engine import score
+from backend.scoring.confidence import stamp_clusters as stamp_match_confidence
 from backend.analysis.reranker import rerank_and_promote
 
 # Seed type -> scraper instances (Section 11.1). SerperScraper templates vary per seed.
@@ -776,6 +777,13 @@ async def run_investigation(case_id: str) -> dict:
                   suffix=".json")
 
     # 6: correlate -> score
+    # multilingual normalization: attach a cross-script phonetic key before correlation so
+    # the same person in different scripts/romanizations isn't split (deterministic, fail-safe).
+    try:
+        from backend.normalization.normalize import annotate_profiles
+        annotate_profiles(profiles)
+    except Exception:
+        pass
     pairs = correlate(profiles)
     clusters = score(profiles, pairs, seeds=seeds)
     log_action(case_id, "scoring_complete", {"pairs": len(pairs)},
@@ -851,6 +859,12 @@ async def run_investigation(case_id: str) -> dict:
         print(f"[orchestrator] reranking failed (non-fatal): {e}")
         log_action(case_id, "rerank_error", None, {"error": str(e)}, "system")
 
+    # 6d: user-facing MATCH CONFIDENCE (LOW/MEDIUM/HIGH). Distinct from the forensic
+    # linkage tier — exact seed/username matches are HIGH; everything else is graded by
+    # deterministic correlation strength + the LLM signals just computed above. Final step
+    # so relevance_score / ai_confidence are already populated. See scoring/confidence.py.
+    stamp_match_confidence(clusters, profiles, seeds)
+
     # LLM explanations for every multi-member cluster, fanned out concurrently. This used
     # to be a plain synchronous call inside the for-loop below — with NVIDIA unreachable
     # on some networks and each call blocking the event loop for its full timeout, a
@@ -884,16 +898,22 @@ async def run_investigation(case_id: str) -> dict:
                 signals_data["_ai_confirmed"] = True
                 signals_data["_ai_confidence"] = cl.ai_confidence
                 signals_data["_ai_reason"] = cl.ai_reason
+            # user-facing match confidence (LOW/MEDIUM/HIGH) — rides along in signals_json
+            signals_data["_match_score"] = getattr(cl, "match_score", 0)
+            signals_data["_match_tier"] = getattr(cl, "match_tier", "LOW")
+            signals_data["_match_reason"] = getattr(cl, "match_reason", "")
             conn.execute(
                 """INSERT INTO clusters (cluster_id, case_id, entity_ids_json, confidence_score,
                    tier, explanation, signals_json, created_at) VALUES (?,?,?,?,?,?,?,?)""",
                 (cl.cluster_id, case_id, json.dumps(entity_ids), cl.confidence_score,
                  cl.tier, explanation, json.dumps(signals_data), _now()),
             )
-            # write each member's confidence onto its entity row
+            # Write each member's confidence onto its entity row. This is the MATCH score
+            # (what the account card shows), not the linkage confidence_score — a lone exact
+            # username match is a HIGH-confidence result even with no cross-account link.
             for eid in entity_ids:
                 conn.execute("UPDATE entities SET confidence=? WHERE entity_id=?",
-                             (cl.confidence_score, eid))
+                             (getattr(cl, "match_score", 0), eid))
         conn.commit()
     finally:
         conn.close()
@@ -969,14 +989,23 @@ def ingest_external_profiles(case_id: str, new_profiles: list[RawProfile]) -> di
         conn.commit()
 
         # re-correlate + re-cluster over the combined set, then replace this case's clusters
+        try:
+            from backend.normalization.normalize import annotate_profiles
+            annotate_profiles(profiles)
+        except Exception:
+            pass
         pairs = correlate(profiles)
         clusters = score(profiles, pairs, seeds=seeds)
+        stamp_match_confidence(clusters, profiles, seeds)
         conn.execute("DELETE FROM clusters WHERE case_id = ?", (case_id,))
         for cl in clusters:
             entity_ids = [eids[i] for i in cl.member_indices if 0 <= i < len(eids)]
             signals_data = dict(cl.signals)
             if getattr(cl, "relevance_score", None):
                 signals_data["_relevance_score"] = cl.relevance_score
+            signals_data["_match_score"] = getattr(cl, "match_score", 0)
+            signals_data["_match_tier"] = getattr(cl, "match_tier", "LOW")
+            signals_data["_match_reason"] = getattr(cl, "match_reason", "")
             conn.execute(
                 """INSERT INTO clusters (cluster_id, case_id, entity_ids_json, confidence_score,
                    tier, explanation, signals_json, created_at) VALUES (?,?,?,?,?,?,?,?)""",
@@ -985,7 +1014,7 @@ def ingest_external_profiles(case_id: str, new_profiles: list[RawProfile]) -> di
             )
             for eid in entity_ids:
                 conn.execute("UPDATE entities SET confidence=? WHERE entity_id=?",
-                             (cl.confidence_score, eid))
+                             (getattr(cl, "match_score", 0), eid))
         conn.commit()
         return {"added": added, "total_entities": len(profiles), "clusters": len(clusters)}
     finally:

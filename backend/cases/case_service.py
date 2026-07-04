@@ -129,6 +129,14 @@ def get_results(case_id: str, user_id: str) -> dict | None:
         c["ai_confirmed"] = bool(raw_signals.get("_ai_confirmed"))
         c["ai_confidence"] = raw_signals.get("_ai_confidence") or 0
         c["ai_reason"] = raw_signals.get("_ai_reason") or ""
+        # User-facing MATCH CONFIDENCE (LOW/MEDIUM/HIGH) — "is this a correct match for the
+        # search?", distinct from the forensic `tier` ("same person?"). Exact username/seed
+        # matches are HIGH; everything else is graded by algo + LLM (scoring/confidence.py).
+        c["match"] = {
+            "score": raw_signals.get("_match_score") or 0,
+            "tier": raw_signals.get("_match_tier") or "LOW",
+            "reason": raw_signals.get("_match_reason") or "",
+        }
     # Leak-account pivot: lift the best real name found on ANY member up to label the
     # whole persona cluster. Suspects fake their name on the main account but often leak
     # it on a careless/old account tied in by hard signals; this attributes the cluster.
@@ -142,10 +150,12 @@ def get_results(case_id: str, user_id: str) -> dict | None:
                 c["identity"] = ident
     except Exception:
         pass
+    _TIER_RANK = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "REJECT": 0}
     clusters.sort(
         key=lambda c: (
             (c.get("relevance", {}).get("score") or 0) >= 100,
-            -(c.get("relevance", {}).get("rank") or 999999),
+            _TIER_RANK.get(c.get("match", {}).get("tier", "LOW"), 1),
+            c.get("match", {}).get("score") or 0,
             len(c.get("entity_ids", [])) > 1,
             c.get("confidence_score", 0),
         ),

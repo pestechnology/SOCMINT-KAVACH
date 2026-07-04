@@ -1,15 +1,15 @@
 // components/ui/AccountCard.jsx
 // §3.4 — a single discovered account in the identity list.
 // Rows: platform + Live chip / primary name / secondary (title|bio) / tier badge.
-// Tier is derived from confidence (>=80 HIGH, 50-79 MEDIUM, <50 LOW) per §3.4,
-// unless the caller already stamped entity._tier.
+// Tier is the MATCH confidence (>=70 HIGH, 40-69 MEDIUM, <40 LOW) — thresholds mirror
+// backend/scoring/confidence.py — unless the caller already stamped entity._tier.
 import ConfidenceBadge from "./ConfidenceBadge";
 import PlatformLogo from "./PlatformLogo";
 
 function tierFromConfidence(confidence) {
   const c = Number(confidence) || 0;
-  if (c >= 80) return "HIGH";
-  if (c >= 50) return "MEDIUM";
+  if (c >= 70) return "HIGH";
+  if (c >= 40) return "MEDIUM";
   return "LOW";
 }
 
@@ -57,6 +57,11 @@ export default function AccountCard({ entity = {}, selected = false, onClick, ex
           {isLive && (
             <span className="text-[10px] font-mono uppercase tracking-wide text-emerald-400 border border-emerald-400/40 rounded px-1.5 py-0.5">
               Live
+            </span>
+          )}
+          {(entity.data_mode === "agentic_web" || meta.agentic_source) && (
+            <span className="text-[10px] font-mono uppercase tracking-wide text-[#00f2fe] border border-[#00f2fe]/40 bg-[#00f2fe]/10 rounded px-1.5 py-0.5" title="Discovered via autonomous AI browser exploration">
+              🤖 Agentic
             </span>
           )}
         </span>

@@ -40,6 +40,7 @@ export default function CaseView() {
   const [tab, setTab] = useState("summary");
   const [signalFilter, setSignalFilter] = useState(null);
   const [showAllNodes, setShowAllNodes] = useState(false);
+  const [graphLarge, setGraphLarge] = useState(false);   // open the network graph in a big modal
   const [tierFilter, setTierFilter] = useState("all");   // all | HIGH | MEDIUM
   const [platformFilter, setPlatformFilter] = useState("all");
   const [showSummaryModal, setShowSummaryModal] = useState(false);
@@ -76,9 +77,16 @@ export default function CaseView() {
   // primary seed value → root label of the correlation tree
   const seedLabel = (kase.seeds && kase.seeds[0] && kase.seeds[0].value) || kase.title || "Target";
 
-  // map each entity -> its cluster info
+  // Match confidence (LOW/MEDIUM/HIGH) — "is this a correct match for the search?" — is what
+  // the result cards show, distinct from the forensic linkage `tier` ("same person?"). Exact
+  // username/seed matches are HIGH (backend/scoring/confidence.py). Fall back to the linkage
+  // tier/score for older cases scored before match confidence existed.
+  const matchTier = (c) => c?.match?.tier || c?.tier || "LOW";
+  const matchScore = (c) => (c?.match?.score ?? c?.confidence_score ?? 0);
+
+  // map each entity -> its cluster info (tier shown to the user = match tier)
   const infoByEntity = {};
-  clusters.forEach((c) => (c.entity_ids || []).forEach((eid) => { infoByEntity[eid] = { tier: c.tier, score: c.confidence_score, cluster: c }; }));
+  clusters.forEach((c) => (c.entity_ids || []).forEach((eid) => { infoByEntity[eid] = { tier: matchTier(c), score: matchScore(c), cluster: c }; }));
 
   const entById = {};
   entities.forEach((e) => (entById[e.entity_id] = e));
@@ -97,10 +105,10 @@ export default function CaseView() {
   // confidence. This is what "exact match first" means in the results list.
   const isExactMatch = (c) => (c.relevance?.score || 0) >= 100 || (c.entity_ids || []).some(eid => entById[eid]?.metadata?.exact_seed_match);
   const byExactThenConfidence = (a, b) =>
-    (isExactMatch(b) - isExactMatch(a)) || ((b.confidence_score || 0) - (a.confidence_score || 0));
+    (isExactMatch(b) - isExactMatch(a)) || (matchScore(b) - matchScore(a));
   const rankedClusters = clusters.filter((c) => (c.entity_ids || []).length >= 2 || isExactMatch(c));
-  const strongClusters = rankedClusters.filter((c) => c.tier === "HIGH" || isExactMatch(c)).sort(byExactThenConfidence);
-  const possibleClusters = rankedClusters.filter((c) => c.tier !== "HIGH" && !isExactMatch(c)).sort(byExactThenConfidence);
+  const strongClusters = rankedClusters.filter((c) => matchTier(c) === "HIGH" || isExactMatch(c)).sort(byExactThenConfidence);
+  const possibleClusters = rankedClusters.filter((c) => matchTier(c) !== "HIGH" && !isExactMatch(c)).sort(byExactThenConfidence);
   const letterByCluster = {};
   [...strongClusters, ...possibleClusters].forEach((c, i) => { letterByCluster[c.cluster_id] = groupName(i); });
   const clusterMembers = (c) => (c.entity_ids || []).map((eid) => entById[eid]).filter(Boolean);
@@ -269,6 +277,24 @@ export default function CaseView() {
             )}
           </div>
 
+          {/* Scan progress — indeterminate (the pipeline runs ~3–7 min across stages) */}
+          {running && (
+            <div className="mt-3">
+              <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full w-1/3 rounded-full"
+                  style={{
+                    background: "linear-gradient(90deg, transparent, #00f2fe, transparent)",
+                    animation: "vertex-scan 1.3s ease-in-out infinite",
+                  }}
+                />
+              </div>
+              <div className="mt-1.5 font-mono text-[11px] text-slate-500">
+                Scanning platforms · correlating · scoring — {total} accounts so far
+              </div>
+            </div>
+          )}
+
           {/* Row 3 — stats strip */}
           <div className="grid grid-cols-4 gap-3 pt-3 mt-3 border-t border-slate-800">
             <MiniStat n={total} label="Accounts found" />
@@ -391,28 +417,46 @@ export default function CaseView() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-[11px] font-mono uppercase tracking-wide text-slate-400">Correlation network</div>
-                  {total > 30 && (
-                    <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={showAllNodes}
-                        onChange={(e) => setShowAllNodes(e.target.checked)}
-                        style={{ accentColor: "#00f2fe" }}
-                      />
-                      Show all {total} nodes
-                    </label>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {total > 30 && (
+                      <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={showAllNodes}
+                          onChange={(e) => setShowAllNodes(e.target.checked)}
+                          style={{ accentColor: "#00f2fe" }}
+                        />
+                        Show all {total} nodes
+                      </label>
+                    )}
+                    {graphEntities.length > 0 && (
+                      <button onClick={() => setGraphLarge(true)}
+                        className="text-[11px] font-mono text-slate-300 border border-slate-700 rounded px-2 py-1 hover:border-cyan-400 hover:text-cyan-300">
+                        ⛶ Expand
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="relative rounded-lg overflow-hidden border border-slate-800" style={{ height: 560 }}>
                   {graphEntities.length > 0 ? (
-                    <NetworkGraph
-                      entities={graphEntities}
-                      clusters={clusters}
-                      seed={seedLabel}
-                      selectedId={selected}
-                      onSelect={(nid) => { setSelected(nid); setSelectedClusterId(null); setHovered(null); }}
-                      onHover={() => {}}
-                    />
+                    <>
+                      <NetworkGraph
+                        entities={graphEntities}
+                        clusters={clusters}
+                        seed={seedLabel}
+                        selectedId={selected}
+                        onSelect={(nid) => { setSelected(nid); setSelectedClusterId(null); setHovered(null); }}
+                        onHover={() => {}}
+                        startCollapsed
+                      />
+                      {/* click the preview to open the graph large; expand nodes there */}
+                      <button onClick={() => setGraphLarge(true)}
+                        className="absolute inset-0 z-10 cursor-zoom-in group" aria-label="Open graph large">
+                        <span className="absolute bottom-2 right-2 text-[10px] font-mono text-slate-300 bg-slate-900/85 border border-slate-700 rounded px-2 py-1 group-hover:border-cyan-400 group-hover:text-cyan-300">
+                          click to expand ⛶
+                        </span>
+                      </button>
+                    </>
                   ) : (
                     <EmptyState
                       icon="🕸️"
@@ -428,6 +472,24 @@ export default function CaseView() {
                   <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full" style={{ background: "#00f2fe" }} /> selected</span>
                 </div>
               </div>
+            )}
+
+            {graphLarge && graphEntities.length > 0 && (
+              <Modal wide icon="🕸️" title="Correlation network"
+                     subtitle="Click a branch to expand · scroll to zoom · drag to pan"
+                     onClose={() => setGraphLarge(false)}>
+                <div className="rounded-lg overflow-hidden border border-slate-800" style={{ height: "72vh" }}>
+                  <NetworkGraph
+                    entities={graphEntities}
+                    clusters={clusters}
+                    seed={seedLabel}
+                    selectedId={selected}
+                    onSelect={(nid) => { setSelected(nid); setSelectedClusterId(null); setHovered(null); }}
+                    onHover={() => {}}
+                    startCollapsed
+                  />
+                </div>
+              </Modal>
             )}
 
             {activeTabId === "timeline" && (
@@ -474,34 +536,41 @@ export default function CaseView() {
 
 // Platform icon fallbacks (initials) when no photo_url is available
 function ReportButton({ id, disabled }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState("");   // "" | "summary" | "report"
   const [err, setErr] = useState("");
-  // §1.4/§1.8 — download the BSA-63 PDF WITH the auth header via a Blob (never <a href>).
-  async function generate() {
+  // §1.4/§1.8 — download the PDF WITH the auth header via a Blob (never <a href>).
+  async function grab(kind) {
     if (disabled) return;
-    setErr(""); setBusy(true);
+    setErr(""); setBusy(kind);
     try {
-      const blob = await api.downloadReport(id);
+      const blob = kind === "summary" ? await api.downloadSummary(id) : await api.downloadReport(id);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `BSA63_report_${id}.pdf`;
+      a.download = `BSA63_${kind}_${id}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e) { setErr(e.message); }
-    finally { setBusy(false); }
+    finally { setBusy(""); }
   }
-  const btn = (
-    <Button variant="success" onClick={generate} disabled={disabled || busy} className="text-sm px-4 py-2">
-      {busy ? "Preparing…" : "Download Evidence Report (BSA-63)"}
+  const summaryBtn = (
+    <Button variant="secondary" onClick={() => grab("summary")} disabled={disabled || !!busy} className="text-sm px-3 py-2">
+      {busy === "summary" ? "Preparing…" : "📋 Summary briefing"}
+    </Button>
+  );
+  const reportBtn = (
+    <Button variant="success" onClick={() => grab("report")} disabled={disabled || !!busy} className="text-sm px-4 py-2">
+      {busy === "report" ? "Preparing…" : "Evidence Report (BSA-63)"}
     </Button>
   );
   return (
     <span className="flex items-center gap-2">
       {err && <span className="text-xs" style={{ color: "#ff3366" }}>{err}</span>}
-      {disabled ? <Tooltip content="Available when investigation completes">{btn}</Tooltip> : btn}
+      {disabled ? (
+        <Tooltip content="Available when investigation completes"><span className="flex gap-2">{summaryBtn}{reportBtn}</span></Tooltip>
+      ) : (<>{summaryBtn}{reportBtn}</>)}
     </span>
   );
 }
@@ -711,7 +780,7 @@ function ClusterGroup({ cluster, letter, members, selectedEntityId, onSelectEnti
         {members.map((e) => (
           <AccountCard
             key={e.entity_id}
-            entity={{ ...e, _tier: cluster.tier }}
+            entity={{ ...e, _tier: cluster.match?.tier || cluster.tier }}
             selected={selectedEntityId === e.entity_id}
             onClick={() => onSelectEntity(e.entity_id)}
           />
@@ -747,9 +816,12 @@ function AnalysisPanel({ cluster, letter, members, entity }) {
                 🤖 AI-assessed
               </span>
             )}
-            <ConfidenceBadge tier={cluster.tier} />
+            <ConfidenceBadge tier={cluster.match?.tier || cluster.tier} score={cluster.match?.score} />
           </span>
         </div>
+        {cluster.match?.reason && (
+          <p className="mt-1 text-[11px] text-slate-500">{cluster.match.reason}</p>
+        )}
 
         {cluster.ai_confirmed && (
           <div className="mt-3 rounded-lg border border-violet-400/30 bg-violet-400/[0.06] p-3">
@@ -783,7 +855,8 @@ function AnalysisPanel({ cluster, letter, members, entity }) {
         </div>
 
         <div className="mt-3 text-sm font-mono text-slate-400">
-          Total score: {cluster.confidence_score}/100
+          Corroboration points: {cluster.confidence_score}/100
+          <span className="ml-1 text-slate-600">(evidence linking these accounts)</span>
         </div>
 
         <details className="mt-4">
@@ -818,7 +891,7 @@ function AnalysisPanel({ cluster, letter, members, entity }) {
     const m = entity.metadata || {};
     const name = m.fullname || entity.value;
     const conf = Number(entity.confidence) || 0;
-    const tier = conf >= 80 ? "HIGH" : conf >= 50 ? "MEDIUM" : "LOW";
+    const tier = conf >= 70 ? "HIGH" : conf >= 40 ? "MEDIUM" : "LOW";
     const photo = m.photo_url || m.avatar || m.avatar_url || null;
     const url = safeUrl(entity.source_url);
     return (
@@ -889,7 +962,7 @@ function MatrixCard({ icon, title, count, children, onExpand }) {
 }
 
 // Full-screen popup for a Summary card's complete contents (§ UI: click card -> full view).
-function Modal({ title, icon, subtitle, onClose, children }) {
+function Modal({ title, icon, subtitle, onClose, children, wide = false }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
@@ -898,7 +971,7 @@ function Modal({ title, icon, subtitle, onClose, children }) {
   }, [onClose]);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-xl border border-white/10 bg-[#0b1220] p-5 shadow-2xl"
+      <div className={`w-full ${wide ? "max-w-6xl" : "max-w-3xl"} max-h-[90vh] overflow-y-auto rounded-xl border border-white/10 bg-[#0b1220] p-5 shadow-2xl`}
            onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4 sticky -top-5 bg-[#0b1220] py-2 -my-2">
           <span className="text-sm font-semibold text-slate-100">
