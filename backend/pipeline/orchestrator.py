@@ -280,6 +280,20 @@ async def run_investigation(case_id: str) -> dict:
     seeds = json.loads(row["seeds_json"] or "[]")
     country_filter = dict(row).get("country_filter", "ALL") or "ALL"
 
+    # Capture the ORIGINAL identifier value(s) the investigator actually typed, BEFORE
+    # variant expansion. A profile whose handle EXACTLY equals one of these is the literal
+    # answer to the search ("show me ash29_03") and must surface at the top of results even
+    # when it correlates with nothing else — otherwise it sinks into "not linked" while
+    # variant-derived accounts that happen to cross-link get ranked above it. Exact string
+    # equality only (case/space-insensitive): "ash29_03" matches "ash29_03", NOT the
+    # variant "ash2903" — so this never re-introduces the substring false-positive merge.
+    original_seed_values = {
+        s["value"].strip().lower()
+        for s in seeds
+        if isinstance(s.get("value"), str) and s["value"].strip()
+        and s.get("type") in ("username", "name", "email", "phone", "upi")
+    }
+
     # 1. Username Permutation Engine & Auto-Correction
     expanded_seeds = []
     for s in seeds:
@@ -676,6 +690,16 @@ async def run_investigation(case_id: str) -> dict:
         profiles = [p for p in profiles if _has_content_metadata(p)]
         if len(profiles) != before_meta:
             log_action(case_id, "empty_metadata_filter", {"before": before_meta}, {"after": len(profiles)}, "system")
+    # Flag the profile(s) that EXACTLY match what the investigator searched for, so the
+    # UI can pin them to the top regardless of whether they linked to anything. Match on
+    # the account value OR its stored username field (some scrapers put the handle there).
+    if original_seed_values:
+        for p in profiles:
+            v = str(p.value or "").strip().lower()
+            u = str((p.metadata or {}).get("username") or "").strip().lower()
+            if (v and v in original_seed_values) or (u and u in original_seed_values):
+                p.metadata["exact_seed_match"] = True
+
     idx_to_eid: dict[int, str] = {}
     conn = get_db()
     try:

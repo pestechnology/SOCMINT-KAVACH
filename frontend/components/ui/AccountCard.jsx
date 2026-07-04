@@ -33,6 +33,8 @@ export default function AccountCard({ entity = {}, selected = false, onClick, ex
   const meta = entity.metadata || {};
   const platform = entity.platform || entity.type || "account";
   const tier = entity._tier || tierFromConfidence(entity.confidence);
+  // Badge the literal search-query match wherever it appears, from prop or server flag.
+  const isExact = exactMatch || entity._exactMatch || !!meta.exact_seed_match;
 
   const primary = meta.fullname || entity.value || "Unknown account";
   const secondary = truncate(meta.title || meta.bio || "", 80);
@@ -60,7 +62,7 @@ export default function AccountCard({ entity = {}, selected = false, onClick, ex
           </span>
         </span>
         <span className="inline-flex items-center gap-1.5 shrink-0">
-          {exactMatch && (
+          {isExact && (
             <span className="text-[10px] font-mono uppercase tracking-wide text-cyan-300 border border-cyan-400/40 bg-cyan-400/10 rounded px-1.5 py-0.5">
               ★ Exact
             </span>

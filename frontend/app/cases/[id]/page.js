@@ -138,19 +138,34 @@ export default function CaseView() {
     plat === "all" || clusterMembers(c).some((e) => (e.platform || "").toLowerCase() === plat);
   const entityHasPlatform = (e, plat) => plat === "all" || (e.platform || "").toLowerCase() === plat;
 
-  // §4.4.4.1 evidence quick-link filter — narrow the identity list to clusters that fired a signal.
   const clusterHasSignal = (c, sig) => !!(c.signals && Object.prototype.hasOwnProperty.call(c.signals, sig));
-  // Compose all three filters: evidence signal (quick-links) + confidence tier + platform.
-  const applyFilters = (list) => list
-    .filter((c) => !signalFilter || clusterHasSignal(c, signalFilter))
-    .filter((c) => clusterHasPlatform(c, platformFilter));
+
+  // Exact-match accounts: the profile(s) whose handle literally equals the search query
+  // (flagged server-side as metadata.exact_seed_match). These are pinned to the TOP of the
+  // list regardless of whether they linked to anything, so the literal answer to the
+  // search is never buried under variant-derived clusters. Deduped out of "not linked".
+  const exactMatchEntities = entities
+    .filter((e) => e.metadata?.exact_seed_match)
+    .filter((e) => entityHasPlatform(e, platformFilter));
+  const exactMatchIds = new Set(exactMatchEntities.map((e) => e.entity_id));
+
+  // §4.4.4.1 evidence quick-link filter. When a signal pill is active, show EVERY
+  // multi-member cluster that fired that signal — ANY tier. The pills are counted from all
+  // ≥2-member clusters, but a 2-account link can be tier LOW (single hard signal, capped
+  // by the red-herring rule); searching only HIGH/MEDIUM was the bug that made a pill with
+  // "2 accounts" show nothing when you clicked it.
+  const signalClusters = signalFilter
+    ? multiClusters.filter((c) => clusterHasSignal(c, signalFilter) && clusterHasPlatform(c, platformFilter))
+    : [];
+  const signalAccountCount = signalClusters.reduce((s, c) => s + clusterMembers(c).length, 0);
+
+  // Confidence-tier + platform filters (applied to the normal, non-signal view).
+  const applyFilters = (list) => list.filter((c) => clusterHasPlatform(c, platformFilter));
   const filteredStrong = tierFilter === "MEDIUM" ? [] : applyFilters(strongClusters);
   const filteredPossible = tierFilter === "HIGH" ? [] : applyFilters(possibleClusters);
-  // "Not linked" is hidden whenever any evidence/tier filter is active (those are, by
-  // definition, accounts with no qualifying link); still honor the platform filter.
-  const filteredNotLinked = (signalFilter || tierFilter !== "all")
+  const filteredNotLinked = tierFilter !== "all"
     ? []
-    : notLinkedEntities.filter((e) => entityHasPlatform(e, platformFilter));
+    : notLinkedEntities.filter((e) => entityHasPlatform(e, platformFilter) && !exactMatchIds.has(e.entity_id));
   const filteredStrongCount = filteredStrong.reduce((s, c) => s + clusterMembers(c).length, 0);
   const filteredPossibleCount = filteredPossible.reduce((s, c) => s + clusterMembers(c).length, 0);
   const onToggleSignal = (sig) => setSignalFilter((s) => (s === sig ? null : sig));
@@ -307,6 +322,7 @@ export default function CaseView() {
               letterByCluster={letterByCluster}
               clusterMembers={clusterMembers}
               notLinkedEntities={filteredNotLinked}
+              exactMatchEntities={exactMatchEntities}
               strongCount={filteredStrongCount}
               possibleCount={filteredPossibleCount}
               infoByEntity={infoByEntity}
@@ -316,6 +332,10 @@ export default function CaseView() {
               autoExpandNotLinked={autoExpandNotLinked}
               anyFilter={anyFilterActive}
               onClearFilters={clearAllFilters}
+              signalFilter={signalFilter}
+              signalLabel={signalFilter ? labelFor(signalFilter) : ""}
+              signalClusters={signalClusters}
+              signalAccountCount={signalAccountCount}
             />
           </GlassPanel>
         </div>
@@ -462,19 +482,50 @@ function MiniStat({ n, label, color = "#e2e8f0" }) {
   );
 }
 
-// §4.4.3 — grouped identity list: Strong / Possible / Not linked (collapsible).
+// §4.4.3 — grouped identity list: Exact match / Strong / Possible / Not linked.
 function IdentityList({
   strongClusters, possibleClusters, letterByCluster, clusterMembers,
-  notLinkedEntities, strongCount, possibleCount,
+  notLinkedEntities, exactMatchEntities = [], strongCount, possibleCount,
   infoByEntity, selectedEntityId, onSelectEntity, onSelectCluster, autoExpandNotLinked,
   anyFilter = false, onClearFilters,
+  signalFilter = null, signalLabel = "", signalClusters = [], signalAccountCount = 0,
 }) {
   const [openNotLinked, setOpenNotLinked] = useState(autoExpandNotLinked);
   useEffect(() => { setOpenNotLinked(autoExpandNotLinked); }, [autoExpandNotLinked]);
 
+  // Evidence quick-link mode: a signal pill is active → show ONLY the accounts linked by
+  // that evidence, across every confidence tier (that's the whole point of the pivot).
+  if (signalFilter) {
+    return (
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-[11px] font-mono uppercase tracking-wide text-cyan-300">
+            🔗 Linked by {signalLabel} ({signalClusters.length} {signalClusters.length === 1 ? "group" : "groups"} · {signalAccountCount} accounts)
+          </span>
+        </div>
+        {signalClusters.length === 0 ? (
+          <div className="text-center py-8">
+            <div className="text-sm text-slate-400">No accounts match this evidence with the current platform filter.</div>
+            <button onClick={onClearFilters} className="mt-2 text-xs text-cyan-400 hover:underline">Clear filters</button>
+          </div>
+        ) : signalClusters.map((c) => (
+          <ClusterGroup
+            key={c.cluster_id}
+            cluster={c}
+            letter={letterByCluster[c.cluster_id] || "•"}
+            members={clusterMembers(c)}
+            selectedEntityId={selectedEntityId}
+            onSelectEntity={onSelectEntity}
+            onSelectCluster={onSelectCluster}
+          />
+        ))}
+      </div>
+    );
+  }
+
   // Nothing to show in ANY section — almost always because an active filter excluded
   // everything. Make that explicit so a filtered view never reads as "broken/empty".
-  const nothingShown = strongClusters.length === 0 && possibleClusters.length === 0 && notLinkedEntities.length === 0;
+  const nothingShown = exactMatchEntities.length === 0 && strongClusters.length === 0 && possibleClusters.length === 0 && notLinkedEntities.length === 0;
   if (nothingShown && anyFilter) {
     return (
       <div className="text-center py-8">
@@ -486,6 +537,25 @@ function IdentityList({
 
   return (
     <div>
+      {/* Exact match to the search query — pinned above everything (§ exact-match priority) */}
+      {exactMatchEntities.length > 0 && (
+        <div className="mb-4">
+          <div className="text-[11px] font-mono uppercase tracking-wide mb-2 flex items-center gap-1.5" style={{ color: "#22d3ee" }}>
+            🎯 Exact match to your search ({exactMatchEntities.length})
+          </div>
+          <div className="space-y-2">
+            {exactMatchEntities.map((e) => (
+              <AccountCard
+                key={e.entity_id}
+                entity={{ ...e, _tier: infoByEntity[e.entity_id]?.tier, _exactMatch: true }}
+                selected={selectedEntityId === e.entity_id}
+                onClick={() => onSelectEntity(e.entity_id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Strong matches */}
       <div className="text-[11px] font-mono uppercase tracking-wide mb-2" style={{ color: "#00ff88" }}>
         Strong matches ({strongCount})
