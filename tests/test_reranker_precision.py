@@ -71,3 +71,21 @@ def test_llm_relevance_does_not_confirm_a_singleton(monkeypatch):
     assert delta.confidence_score < 50.0
     # ...but the lead IS surfaced for the investigator to follow up.
     assert delta.relevance_score == 90
+
+
+def test_exact_seed_match_ranks_first_and_preserves_score(monkeypatch):
+    """REGRESSION: an exact seed match singleton (relevance_score=100) must rank #1
+    ahead of any multi-member variant clusters and must not have its relevance_score overwritten."""
+    monkeypatch.setattr(reranker, "LLMClient", _StubLLM)
+    p0 = make_profile("social_account", "ash2903_var1", "twitter", "u0", {"phone": "+1234567890"})
+    p1 = make_profile("social_account", "ash2903_var2", "reddit", "u1", {"phone": "+1234567890"})
+    # p2 is exact seed match
+    p2 = make_profile("social_account", "ash29_03", "instagram", "u2", {"username": "ash29_03"})
+    p2.metadata["exact_seed_match"] = True
+    profiles = [p0, p1, p2]
+    seeds = [{"type": "username", "value": "ash29_03"}]
+    clusters = score(profiles, correlate(profiles), seeds=seeds)
+    new_clusters, _ = reranker.rerank_and_promote("username", "ash29_03", profiles, clusters)
+    assert new_clusters[0].member_indices == [2], "Exact seed match must be sorted at rank #1"
+    assert new_clusters[0].relevance_rank == 1
+    assert new_clusters[0].relevance_score == 100, "Must preserve relevance_score=100"

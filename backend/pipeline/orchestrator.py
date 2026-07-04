@@ -49,7 +49,7 @@ from backend.ingestion.holehe_scraper import HoleheScraper
 from backend.ingestion.sherlock_scraper import SherlockScraper
 from backend.ingestion.variants import username_variants
 from backend.ingestion.photo_enrich import enrich_photos, build_face_seed_profile
-from backend.ingestion.profile_page_fetcher import enrich_profiles_from_page
+from backend.ingestion.profile_page_fetcher import enrich_profiles_from_page, enrich_anchors
 from backend.ingestion.fact_enrich import enrich_facts
 from backend.ingestion.dehashed_scraper import DehashedScraper
 from backend.ingestion.leakcheck_scraper import LeakcheckScraper
@@ -224,6 +224,35 @@ def _is_legitimate_and_target_country(p: RawProfile) -> bool:
     return True
 
 
+# Mirror / alias platforms: different site-list entries (from Maigret/Sherlock/Blackbird)
+# that are really the SAME service and the SAME account. Enumerating a handle turns
+# "steamcommunity.com/id/x" and "steam" into two profiles, then the correlation engine
+# "matches" their identical photo/face and reports it as decisive evidence — an account
+# matching its own mirror, which is noise, not intelligence. Canonicalising the platform
+# before dedup collapses these into one account so it never becomes a bogus cluster.
+_PLATFORM_ALIASES = {
+    "steamcommunity": "steam",
+    "steam community": "steam",
+    "youtube user": "youtube",
+    "youtube user2": "youtube",
+    "youtube channel": "youtube",
+    "hub": "docker hub",
+    "dockerhub": "docker hub",
+    "docker": "docker hub",
+    "githubgist": "github",
+    "github gist": "github",
+    "gist": "github",
+    "x": "twitter",
+    "twitter (x)": "twitter",
+    "insta": "instagram",
+}
+
+
+def _canonical_platform(platform: str) -> str:
+    p = (platform or "").strip().lower()
+    return _PLATFORM_ALIASES.get(p, p)
+
+
 def _dedup(profiles: list[RawProfile]) -> list[RawProfile]:
     out: list[RawProfile] = []
     seen_social: dict[tuple[str, str], RawProfile] = {}
@@ -232,7 +261,7 @@ def _dedup(profiles: list[RawProfile]) -> list[RawProfile]:
     for p in profiles:
         if not _is_legitimate_and_target_country(p):
             continue
-        plat = p.platform.lower()
+        plat = _canonical_platform(p.platform)
         val = (p.value or "").lower()
 
         if p.type == "social_account":
@@ -250,6 +279,7 @@ def _dedup(profiles: list[RawProfile]) -> list[RawProfile]:
                 if not existing.source_url and p.source_url:
                     existing.source_url = p.source_url
             else:
+                p.platform = plat   # store the canonical name so the UI shows one entry
                 seen_social[key] = p
                 out.append(p)
         else:
@@ -628,7 +658,29 @@ async def run_investigation(case_id: str) -> dict:
         before_len = len(profiles)
         profiles = filter_profiles_by_country(profiles, "INDIA")
         log_action(case_id, "country_filter_applied", {"before": before_len, "filter": "INDIA"}, {"after": len(profiles)}, "system")
+
+    # Flag the exact query-match accounts NOW (before enrichment), so the anchor pass can
+    # target them. These are the literal answer to the search; the whole case is resolved
+    # against them. Exact string equality only (never the substring/variant merge).
+    if original_seed_values:
+        for p in profiles:
+            v = str(p.value or "").strip().lower()
+            u = str((p.metadata or {}).get("username") or "").strip().lower()
+            if (v and v in original_seed_values) or (u and u in original_seed_values):
+                p.metadata["exact_seed_match"] = True
+
     if config.DATA_MODE == "live":
+        # 5.0: ANCHOR pass FIRST — deep-enrich the exact-match accounts (real name,
+        # location, photo, bio). Running before the generic passes means the anchor's
+        # recovered photo is present when enrich_photos computes face embeddings, and its
+        # name/location are present when correlate() links every other account against it.
+        try:
+            anchored = await enrich_anchors(profiles)
+            log_action(case_id, "anchor_enrichment",
+                       {"anchors": sum(1 for p in profiles if p.metadata.get('exact_seed_match'))},
+                       {"anchors_with_identity": anchored}, "system")
+        except Exception:
+            pass
         try:
             enriched = await enrich_profiles_from_page(profiles)
             log_action(case_id, "page_enrichment", {"candidates": len(profiles)},

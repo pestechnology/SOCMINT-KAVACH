@@ -91,12 +91,12 @@ export default function CaseView() {
   // Priority-1 = exact match: a cluster containing the account that literally matches the
   // search input (relevance.score === 100) sorts ahead of everything in its tier, then by
   // confidence. This is what "exact match first" means in the results list.
-  const isExactMatch = (c) => (c.relevance?.score || 0) >= 100;
+  const isExactMatch = (c) => (c.relevance?.score || 0) >= 100 || (c.entity_ids || []).some(eid => entById[eid]?.metadata?.exact_seed_match);
   const byExactThenConfidence = (a, b) =>
     (isExactMatch(b) - isExactMatch(a)) || ((b.confidence_score || 0) - (a.confidence_score || 0));
-  const multiClusters = clusters.filter((c) => (c.entity_ids || []).length >= 2);
-  const strongClusters = multiClusters.filter((c) => c.tier === "HIGH").sort(byExactThenConfidence);
-  const possibleClusters = multiClusters.filter((c) => c.tier === "MEDIUM").sort(byExactThenConfidence);
+  const rankedClusters = clusters.filter((c) => (c.entity_ids || []).length >= 2 || isExactMatch(c));
+  const strongClusters = rankedClusters.filter((c) => c.tier === "HIGH" || isExactMatch(c)).sort(byExactThenConfidence);
+  const possibleClusters = rankedClusters.filter((c) => c.tier !== "HIGH" && !isExactMatch(c)).sort(byExactThenConfidence);
   const letterByCluster = {};
   [...strongClusters, ...possibleClusters].forEach((c, i) => { letterByCluster[c.cluster_id] = groupName(i); });
   const clusterMembers = (c) => (c.entity_ids || []).map((eid) => entById[eid]).filter(Boolean);
@@ -126,8 +126,7 @@ export default function CaseView() {
   const selEntity = selected ? entById[selected] : null;
   const selEntityCluster = selEntity ? infoByEntity[selected]?.cluster : null;
   const selEntityMulti =
-    selEntityCluster && (selEntityCluster.entity_ids || []).length >= 2 &&
-    (selEntityCluster.tier === "HIGH" || selEntityCluster.tier === "MEDIUM")
+    selEntityCluster && ((selEntityCluster.entity_ids || []).length >= 2 || isExactMatch(selEntityCluster))
       ? selEntityCluster
       : null;
   const analysisCluster = selCluster || selEntityMulti;
@@ -163,7 +162,7 @@ export default function CaseView() {
   // by the red-herring rule); searching only HIGH/MEDIUM was the bug that made a pill with
   // "2 accounts" show nothing when you clicked it.
   const signalClusters = signalFilter
-    ? multiClusters.filter((c) => clusterHasSignal(c, signalFilter) && clusterHasPlatform(c, platformFilter))
+    ? clusters.filter((c) => clusterHasSignal(c, signalFilter) && clusterHasPlatform(c, platformFilter))
     : [];
   const signalAccountCount = signalClusters.reduce((s, c) => s + clusterMembers(c).length, 0);
 
@@ -636,7 +635,8 @@ function ClusterGroup({ cluster, letter, members, selectedEntityId, onSelectEnti
         className="w-full text-left mb-1.5 flex items-center gap-2 flex-wrap"
       >
         <span className="text-xs text-slate-300 hover:text-slate-100">
-          Identity group {letter} · {members.length} {members.length === 1 ? "account" : "accounts"}
+          {members.length > 1 || letter !== "•" ? `Identity group ${letter} · ` : "Single account · "}
+          {members.length} {members.length === 1 ? "account" : "accounts"}
         </span>
         {exact && (
           <span className="text-[9px] font-mono uppercase tracking-wider text-cyan-300 border border-cyan-400/40 bg-cyan-400/10 rounded px-1.5 py-0.5">
@@ -675,7 +675,9 @@ function AnalysisPanel({ cluster, letter, members, entity }) {
     return (
       <div>
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-slate-100">Identity group {letter}</span>
+          <span className="text-sm font-semibold text-slate-100">
+            {cluster.member_indices?.length > 1 || (cluster.entity_ids || []).length > 1 || letter !== "•" ? `Identity group ${letter}` : "Account analysis"}
+          </span>
           <ConfidenceBadge tier={cluster.tier} />
         </div>
 
@@ -815,16 +817,18 @@ function SummaryTab({ entities, clusters, signalFilter, onToggleSignal }) {
   entities.forEach((e) => { const p = e.platform || "unknown"; platformCounts[p] = (platformCounts[p] || 0) + 1; });
   const platforms = Object.entries(platformCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
 
-  // Names & aliases (dedupe normalized)
+  // Names & aliases (dedupe normalized). Read both fullname and name — scrapers and the
+  // anchor enricher populate different fields. Exact-match (anchor) names sort first.
   const seenName = new Set();
   const names = [];
-  entities.forEach((e) => {
-    const n = e.metadata?.fullname;
-    if (n && typeof n === "string") {
-      const key = n.trim().toLowerCase();
-      if (key && !seenName.has(key)) { seenName.add(key); names.push(n.trim()); }
-    }
-  });
+  [...entities].sort((a, b) => (b.metadata?.exact_seed_match ? 1 : 0) - (a.metadata?.exact_seed_match ? 1 : 0))
+    .forEach((e) => {
+      const n = e.metadata?.fullname || e.metadata?.name;
+      if (n && typeof n === "string") {
+        const key = n.trim().toLowerCase();
+        if (key && !seenName.has(key)) { seenName.add(key); names.push(n.trim()); }
+      }
+    });
 
   // Locations & context (location + employer/location/city candidates)
   const seenLoc = new Set();
@@ -846,9 +850,8 @@ function SummaryTab({ entities, clusters, signalFilter, onToggleSignal }) {
   // Evidence quick-links (§4.4.4.1) — the moat. Count, for every REAL corroborating
   // signal, how many identity groups it links and how many accounts those groups hold.
   // `_`-prefixed keys are internal ranking metadata (relevance), NOT evidence — excluded.
-  const multi = clusters.filter((c) => (c.entity_ids || []).length >= 2);
   const sigStat = {}; // signal -> { groups, accounts }
-  multi.forEach((c) => {
+  clusters.forEach((c) => {
     const members = (c.entity_ids || []).length;
     Object.keys(c.signals || {}).forEach((s) => {
       if (s.startsWith("_")) return;

@@ -124,6 +124,15 @@ def get_results(case_id: str, user_id: str) -> dict | None:
             "reason": raw_signals.get("_relevance_reason"),
             "rank": raw_signals.get("_relevance_rank"),
         }
+    clusters.sort(
+        key=lambda c: (
+            (c.get("relevance", {}).get("score") or 0) >= 100,
+            -(c.get("relevance", {}).get("rank") or 999999),
+            len(c.get("entity_ids", [])) > 1,
+            c.get("confidence_score", 0),
+        ),
+        reverse=True,
+    )
     # forensic summary (tone/sentiment, keywords, activity, engagement) for the UI
     try:
         from backend.analysis.forensics import summarize as _forensics

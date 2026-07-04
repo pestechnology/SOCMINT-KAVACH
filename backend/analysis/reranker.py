@@ -295,13 +295,20 @@ def rerank_and_promote(
                 break
 
     # Step 6: Assign relevance_rank to all clusters
-    # Sort: exact query seed matches first (#1), then confirmed multi-member (by confidence), then singletons by LLM relevance
+    # Sort: literal exact query matches first (#1), then partial seed matches, then confirmed multi-member (by confidence), then singletons by LLM relevance
     def _sort_key(c: Cluster) -> tuple:
-        is_exact = getattr(c, "relevance_score", 0) >= 100 or any(
-            profiles[idx].metadata.get("exact_seed_match") for idx in c.member_indices if idx < len(profiles)
+        seed_clean = seed_value.strip().lower() if seed_value else ""
+        is_exact = any(
+            profiles[idx].metadata.get("exact_seed_match") or
+            (seed_clean and str(profiles[idx].value or "").strip().lower() == seed_clean) or
+            (seed_clean and str((profiles[idx].metadata or {}).get("username") or "").strip().lower() == seed_clean)
+            for idx in c.member_indices if idx < len(profiles)
         )
+        is_seed_rel = getattr(c, "relevance_score", 0) >= 100
         is_multi = len(c.member_indices) > 1
         if is_exact:
+            return (4, c.confidence_score, 100)
+        elif is_seed_rel:
             return (3, c.confidence_score, 100)
         elif is_multi:
             return (2, c.confidence_score, 0)

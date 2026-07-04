@@ -204,6 +204,8 @@ def score(profiles: list[RawProfile], pairs: list[CandidatePair], seeds: list[di
                     seed_usernames.add(val_clean)
 
     def _matches_seed_id(idx: int) -> bool:
+        if profiles[idx].metadata.get("exact_seed_match"):
+            return True
         if not seed_usernames:
             return False
         p = profiles[idx]
