@@ -71,6 +71,8 @@ export default function CaseView() {
   const status = data.status;
   const running = status === "running" || status === "pending";
   const kase = data.case || {};
+  // primary seed value → root label of the correlation tree
+  const seedLabel = (kase.seeds && kase.seeds[0] && kase.seeds[0].value) || kase.title || "Target";
 
   // map each entity -> its cluster info
   const infoByEntity = {};
@@ -396,6 +398,7 @@ export default function CaseView() {
                     <NetworkGraph
                       entities={graphEntities}
                       clusters={clusters}
+                      seed={seedLabel}
                       selectedId={selected}
                       onSelect={(nid) => { setSelected(nid); setSelectedClusterId(null); setHovered(null); }}
                       onHover={() => {}}
