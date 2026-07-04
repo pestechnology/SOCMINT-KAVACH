@@ -904,6 +904,94 @@ async def run_investigation(case_id: str) -> dict:
     return {"status": "complete", "accounts": len(profiles), "clusters": len(clusters)}
 
 
+def ingest_external_profiles(case_id: str, new_profiles: list[RawProfile]) -> dict:
+    """Add externally-collected profiles (e.g. from the agentic browser) to an EXISTING
+    case and RE-CORRELATE, so they are linked/scored against everything else — never
+    inserted as standalone island entities that bypass the reasoning layer.
+
+    Existing entity rows are preserved (not re-deduped/rebuilt); only clusters are
+    recomputed. New profiles that duplicate an existing account (same sha256) are skipped.
+    Synchronous + self-contained; safe to call from a background task via to_thread.
+    Returns {added, total_entities, clusters}.
+    """
+    new_profiles = [p for p in (new_profiles or []) if p is not None]
+    if not new_profiles:
+        return {"added": 0, "total_entities": 0, "clusters": 0}
+
+    conn = get_db()
+    try:
+        crow = conn.execute("SELECT seeds_json FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+        if crow is None:
+            return {"added": 0, "total_entities": 0, "clusters": 0, "error": "case not found"}
+        seeds = json.loads((crow["seeds_json"] if crow["seeds_json"] else None) or "[]")
+        seed_vals = {str(s.get("value", "")).strip().lower() for s in seeds if s.get("value")}
+
+        # reconstruct existing entities as RawProfiles (preserves their enrichment/flags)
+        rows = conn.execute(
+            "SELECT * FROM entities WHERE case_id = ? ORDER BY rowid", (case_id,)).fetchall()
+        profiles: list[RawProfile] = []
+        eids: list[str] = []
+        hashes: set[str] = set()
+        for r in rows:
+            md = json.loads(r["metadata_json"] or "{}")
+            profiles.append(RawProfile(
+                type=r["type"], value=r["value"], platform=r["platform"],
+                source_url=r["source_url"] or "", metadata=md,
+                data_mode=r["data_mode"] or "live", collected_at=r["created_at"] or "",
+                sha256=r["sha256"] or ""))
+            eids.append(r["entity_id"])
+            if r["sha256"]:
+                hashes.add(r["sha256"])
+
+        # insert the new profiles (flag exact-seed match; skip exact-duplicate accounts)
+        added = 0
+        for p in new_profiles:
+            v = str(p.value or "").strip().lower()
+            u = str((p.metadata or {}).get("username") or "").strip().lower()
+            if (v and v in seed_vals) or (u and u in seed_vals):
+                p.metadata["exact_seed_match"] = True
+            if p.sha256 and p.sha256 in hashes:
+                continue
+            eid = uuid.uuid4().hex
+            conn.execute(
+                """INSERT INTO entities (entity_id, case_id, type, value, platform, confidence,
+                   metadata_json, source_url, data_mode, sha256, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (eid, case_id, p.type, p.value, p.platform, None,
+                 json.dumps(p.metadata, default=str), p.source_url,
+                 p.data_mode or "agentic_web", p.sha256, p.collected_at or _now()),
+            )
+            if p.sha256:
+                hashes.add(p.sha256)
+            profiles.append(p)
+            eids.append(eid)
+            added += 1
+        conn.commit()
+
+        # re-correlate + re-cluster over the combined set, then replace this case's clusters
+        pairs = correlate(profiles)
+        clusters = score(profiles, pairs, seeds=seeds)
+        conn.execute("DELETE FROM clusters WHERE case_id = ?", (case_id,))
+        for cl in clusters:
+            entity_ids = [eids[i] for i in cl.member_indices if 0 <= i < len(eids)]
+            signals_data = dict(cl.signals)
+            if getattr(cl, "relevance_score", None):
+                signals_data["_relevance_score"] = cl.relevance_score
+            conn.execute(
+                """INSERT INTO clusters (cluster_id, case_id, entity_ids_json, confidence_score,
+                   tier, explanation, signals_json, created_at) VALUES (?,?,?,?,?,?,?,?)""",
+                (cl.cluster_id, case_id, json.dumps(entity_ids), cl.confidence_score,
+                 cl.tier, cl.explanation, json.dumps(signals_data), _now()),
+            )
+            for eid in entity_ids:
+                conn.execute("UPDATE entities SET confidence=? WHERE entity_id=?",
+                             (cl.confidence_score, eid))
+        conn.commit()
+        return {"added": added, "total_entities": len(profiles), "clusters": len(clusters)}
+    finally:
+        conn.close()
+
+
 def run_investigation_sync(case_id: str) -> dict:
     """Blocking wrapper for FastAPI BackgroundTasks.
 

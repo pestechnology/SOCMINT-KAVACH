@@ -57,3 +57,9 @@ try:
     app.include_router(case_router)
 except Exception as e:
     print(f"[main] WARNING: case routes failed to load: {e}")
+
+try:
+    from backend.agentic_browser.api import router as agentic_router
+    app.include_router(agentic_router)
+except Exception as e:
+    print(f"[main] WARNING: agentic browser routes failed to load: {e}")

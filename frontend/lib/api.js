@@ -57,6 +57,12 @@ export const api = {
     }
     return res.blob();
   },
+  // Agentic Web Browser
+  getAgenticTools: () => req("/api/agentic-browser/tools"),
+  startAgenticInvestigate: (body) => req("/api/agentic-browser/investigate", { method: "POST", body }),
+  getAgenticStatus: (taskId) => req(`/api/agentic-browser/status/${taskId}`),
+  runAgenticLookup: (body) => req("/api/agentic-browser/run", { method: "POST", body }),
+  getCaseAgenticTasks: (caseId) => req(`/api/agentic-browser/case/${caseId}`),
 };
 
 export { BASE };
