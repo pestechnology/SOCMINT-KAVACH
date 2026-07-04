@@ -128,20 +128,6 @@ def _profile_to_dict(p: RawProfile) -> dict:
     }
 
 
-# Minimum rarity-weighted anchor-keyword score for a candidate to be surfaced to the
-# adjudicator. Tuned so a lone common-first-name match (~0.1-0.6) never qualifies but a
-# rare full-handle/employer/city match (a few points of IDF x specificity) does.
-_KW_SURFACE_MIN = 2.0
-
-
-def _profile_text_for_kw(p: RawProfile) -> str:
-    m = p.metadata or {}
-    parts = [str(p.value or "")]
-    for k in ("name", "fullname", "bio", "snippet", "title"):
-        parts.append(str(m.get(k) or ""))
-    return " ".join(parts)
-
-
 def rerank_and_promote(
     seed_type: str,
     seed_value: str,
@@ -229,35 +215,6 @@ def rerank_and_promote(
     # Bounded to keep the sequential Groq burst under the per-minute limit.
     high_relevance = high_relevance[:6]
 
-    # ADDITIVE anchor-keyword booster: surface up to 2 EXTRA candidates that the LLM
-    # relevance pass may have under-rated but which mention the anchor's DISTINCTIVE
-    # keywords (rare full-handle / employer / city — never a common first name; see
-    # anchor_keywords.py's rarity weighting). This ONLY routes more candidates to the
-    # adjudicator (which still gates every link) — it never touches deterministic scores.
-    # max()-style union: it can only ADD to `high_relevance`, never drop an LLM pick.
-    kw_matched_by_idx: dict[int, list[str]] = {}
-    try:
-        from backend.analysis.anchor_keywords import build_anchor_keywords, score_candidate
-        anchor_kws = build_anchor_keywords(profiles)
-        if anchor_kws:
-            already = {r["index"] for r in high_relevance}
-            scored = []
-            for idx in singleton_indices:
-                if idx in already:
-                    continue
-                s, matched = score_candidate(_profile_text_for_kw(profiles[idx]), anchor_kws)
-                if s >= _KW_SURFACE_MIN and matched:
-                    scored.append((s, idx, matched))
-            scored.sort(reverse=True)
-            for s, idx, matched in scored[:2]:
-                kw_matched_by_idx[idx] = matched
-                high_relevance.append({"index": idx, "relevance": PROMOTION_THRESHOLD,
-                                       "reason": f"distinctive keyword match: {', '.join(matched[:4])}"})
-                print(f"[anchor-kw] surfaced {profiles[idx].platform}/{profiles[idx].value} "
-                      f"(score={s}, matched={matched[:4]})")
-    except Exception as e:  # noqa: BLE001 — booster must never break the pipeline
-        print(f"[anchor-kw] skipped ({e})")
-
     # Anchor description handed to the adjudicator (from the confirmed persona / seed).
     anchor = {
         "names": target_persona.get("names", []),
@@ -274,10 +231,7 @@ def rerank_and_promote(
         for r in high_relevance:
             singleton_idx = r["index"]
             singleton = profiles[singleton_idx]
-            shared = None
-            if singleton_idx in kw_matched_by_idx:
-                shared = ["shared distinctive keyword: " + k for k in kw_matched_by_idx[singleton_idx][:4]]
-            verdict = adjudicate(anchor, _profile_to_dict(singleton), shared_signals=shared, llm=llm)
+            verdict = adjudicate(anchor, _profile_to_dict(singleton), llm=llm)
             conf = verdict["confidence"]
             if verdict["same_person"] and conf >= CONFIRM:
                 promoted.append(singleton_idx)
