@@ -31,6 +31,8 @@ _SYSTEM = (
     "'shared phone +91…').\n"
     "- Be concise and factual — a few sentences. Distinguish CONFIRMED links from unconfirmed "
     "leads when it matters. This may inform a legal filing, so accuracy over completeness.\n"
+    "- If the case data includes a CASE TYPE / CONTEXT note from the officer, frame your "
+    "guidance for that crime type — but the facts still come ONLY from the case data.\n"
 )
 
 _MAX_CONTEXT = 6000
@@ -50,6 +52,8 @@ def build_context(case: dict, entities: list[dict], clusters: list[dict],
     seeds = ", ".join(f"{s.get('type')}:{s.get('value')}" for s in (case.get("seeds") or [])[:6])
     lines.append(f"SEARCH SEED(S): {seeds or '(none)'}")
     lines.append(f"REGION SCOPE: {case.get('country_filter') or 'ALL'}")
+    if (case.get("case_context") or "").strip():
+        lines.append(f"CASE TYPE / CONTEXT (officer's note): {str(case['case_context']).strip()[:300]}")
     lines.append(f"TOTAL ACCOUNTS FOUND: {len([e for e in entities if e.get('type') in (None, 'social_account')])}")
 
     confirmed = [c for c in clusters if len(c.get("entity_ids") or []) > 1 and _mt(c) == "HIGH"]

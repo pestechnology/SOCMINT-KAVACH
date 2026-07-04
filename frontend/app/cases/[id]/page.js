@@ -298,6 +298,14 @@ export default function CaseView() {
               <span className="font-mono text-xs text-slate-500 shrink-0">
                 #{(kase.case_id || id || "").slice(0, 8)}
               </span>
+              {!!(kase.case_context || "").trim() && (
+                <span
+                  className="hidden md:inline-block max-w-[260px] truncate text-[11px] rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-slate-400 shrink-0"
+                  title={kase.case_context}
+                >
+                  {kase.case_context}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <ThemeToggle />
@@ -596,15 +604,27 @@ export default function CaseView() {
           </GlassPanel>
 
           {/* Recommended next steps — below the middle tabs panel, full-width horizontal
-              cards stacked for a clean, scannable read. */}
-          {status === "complete" && (data.next_actions || []).length > 0 && (
+              cards stacked for a clean, scannable read. Followed by the LE data-request
+              contacts for the platforms this case surfaced. */}
+          {status === "complete" &&
+            ((data.next_actions || []).length > 0 || (data.legal_requests || []).length > 0) && (
             <GlassPanel className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-[13px] font-mono font-bold uppercase tracking-wide text-cyan-300">
-                  ◆ Recommended next steps
-                </span>
-              </div>
-              <NextActions actions={data.next_actions} />
+              {(data.next_actions || []).length > 0 && (
+                <>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-[13px] font-mono font-bold uppercase tracking-wide text-cyan-300">
+                      ◆ Recommended next steps
+                    </span>
+                  </div>
+                  <NextActions actions={data.next_actions} />
+                </>
+              )}
+              {(data.legal_requests || []).length > 0 && (
+                <LegalRequests
+                  items={data.legal_requests}
+                  className={(data.next_actions || []).length > 0 ? "mt-4 pt-4 border-t border-white/10" : ""}
+                />
+              )}
             </GlassPanel>
           )}
         </div>
@@ -900,7 +920,7 @@ function sigPoints(v) {
 const ACTION_ICON = {
   fetch_profile: "🔎", breach_lookup: "🛡️", phone_lookup: "📞", verify_upi: "🏦",
   reverse_image: "🖼️", records_search: "📄", pivot_identifier: "🔀", rerun_wider: "🌐",
-  expand_seeds: "🌱", manual_review: "✅", agentic_lookup: "🤖",
+  expand_seeds: "🌱", manual_review: "✅", agentic_lookup: "🤖", legal_request: "📨",
 };
 const PRIORITY_STYLE = {
   high: { color: "var(--tone-rose)", bg: "rgba(255,51,102,0.10)", border: "rgba(255,51,102,0.30)", label: "HIGH" },
@@ -930,6 +950,56 @@ function NextActions({ actions = [] }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Platform data-request contacts (backend/analysis/le_directory.py) — where the officer
+// sends preservation + subscriber-data requests for the platforms this case surfaced.
+// Static, publicly documented LE channels; the handles found ride along so they can be
+// pasted straight into the request letter.
+function LegalRequests({ items = [], className = "" }) {
+  return (
+    <div className={className}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[11px] font-mono font-bold uppercase tracking-wide text-slate-400">
+          📨 Platform data requests
+        </span>
+        <Tooltip content="Law-enforcement request channels for the platforms found in this case. Serve a preservation request first, then request subscriber/IP data with legal process (BNSS s.94)." />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {items.map((r, i) => (
+          <div key={i} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[12px] font-semibold text-slate-200">{r.label}</span>
+              {r.portal && (
+                <a
+                  href={r.portal}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] font-mono text-cyan-300 hover:underline"
+                >
+                  LE portal ↗
+                </a>
+              )}
+              {r.email && (
+                <a href={`mailto:${r.email}`} className="text-[11px] font-mono text-cyan-300 hover:underline">
+                  {r.email}
+                </a>
+              )}
+            </div>
+            {(r.accounts || []).length > 0 && (
+              <div
+                className="mt-0.5 text-[10px] font-mono text-slate-500 truncate"
+                title={(r.accounts || []).join(", ")}
+              >
+                ↳ {(r.accounts || []).join(", ")}
+              </div>
+            )}
+            {r.note && <p className="mt-1 text-[10px] text-slate-400 leading-snug">{r.note}</p>}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

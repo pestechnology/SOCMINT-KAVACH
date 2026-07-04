@@ -37,6 +37,10 @@ class NewCase(BaseModel):
     seeds: list[Seed]
     minor_involved: bool = False
     country_filter: str = "ALL"
+    # Optional free-text "what kind of case is this?" (e.g. "investment fraud through
+    # Telegram"). Never used to filter/steer the SEARCH itself — only to sharpen the
+    # LLM-generated guidance layers (next steps, briefing, case chat).
+    case_context: str = ""
 
 
 class ChatTurn(BaseModel):
@@ -54,7 +58,7 @@ def create(body: NewCase, background: BackgroundTasks, user_id: str = Depends(ge
     try:
         case_id = create_case(user_id, body.title,
                               [s.model_dump() for s in body.seeds], body.minor_involved,
-                              body.country_filter)
+                              body.country_filter, body.case_context)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

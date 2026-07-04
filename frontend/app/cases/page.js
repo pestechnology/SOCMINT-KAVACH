@@ -178,6 +178,13 @@ export default function Cases() {
                   <StatusPill status={c.status} className="shrink-0" />
                 </div>
 
+                {/* Officer-supplied case type/context, when given */}
+                {!!(c.case_context || "").trim() && (
+                  <div className="mt-1 text-xs text-slate-400 italic truncate" title={c.case_context}>
+                    {c.case_context}
+                  </div>
+                )}
+
                 {/* ID */}
                 <div className="mt-2 text-xs font-mono text-slate-500">
                   ID: #{(c.case_id || "").slice(0, 8)}
@@ -230,6 +237,7 @@ const STEP_COLOR = {
 function NewInvestigation({ onClose, onCreated }) {
   const [mode, setMode] = useState("standard"); // "standard" | "agentic"
   const [title, setTitle] = useState("");
+  const [caseContext, setCaseContext] = useState(""); // optional "what kind of case is this?"
   const [region, setRegion] = useState("INDIA");
   const [seeds, setSeeds] = useState([]);
   // Default to "username" — best-tested, highest-recall path (see prior note).
@@ -266,7 +274,8 @@ function NewInvestigation({ onClose, onCreated }) {
     setError(""); setBusy(true);
     try {
       if (!seeds.length) throw new Error("Add at least one identifier to continue.");
-      const res = await api.createCase(title || "Untitled investigation", seeds, minor, region);
+      const res = await api.createCase(title || "Untitled investigation", seeds, minor, region,
+                                       caseContext.trim());
       onCreated(res.case_id);
     } catch (e) { setError(e.message); setBusy(false); }
   }
@@ -350,6 +359,20 @@ function NewInvestigation({ onClose, onCreated }) {
         {/* ─────────── STANDARD MODE ─────────── */}
         {mode === "standard" && (
           <>
+            {/* Optional crime-type context — never filters the search; it sharpens the
+                LLM guidance layers (recommended next steps, briefing, case chat). */}
+            <div className="mt-4">
+              <Label>What kind of case is this? <span className="normal-case text-slate-500">(optional)</span></Label>
+              <textarea
+                value={caseContext}
+                onChange={(e) => setCaseContext(e.target.value)}
+                rows={2}
+                maxLength={500}
+                placeholder="e.g. investment fraud through Telegram — guides the recommended next steps, not the search itself"
+                className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400/40 resize-none"
+              />
+            </div>
+
             <div className="mt-4">
               <Label>Region</Label>
               <select value={region} onChange={(e) => setRegion(e.target.value)} className={SELECT_CLS}>

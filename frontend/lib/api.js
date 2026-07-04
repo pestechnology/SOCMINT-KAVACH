@@ -39,8 +39,8 @@ export const api = {
   login: (username, password) =>
     req("/auth/login", { method: "POST", body: { username, password }, auth: false }),
   listCases: () => req("/cases"),
-  createCase: (title, seeds, minor_involved = false, country_filter = "ALL") =>
-    req("/cases", { method: "POST", body: { title, seeds, minor_involved, country_filter } }),
+  createCase: (title, seeds, minor_involved = false, country_filter = "ALL", case_context = "") =>
+    req("/cases", { method: "POST", body: { title, seeds, minor_involved, country_filter, case_context } }),
   getCase: (id) => req(`/cases/${id}`),
   getResults: (id) => req(`/cases/${id}/results`),
   // Grounded case chat — answers strictly from this case's data.

@@ -30,7 +30,7 @@ _PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
 _ACTION_TAGS = {
     "fetch_profile", "breach_lookup", "phone_lookup", "verify_upi", "reverse_image",
     "records_search", "pivot_identifier", "rerun_wider", "expand_seeds", "manual_review",
-    "agentic_lookup",
+    "agentic_lookup", "legal_request",
 }
 
 _SYSTEM = (
@@ -43,6 +43,14 @@ _SYSTEM = (
     "newly-leaked identifier (email/phone/UPI) to find more accounts; recover a real identity "
     "behind a fake name; or close an obvious gap. Do NOT recommend anything unlawful, and do "
     "NOT invent identifiers that aren't in the digest.\n"
+    "If the digest includes a CASE CONTEXT (the officer's note on what kind of case this is, "
+    "e.g. 'investment fraud through Telegram'), TAILOR the recommendations to that crime type: "
+    "name the specific registry, portal or technique that fits it (NCRP/1930 freeze chain for "
+    "financial fraud, UPI/bank trail, chain explorer for crypto, channel enumeration for "
+    "Telegram, preservation letters for sextortion evidence, …) and prefer leads consistent "
+    "with that context. Use the `legal_request` action tag when the right next step is a "
+    "preservation/data request to a platform found in the results. The context NEVER changes "
+    "the facts — only which of them to act on first and how.\n"
     f"Each action's `action` field MUST be one of: {', '.join(sorted(_ACTION_TAGS))}.\n"
     'Output ONLY strict JSON: a list of at most 5 objects, each '
     '{"priority": "high|medium|low", "action": "<tag>", "title": "<short imperative>", '
@@ -94,6 +102,106 @@ def _dedupe(actions: list[dict], limit: int = MAX_ACTIONS) -> list[dict]:
 # --------------------------------------------------------------------------------------
 # Deterministic baseline — genuinely useful investigative logic, no LLM required.
 # --------------------------------------------------------------------------------------
+
+# Case-type playbook: keyword → the one India-practical step officers most often miss for
+# that crime type. Only the FIRST match fires (one focused action, not a checklist), and
+# only when the officer actually supplied a case context. Keeps the context feature useful
+# even when the LLM is offline.
+_CONTEXT_PLAYBOOK: list[tuple[tuple[str, ...], dict]] = [
+    ((u"fraud", "scam", "invest", "ponzi", "upi", "payment", "bank", "money", "loan",
+      "crypto", "trading"),
+     {"priority": "high", "action": "records_search",
+      "title": "Trigger the NCRP financial-fraud freeze chain",
+      "detail": "Log the case on cybercrime.gov.in / dial 1930 with the transaction IDs so "
+                "the bank/UPI nodal officers can freeze the money trail; for crypto, trace "
+                "the addresses on a chain explorer before funds hop wallets.",
+      "target": "https://cybercrime.gov.in"}),
+    (("sextortion", "blackmail", "nude", "morph", "intimate", "obscene"),
+     {"priority": "high", "action": "manual_review",
+      "title": "Preserve the chats and media evidence NOW",
+      "detail": "Hash and archive every chat/screenshot before the suspect deletes them, "
+                "send platform preservation requests for the flagged accounts, and file "
+                "on NCRP under the sexual-harassment category.",
+      "target": ""}),
+    (("stalk", "harass", "threat", "troll", "abuse", "doxx"),
+     {"priority": "high", "action": "legal_request",
+      "title": "Serve preservation + IP-disclosure requests on the abusive accounts",
+      "detail": "Capture the abusive posts with timestamps, then hit each platform's LE "
+                "channel for registration and IP-log disclosure to attribute the handle.",
+      "target": ""}),
+    (("drug", "narcot", "trafficking", "contraband"),
+     {"priority": "high", "action": "records_search",
+      "title": "Sweep messaging channels/groups tied to the handles",
+      "detail": "Sales move through Telegram/Instagram handles — enumerate the channels "
+                "and groups these accounts push, and preserve the posts advertising sale.",
+      "target": ""}),
+    (("child", "minor", "csam", "pocso", "groom"),
+     {"priority": "high", "action": "manual_review",
+      "title": "Escalate under POCSO handling rules immediately",
+      "detail": "Preserve evidence without re-sharing it, report the accounts through each "
+                "platform's CSAM channel (Telegram: stopca@telegram.org), and route the "
+                "case through the I4C/NCMEC tipline flow.",
+      "target": ""}),
+]
+
+
+def _context_action(context: str) -> dict | None:
+    ctx = (context or "").lower()
+    if not ctx.strip():
+        return None
+    for keywords, action in _CONTEXT_PLAYBOOK:
+        if any(k in ctx for k in keywords):
+            return dict(action)
+    return None
+
+
+def _legal_request_action(case: dict, entities: list[dict], clusters: list[dict],
+                          ent_by_id: dict) -> dict | None:
+    """One 'request data from the platform' step for the strongest matched account.
+
+    Prefers a platform the officer's case context mentions (e.g. context says 'telegram'
+    and a telegram account was found → that's the request to make first)."""
+    try:
+        from backend.analysis.le_directory import lookup
+    except Exception:  # pragma: no cover
+        return None
+    ctx = str(case.get("case_context") or "").lower()
+
+    def _mt(c):
+        return (c.get("match") or {}).get("tier") or c.get("tier") or "LOW"
+
+    ranked = [c for c in clusters if _mt(c) in ("HIGH", "MEDIUM")]
+    best, best_entry, ctx_hit = None, None, False
+    for c in ranked:
+        for eid in (c.get("entity_ids") or []):
+            e = ent_by_id.get(eid)
+            if not e or e.get("type") not in (None, "social_account"):
+                continue
+            entry = lookup(e.get("platform"))
+            if not entry:
+                continue
+            hit = bool(ctx) and str(e.get("platform") or "").lower() in ctx
+            if best is None or (hit and not ctx_hit):
+                best, best_entry, ctx_hit = e, entry, hit
+            if ctx_hit:
+                break
+        if ctx_hit:
+            break
+    if not best or not best_entry:
+        return None
+    contact = best_entry.get("portal") or best_entry.get("email") or ""
+    return {
+        "priority": "high" if ctx_hit else "medium", "action": "legal_request",
+        "title": f"Request subscriber data from {best_entry['label']} for "
+                 f"{best.get('platform')}/{best.get('value')}",
+        "detail": "Send a preservation request now, then subscriber info + IP logs via "
+                  f"their law-enforcement channel ({contact}"
+                  + (f", {best_entry['email']}" if best_entry.get("email") and best_entry.get("portal") else "")
+                  + ") with a BNSS s.94 notice quoting the exact handle.",
+        "target": contact,
+    }
+
+
 def _seed_values(case: dict) -> set[str]:
     out = set()
     for s in (case.get("seeds") or []):
@@ -112,6 +220,16 @@ def deterministic_actions(case: dict, entities: list[dict], clusters: list[dict]
 
     multi = [c for c in clusters if len(c.get("entity_ids") or []) > 1]
     confirmed = [c for c in multi if _match_tier(c) == "HIGH" or c.get("tier") == "HIGH"]
+
+    # 0) Officer supplied a case type/context → lead with the playbook step for that crime,
+    #    and the data request for the platform the context points at.
+    ctx_action = _context_action(case.get("case_context") or "")
+    if ctx_action:
+        actions.append(ctx_action)
+    ent_by_id_early = {e["entity_id"]: e for e in entities}
+    lr = _legal_request_action(case, entities, clusters, ent_by_id_early)
+    if lr:
+        actions.append(lr)
 
     # 1) Corroborate the strongest UNCONFIRMED lead (has a URL we can fetch).
     leads = [c for c in clusters
@@ -253,6 +371,9 @@ def _build_digest(case: dict, entities: list[dict], clusters: list[dict],
     seeds = ", ".join(f"{s.get('type')}:{s.get('value')}" for s in (case.get("seeds") or [])[:5])
     lines.append(f"Search seed(s): {seeds or '(none)'}")
     lines.append(f"Region scope: {case.get('country_filter') or 'ALL'}")
+    if (case.get("case_context") or "").strip():
+        lines.append(f"CASE CONTEXT (officer's note on what kind of case this is): "
+                     f"{str(case['case_context']).strip()[:300]}")
 
     def _mt(c):
         return (c.get("match") or {}).get("tier") or c.get("tier") or "LOW"

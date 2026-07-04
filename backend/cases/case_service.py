@@ -26,7 +26,8 @@ def _now() -> str:
 
 
 def create_case(user_id: str, title: str, seeds: list[dict],
-                minor_involved: bool = False, country_filter: str = "ALL") -> str:
+                minor_involved: bool = False, country_filter: str = "ALL",
+                case_context: str = "") -> str:
     for s in seeds:
         if s.get("type") not in VALID_SEED_TYPES:
             raise ValueError(f"invalid seed type: {s.get('type')!r}")
@@ -37,9 +38,11 @@ def create_case(user_id: str, title: str, seeds: list[dict],
     try:
         conn.execute(
             """INSERT INTO cases (case_id, user_id, title, seeds_json, minor_involved,
-               status, country_filter, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)""",
+               status, country_filter, case_context, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (case_id, user_id, title, json.dumps(seeds), int(minor_involved),
-             "pending", country_filter or "ALL", _now(), _now()),
+             "pending", country_filter or "ALL",
+             (case_context or "").strip()[:500], _now(), _now()),
         )
         conn.commit()
     finally:
@@ -196,6 +199,7 @@ def get_results(case_id: str, user_id: str) -> dict | None:
     # meaningful once the scan is complete; cached per case so polling doesn't re-run the LLM.
     next_actions = []
     chat_suggestions = []
+    legal_requests = []
     if case.get("status") == "complete":
         try:
             from backend.analysis.next_actions import recommend as _recommend_actions
@@ -207,7 +211,15 @@ def get_results(case_id: str, user_id: str) -> dict | None:
             chat_suggestions = _chat_suggest(case, entities, clusters)
         except Exception:
             chat_suggestions = []
+        # LE data-request contacts for the platforms this case surfaced — deterministic
+        # directory lookup (analysis/le_directory.py), so the officer gets the portal/email
+        # to serve preservation + subscriber-data requests without hunting for it.
+        try:
+            from backend.analysis.le_directory import data_request_contacts
+            legal_requests = data_request_contacts(entities, clusters)
+        except Exception:
+            legal_requests = []
     return {"case": case, "entities": entities, "clusters": clusters,
             "forensics": forensics, "next_actions": next_actions,
-            "chat_suggestions": chat_suggestions, "status": case.get("status"),
-            "reiteration_count": reiteration_count}
+            "chat_suggestions": chat_suggestions, "legal_requests": legal_requests,
+            "status": case.get("status"), "reiteration_count": reiteration_count}

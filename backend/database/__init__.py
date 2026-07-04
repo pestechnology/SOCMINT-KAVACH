@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS cases (
     minor_involved INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending',
     country_filter TEXT DEFAULT 'ALL',
+    case_context TEXT DEFAULT '',
     created_at TEXT,
     updated_at TEXT,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -125,6 +126,8 @@ def init_db() -> None:
         cols_cases = [r[1] for r in conn.execute("PRAGMA table_info(cases)").fetchall()]
         if "country_filter" not in cols_cases:
             conn.execute("ALTER TABLE cases ADD COLUMN country_filter TEXT DEFAULT 'ALL'")
+        if "case_context" not in cols_cases:
+            conn.execute("ALTER TABLE cases ADD COLUMN case_context TEXT DEFAULT ''")
         conn.commit()
     finally:
         conn.close()

@@ -392,6 +392,12 @@ def generate_summary_report(case_id: str, output_path: str | None = None) -> str
         [Paragraph("<b>Generated</b>", ss["CellWrap"]), Paragraph(now_dt.strftime("%Y-%m-%d %H:%M UTC"), ss["CellWrap"]),
          Paragraph("<b>Ref</b>", ss["CellWrap"]), Paragraph(base._esc(str(case.get("case_id") or case_id)[:12]), ss["Mono"])],
     ]
+    # Officer-supplied case type/context ("investment fraud through Telegram") — shown so
+    # the reader knows what investigation the findings are being read against.
+    if (case.get("case_context") or "").strip():
+        hdr.append([Paragraph("<b>Case type</b>", ss["CellWrap"]),
+                    Paragraph(base._esc(str(case["case_context"]).strip()[:200]), ss["CellWrap"]),
+                    Paragraph("", ss["CellWrap"]), Paragraph("", ss["CellWrap"])])
     el += [base._table(hdr, [22 * mm, 62 * mm, 26 * mm, 64 * mm], header=False), Spacer(1, 4 * mm)]
 
     # ---- 3. what this report establishes (tier count table) ----
