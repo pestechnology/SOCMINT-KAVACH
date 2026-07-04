@@ -33,6 +33,7 @@ opencv-python-headless==4.13.0.92
 
 # ---- Report (BSA-63 PDF) ----
 reportlab>=4.4.3,<5.0.0
+svglib>=1.5.1
 
 # ---- Forensics (Sprint 3) ----
 vaderSentiment>=3.3.2        # offline sentiment/tone analysis (stylometry uses scikit-learn above)

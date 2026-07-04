@@ -56,13 +56,24 @@ export const api = {
       throw err;
     }
     return res.blob();
-  },
   // Agentic Web Browser
   getAgenticTools: () => req("/api/agentic-browser/tools"),
   startAgenticInvestigate: (body) => req("/api/agentic-browser/investigate", { method: "POST", body }),
   getAgenticStatus: (taskId) => req(`/api/agentic-browser/status/${taskId}`),
   runAgenticLookup: (body) => req("/api/agentic-browser/run", { method: "POST", body }),
   getCaseAgenticTasks: (caseId) => req(`/api/agentic-browser/case/${caseId}`),
+  downloadSummaryReport: async (id) => {
+    const res = await fetch(`${BASE}/cases/${id}/summary_report`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      const err = new Error(d.detail || `${res.status} ${res.statusText}`);
+      err.status = res.status;
+      throw err;
+    }
+    return res.blob();
+  },
 };
 
 export { BASE };

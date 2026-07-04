@@ -4,18 +4,7 @@
 // Tier is derived from confidence (>=80 HIGH, 50-79 MEDIUM, <50 LOW) per §3.4,
 // unless the caller already stamped entity._tier.
 import ConfidenceBadge from "./ConfidenceBadge";
-
-// Minimal platform → glyph map (functional glyphs only, §2.5). Falls back to •.
-const PLATFORM_ICONS = {
-  github: "🐙", linkedin: "💼", instagram: "📸", twitter: "🐦", x: "🐦",
-  facebook: "📘", youtube: "▶️", reddit: "👽", telegram: "✈️",
-  hibp: "🛡️", breach: "🛡️", upi: "🏦", derived: "🧩", web: "🌐",
-  email: "📧", phone: "📞", username: "🆔",
-};
-
-function iconForPlatform(platform = "") {
-  return PLATFORM_ICONS[String(platform).toLowerCase()] ?? "•";
-}
+import PlatformLogo from "./PlatformLogo";
 
 function tierFromConfidence(confidence) {
   const c = Number(confidence) || 0;
@@ -54,9 +43,7 @@ export default function AccountCard({ entity = {}, selected = false, onClick, ex
       {/* Row 1: platform + Live chip */}
       <div className="flex items-center justify-between gap-2">
         <span className="inline-flex items-center gap-1.5 min-w-0">
-          <span className="text-[12px] leading-none shrink-0" aria-hidden>
-            {iconForPlatform(platform)}
-          </span>
+          <PlatformLogo platform={platform} width={12} height={12} />
           <span className="text-[11px] font-mono uppercase tracking-wide text-slate-400 truncate">
             {platform}
           </span>

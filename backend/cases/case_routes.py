@@ -81,3 +81,14 @@ def report(case_id: str, user_id: str = Depends(get_current_user)):
     path = generate_report(case_id)
     return FileResponse(path, media_type="application/pdf",
                         filename=f"BSA63_report_{case_id}.pdf")
+
+
+@router.get("/{case_id}/summary_report")
+def summary_report(case_id: str, user_id: str = Depends(get_current_user)):
+    if not get_case(case_id, user_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    from backend.report.bsa63_executive_generator import generate_report
+    path = generate_report(case_id)
+    return FileResponse(path, media_type="application/pdf",
+                        filename=f"BSA63_summary_{case_id}.pdf")
+

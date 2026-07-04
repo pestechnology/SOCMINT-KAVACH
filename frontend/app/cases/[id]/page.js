@@ -17,6 +17,7 @@ import AccountCard from "@/components/ui/AccountCard";
 import ConfidenceBadge from "@/components/ui/ConfidenceBadge";
 import EmptyState from "@/components/ui/EmptyState";
 import PivotPill from "@/components/ui/PivotPill";
+import ExecutiveSummaryModal from "@/components/ui/ExecutiveSummaryModal";
 import { labelFor, iconFor, tierFor } from "@/lib/signalLabels";
 
 const NetworkGraph = dynamic(() => import("@/components/Graph"), { ssr: false });
@@ -41,6 +42,7 @@ export default function CaseView() {
   const [showAllNodes, setShowAllNodes] = useState(false);
   const [tierFilter, setTierFilter] = useState("all");   // all | HIGH | MEDIUM
   const [platformFilter, setPlatformFilter] = useState("all");
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
 
   // ---------- POLLING (UNCHANGED) ----------
   const load = useCallback(async () => {
@@ -234,6 +236,14 @@ export default function CaseView() {
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <StatusPill status={status} />
+              <button
+                onClick={() => setShowSummaryModal(true)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-cyan-500/20 via-indigo-500/20 to-blue-500/20 hover:from-cyan-500/30 hover:via-indigo-500/30 hover:to-blue-500/30 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-500/10 transition-all duration-200 hover:scale-105 active:scale-95"
+              >
+                <span>✨</span>
+                <span>Briefing</span>
+              </button>
+              <SummaryReportButton id={id} disabled={status !== "complete"} />
               <ReportButton id={id} disabled={status !== "complete"} />
             </div>
           </div>
@@ -446,6 +456,18 @@ export default function CaseView() {
         </div>
       </div>
 
+      <ExecutiveSummaryModal
+        isOpen={showSummaryModal}
+        onClose={() => setShowSummaryModal(false)}
+        kase={kase}
+        id={id}
+        status={status}
+        strongClusters={strongClusters}
+        possibleClusters={possibleClusters}
+        notLinkedEntities={notLinkedEntities}
+        clusterMembers={clusterMembers}
+      />
+
     </div>
   );
 }
@@ -474,6 +496,38 @@ function ReportButton({ id, disabled }) {
   const btn = (
     <Button variant="success" onClick={generate} disabled={disabled || busy} className="text-sm px-4 py-2">
       {busy ? "Preparing…" : "Download Evidence Report (BSA-63)"}
+    </Button>
+  );
+  return (
+    <span className="flex items-center gap-2">
+      {err && <span className="text-xs" style={{ color: "#ff3366" }}>{err}</span>}
+      {disabled ? <Tooltip content="Available when investigation completes">{btn}</Tooltip> : btn}
+    </span>
+  );
+}
+
+function SummaryReportButton({ id, disabled }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  async function generate() {
+    if (disabled) return;
+    setErr(""); setBusy(true);
+    try {
+      const blob = await api.downloadSummaryReport(id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `BSA63_summary_${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+  const btn = (
+    <Button variant="primary" onClick={generate} disabled={disabled || busy} className="text-sm px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 border border-cyan-400/30 text-white font-semibold shadow-md shadow-cyan-500/10">
+      {busy ? "Preparing…" : "📄 Summary Report"}
     </Button>
   );
   return (
