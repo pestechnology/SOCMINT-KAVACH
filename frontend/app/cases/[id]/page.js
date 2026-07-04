@@ -143,11 +143,19 @@ export default function CaseView() {
   // Exact-match accounts: the profile(s) whose handle literally equals the search query
   // (flagged server-side as metadata.exact_seed_match). These are pinned to the TOP of the
   // list regardless of whether they linked to anything, so the literal answer to the
-  // search is never buried under variant-derived clusters. Deduped out of "not linked".
-  const exactMatchEntities = entities
+  // search is never buried under variant-derived clusters.
+  // A rare handle yields 1-3 of these (exactly what we want pinned); a common handle
+  // (e.g. "octocat") exists on hundreds of sites, so we PIN only the top few on the major
+  // platforms an investigator cares about and leave the rest in their normal positions
+  // (still ★-badged) rather than flooding the top with a wall of cards.
+  const PLATFORM_PRIORITY = { instagram: 0, github: 1, linkedin: 2, twitter: 3, x: 3, facebook: 4, youtube: 5, reddit: 6, telegram: 7, tiktok: 8 };
+  const platRank = (e) => PLATFORM_PRIORITY[(e.platform || "").toLowerCase()] ?? 50;
+  const exactMatchAll = entities
     .filter((e) => e.metadata?.exact_seed_match)
-    .filter((e) => entityHasPlatform(e, platformFilter));
-  const exactMatchIds = new Set(exactMatchEntities.map((e) => e.entity_id));
+    .filter((e) => entityHasPlatform(e, platformFilter))
+    .sort((a, b) => platRank(a) - platRank(b));
+  const exactMatchEntities = exactMatchAll.slice(0, 12);           // pinned at top
+  const exactMatchIds = new Set(exactMatchEntities.map((e) => e.entity_id));  // dedupe only the pinned ones
 
   // §4.4.4.1 evidence quick-link filter. When a signal pill is active, show EVERY
   // multi-member cluster that fired that signal — ANY tier. The pills are counted from all
@@ -323,6 +331,7 @@ export default function CaseView() {
               clusterMembers={clusterMembers}
               notLinkedEntities={filteredNotLinked}
               exactMatchEntities={exactMatchEntities}
+              exactMatchTotal={exactMatchAll.length}
               strongCount={filteredStrongCount}
               possibleCount={filteredPossibleCount}
               infoByEntity={infoByEntity}
@@ -485,7 +494,7 @@ function MiniStat({ n, label, color = "#e2e8f0" }) {
 // §4.4.3 — grouped identity list: Exact match / Strong / Possible / Not linked.
 function IdentityList({
   strongClusters, possibleClusters, letterByCluster, clusterMembers,
-  notLinkedEntities, exactMatchEntities = [], strongCount, possibleCount,
+  notLinkedEntities, exactMatchEntities = [], exactMatchTotal = 0, strongCount, possibleCount,
   infoByEntity, selectedEntityId, onSelectEntity, onSelectCluster, autoExpandNotLinked,
   anyFilter = false, onClearFilters,
   signalFilter = null, signalLabel = "", signalClusters = [], signalAccountCount = 0,
@@ -541,7 +550,7 @@ function IdentityList({
       {exactMatchEntities.length > 0 && (
         <div className="mb-4">
           <div className="text-[11px] font-mono uppercase tracking-wide mb-2 flex items-center gap-1.5" style={{ color: "#22d3ee" }}>
-            🎯 Exact match to your search ({exactMatchEntities.length})
+            🎯 Exact match to your search ({exactMatchTotal > exactMatchEntities.length ? `top ${exactMatchEntities.length} of ${exactMatchTotal}` : exactMatchEntities.length})
           </div>
           <div className="space-y-2">
             {exactMatchEntities.map((e) => (
