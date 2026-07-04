@@ -57,7 +57,7 @@ from backend.ingestion.leakcheck_scraper import LeakcheckScraper
 from backend.ingestion.gravatar_scraper import GravatarScraper
 from backend.ingestion.emailrep_scraper import EmailRepScraper
 from backend.ingestion.socid_enrich import enrich_via_socid
-from backend.ingestion.derive import derive_seeds
+from backend.ingestion.derive import derive_seeds, names_from_handle
 from backend.correlation.correlation_engine import extract_bio_urls
 from backend.ingestion.url_scraper import extract_handle
 from backend.ledger.audit_ledger import log_action, save_artifact
@@ -90,15 +90,19 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         "phone":    [NumVerifyScraper(), PhoneInfogaScraper(), IgnorantScraper(),
                      DehashedScraper(), LeakcheckScraper(), SerperScraper('"{q}"')],
         # LinkedIn blocks the WhatsMyName-style enumeration Maigret/Sherlock/Blackbird use
-        # (verified: maigret's own site database has zero linkedin.com entries), so a
-        # username seed had NO path to LinkedIn at all without this dork — confirmed live
-        # that the dork itself works (site:linkedin.com/in "{q}" returns real profile URLs
-        # via Serper); it just wasn't wired in for anything but a full-name seed before.
+        # (verified: maigret's own site database has zero linkedin.com entries). LinkedIn
+        # coverage for username/name seeds comes from the dedicated linkedin_search() step
+        # below instead of a single raw-value dork here — a bare handle rarely matches a
+        # LinkedIn vanity URL (those are name-based), so it needs the recovered-name/
+        # discovered-name candidates linkedin_search() tries, not just the raw value.
         "username": [_maigret, _sherlock, _blackbird, SocialscanScraper(), RedditScraper(), TelethonScraper(), GitHubScraper(),
-                     SerperScraper('site:linkedin.com/in "{q}"'), SerperScraper('"{q}"')],
+                     SerperScraper('"{q}"')],
         "upi":      [UPIScraper(), SerperScraper('"{q}"')],
-        "name":     [SerperScraper('site:linkedin.com/in "{q}"'),
-                     SerperScraper('site:instagram.com "{q}"'),
+        # LinkedIn coverage for a name seed also comes from the dedicated linkedin_search()
+        # step (run after the fan-out below), not a dork in this list — keeping it in ONE
+        # place avoids double-querying the same "site:linkedin.com/in "{q}"" search here
+        # AND in linkedin_search()'s candidate list for a "name" seed.
+        "name":     [SerperScraper('site:instagram.com "{q}"'),
                      SerperScraper('site:twitter.com "{q}"'),
                      SerperScraper('site:github.com "{q}"'),
                      SerperScraper('site:reddit.com/user "{q}"'),
@@ -309,6 +313,11 @@ def _dedup(profiles: list[RawProfile]) -> list[RawProfile]:
             key = (plat, val)
             if key in seen_social:
                 existing = seen_social[key]
+                # An enumerator hit (Maigret/Sherlock/Blackbird) and a direct-API profile
+                # fetch (e.g. GitHubScraper) can canonicalize to the SAME (platform,
+                # value) key even though their source_url differs (gist.github.com/{u}
+                # vs github.com/{u}) — check BEFORE merging metadata below overwrites it.
+                existing_was_authoritative = bool(existing.metadata.get("_authoritative_url"))
                 # Merge metadata — richer data (from new source) fills gaps in existing.
                 # Use {**existing, **p} so non-empty fields from p overwrite empty ones,
                 # then overlay existing non-empty fields back on top.
@@ -317,7 +326,12 @@ def _dedup(profiles: list[RawProfile]) -> list[RawProfile]:
                     if v:  # keep existing non-empty values
                         merged[k] = v
                 existing.metadata = merged
-                if not existing.source_url and p.source_url:
+                # An authoritative source names the ACTUAL profile page; a plain
+                # enumerator's URL for the same platform/handle must never win just
+                # because tool-list ordering happened to scrape it first.
+                if p.metadata.get("_authoritative_url") and not existing_was_authoritative:
+                    existing.source_url = p.source_url
+                elif not existing.source_url and p.source_url:
                     existing.source_url = p.source_url
             else:
                 p.platform = plat   # store the canonical name so the UI shows one entry
@@ -407,6 +421,130 @@ def bio_link_seeds(profiles: list[RawProfile], already: set[str],
                         metadata={"derived_from_bio": p.value, "cascade": True}))
             if len(out) >= cap:
                 return out
+    return out
+
+
+def discover_real_names(profiles: list[RawProfile]) -> set[str]:
+    """Real, multi-token human names surfaced on a legitimate platform (name/fullname
+    metadata, or isolated from a page <title>). Excludes anything digit-bearing or
+    single-token (handles are single-token; real names are not). Shared by the initial
+    investigation's name-pivot step and the LinkedIn search below, so both see the
+    exact same "what do we actually know this person is called" answer.
+    """
+    names: set[str] = set()
+    for p in profiles:
+        plat = (p.platform or "").lower().strip()
+        if not any(legit in plat for legit in LEGITIMATE_PLATFORMS):
+            continue
+        m = p.metadata or {}
+        name_val = m.get("name") or m.get("fullname")
+        if not name_val and m.get("title"):
+            t_str = str(m.get("title")).split("(@")[0].split(" - ")[0].split(" | ")[0].split(" • ")[0].strip()
+            if " " in t_str and len(t_str) >= 5 and not any(c.isdigit() for c in t_str):
+                name_val = t_str
+        if not name_val:
+            continue
+        name_str = str(name_val).strip()
+        if (len(name_str) >= 5 and " " in name_str
+                and name_str.lower() != (p.value or "").lower()
+                and not any(c.isdigit() for c in name_str)):
+            names.add(name_str)
+    return names
+
+
+def linkedin_candidates(seed_type: str, seed_value: str,
+                        discovered_names: set[str] | None = None, cap: int = 4) -> list[str]:
+    """What to actually search LinkedIn for, given only an identifier (per-the-user's
+    ask: "assume only normal username we start with... use the existing details").
+    A raw username's LinkedIn vanity URL is usually name-based, not handle-based, so
+    dorking the bare handle alone finds almost nothing — this also tries the recovered
+    name (derive.py's names_from_handle, the SAME recovery used for re-iteration
+    suggestions) and any real name already discovered elsewhere in the case. Deduped,
+    case-insensitive, capped.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(v) -> None:
+        v = str(v or "").strip()
+        k = v.lower()
+        if v and k not in seen and len(out) < cap:
+            seen.add(k)
+            out.append(v)
+
+    if seed_type == "name":
+        add(seed_value)
+    elif seed_type == "username":
+        add(seed_value)   # sometimes the vanity URL DOES match the handle directly
+        for n in names_from_handle(seed_value):
+            add(n)
+    for n in sorted(discovered_names or []):
+        add(n)
+    return out[:cap]
+
+
+def _alnum(s) -> str:
+    """Lowercase, strip everything but [a-z0-9] — so 'Vismay H.S', 'vismay-h-s' and
+    'vismayhs' all collapse to the same 'vismayhs' for comparison."""
+    return "".join(ch for ch in str(s or "").lower() if ch.isalnum())
+
+
+def _linkedin_relevant(candidate: str, profile: RawProfile) -> bool:
+    """Is this LinkedIn hit actually ABOUT the person we searched for, not just someone
+    who MENTIONS them? A `site:linkedin.com/in "Satya Nadella"` search returns his real
+    profile AND profiles like 'J.D. Meier - Satya Nadella's Former Coach' — the latter
+    is noise. LinkedIn titles are consistently '{Owner Name} - {headline} - LinkedIn',
+    so the profile OWNER is the first title segment; keep only hits where the searched
+    candidate matches the OWNER's name or the URL handle, not merely the headline text.
+    """
+    cand = _alnum(candidate)
+    if not cand:
+        return False
+    handle = _alnum(profile.value)                       # /in/{handle}
+    if cand and (cand in handle or handle in cand):      # exact/near handle match
+        return True
+    title = str((profile.metadata or {}).get("title") or "")
+    # Owner name = the text before the first ' - ' / ' | ' / ' • ' separator.
+    owner = title
+    for sep in (" - ", " | ", " • ", " – "):
+        owner = owner.split(sep)[0]
+    owner_n = _alnum(owner)
+    # A name candidate ("Satya Nadella") is relevant if its collapsed form is inside the
+    # owner-name segment (handles "Satya Nadella" vs "Satya Nadella " etc.), OR every
+    # alphabetic token of the candidate appears in the owner segment.
+    if cand in owner_n:
+        return True
+    tokens = [_alnum(t) for t in str(candidate).split() if _alnum(t)]
+    return len(tokens) >= 2 and all(t in owner_n for t in tokens)
+
+
+async def linkedin_search(candidates: list[str]) -> list[RawProfile]:
+    """Run the LinkedIn dork for every candidate name/handle IN PARALLEL, deduped by
+    resulting profile URL (the same person guessed two ways shouldn't double-count) and
+    RELEVANCE-FILTERED so profiles that merely mention the target (not the target's own
+    profile) are dropped. One dedicated function so the retry-hardened SerperScraper call,
+    query construction, provenance tag, and relevance filter live in exactly one place —
+    used by BOTH the initial investigation and every re-iteration, so LinkedIn coverage
+    (and its accuracy) never depends on which code path happens to run.
+    """
+    if not candidates:
+        return []
+    scraper = SerperScraper('site:linkedin.com/in "{q}"')
+    tasks = [scraper.resolve(c, "live") for c in candidates]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    seen_urls: set[str] = set()
+    out: list[RawProfile] = []
+    for candidate, r in zip(candidates, results):
+        if not isinstance(r, list):
+            continue
+        for p in r:
+            if p.source_url in seen_urls:
+                continue
+            if not _linkedin_relevant(candidate, p):
+                continue
+            seen_urls.add(p.source_url)
+            p.metadata.setdefault("found_via_linkedin_search", candidate)
+            out.append(p)
     return out
 
 
@@ -595,36 +733,46 @@ async def run_investigation(case_id: str) -> dict:
     # targeted username variants (e.g. "Ashwin Harish" -> ashwinharish, ashwin.harish) and querying fast scrapers.
     if config.DATA_MODE == "live":
         searched_vals = {p.value.lower() for p in all_profiles if p.value}
-        discovered_names: set[str] = set()
-        for p in all_profiles:
-            plat = (p.platform or "").lower().strip()
-            if any(legit in plat for legit in LEGITIMATE_PLATFORMS):
-                m = p.metadata or {}
-                name_val = m.get("name") or m.get("fullname")
-                if not name_val and m.get("title"):
-                    t_str = str(m.get("title")).split("(@")[0].split(" - ")[0].split(" | ")[0].split(" • ")[0].strip()
-                    if " " in t_str and len(t_str) >= 5 and not any(c.isdigit() for c in t_str):
-                        name_val = t_str
-                if name_val:
-                    name_str = str(name_val).strip()
-                    if (
-                        len(name_str) >= 5
-                        and " " in name_str
-                        and name_str.lower() != (p.value or "").lower()
-                        and not any(c.isdigit() for c in name_str)
-                    ):
-                        discovered_names.add(name_str)
+        discovered_names = discover_real_names(all_profiles)
+
+        # LinkedIn search — UNCONDITIONAL, not gated behind discovered_names: per-request,
+        # starting from JUST a plain username with nothing else discovered yet must still
+        # search LinkedIn using the recovered-name guess (linkedin_candidates() derives it
+        # from the raw handle via derive.py's names_from_handle). Any real name discovered
+        # above is added on top — a stronger candidate than the guess, never a replacement
+        # for it, since the guess is all we have until something better turns up.
+        original_id_seeds = [
+            (s.get("type"), s["value"]) for s in seeds
+            if s.get("type") in ("username", "name") and isinstance(s.get("value"), str)
+            and s["value"].strip().lower() in original_seed_values
+        ]
+        li_candidates: list[str] = []
+        li_seen: set[str] = set()
+        for stype, sval in original_id_seeds:
+            for c in linkedin_candidates(stype, sval):
+                if c.lower() not in li_seen:
+                    li_seen.add(c.lower())
+                    li_candidates.append(c)
+        for n in sorted(discovered_names):
+            if n.lower() not in li_seen:
+                li_seen.add(n.lower())
+                li_candidates.append(n)
+        li_candidates = li_candidates[:6]
+        try:
+            li_results = await linkedin_search(li_candidates)
+            if li_results:
+                all_profiles.extend(li_results)
+            log_action(case_id, "linkedin_search", {"candidates": li_candidates},
+                       {"found": len(li_results)}, "system")
+        except Exception:
+            pass
 
         if discovered_names:
             top_name = sorted(discovered_names)[0]
             try:
-                # A bare search AND a LinkedIn-scoped dork — a real name discovered from
-                # another platform (e.g. a GitHub bio) is exactly the professional-identity
-                # case LinkedIn matters for, and the username path never checks it at all.
-                pivot_tasks = [SerperScraper('"{q}"').resolve(top_name, "live"),
-                               SerperScraper('site:linkedin.com/in "{q}"').resolve(top_name, "live")]
-                pivot_results = await asyncio.gather(*pivot_tasks, return_exceptions=True)
-                serp_res = [p for r in pivot_results if isinstance(r, list) for p in r]
+                # A bare (non-LinkedIn) search too — general web presence for the
+                # discovered real name, independent of the LinkedIn-specific search above.
+                serp_res = await SerperScraper('"{q}"').resolve(top_name, "live")
                 if serp_res:
                     for sp in serp_res:
                         sp.metadata["found_via_name_pivot"] = top_name
@@ -1437,6 +1585,36 @@ async def run_pivot_seeds(case_id: str, seeds: list[dict]) -> dict:
                 pass
         try:
             await enrich_via_socid(all_profiles)
+        except Exception:
+            pass
+
+        # LinkedIn search — UNCONDITIONAL on every re-iteration, same mechanism
+        # run_investigation uses: the raw username/name seeds being re-iterated on PLUS
+        # any real name discovered/enriched in this very pivot (post-enrichment, so a
+        # name socid_extractor/fact_enrich just recovered is included too).
+        li_candidates: list[str] = []
+        li_seen: set[str] = set()
+
+        def _li_add(v: str) -> None:
+            v = str(v or "").strip()
+            if v and v.lower() not in li_seen:
+                li_seen.add(v.lower())
+                li_candidates.append(v)
+
+        for s in seeds:
+            if s.get("type") in ("username", "name") and isinstance(s.get("value"), str):
+                for c in linkedin_candidates(s["type"], s["value"]):
+                    _li_add(c)
+        for n in sorted(discover_real_names(all_profiles)):
+            _li_add(n)
+        li_candidates = li_candidates[:6]
+        try:
+            li_results = await linkedin_search(li_candidates)
+            if li_results:
+                all_profiles.extend(li_results)
+                all_profiles = _dedup(all_profiles)
+            log_action(case_id, "pivot_linkedin_search", {"candidates": li_candidates},
+                       {"found": len(li_results)}, "system")
         except Exception:
             pass
 

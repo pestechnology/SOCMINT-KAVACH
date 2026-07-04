@@ -98,7 +98,14 @@ async def _profile_from_user(client: httpx.AsyncClient, user: dict) -> RawProfil
         "photo_url": user.get("avatar_url"),
         "email": user.get("email"),
         "blog": user.get("blog"),
-        "created_at": user.get("created_at")
+        "created_at": user.get("created_at"),
+        # A direct GitHub REST API profile fetch — the actual account page, not a
+        # WhatsMyName-style enumerator's inferred URL (e.g. Maigret/Sherlock finding
+        # gist.github.com/{user} and canonicalizing to the same "github" platform key
+        # in orchestrator._dedup). Lets _dedup prefer THIS source_url over whichever
+        # arrived first, since "first" is an accident of tool-list ordering, not a
+        # signal of which URL is actually the profile page.
+        "_authoritative_url": True,
     }
     if activity:
         meta["recent_posts"] = activity
