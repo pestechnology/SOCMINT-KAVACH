@@ -454,7 +454,7 @@ export default function CaseView() {
                         selectedId={selected}
                         onSelect={(nid) => { setSelected(nid); setSelectedClusterId(null); setHovered(null); }}
                         onHover={() => {}}
-                        startCollapsed
+                        startCollapsed={!showAllNodes}
                       />
                       {/* click the preview to open the graph large; expand nodes there */}
                       <button onClick={() => setGraphLarge(true)}
@@ -485,6 +485,22 @@ export default function CaseView() {
               <Modal wide icon="🕸️" title="Correlation network"
                      subtitle="Click a branch to expand · scroll to zoom · drag to pan"
                      onClose={() => setGraphLarge(false)}>
+                <div className="flex items-center justify-between mb-3 px-1">
+                  <div className="text-xs text-slate-400 font-mono">
+                    Showing <span className="text-cyan-400 font-bold">{graphEntities.length}</span> of <span className="text-slate-200">{total}</span> accounts
+                  </div>
+                  {total > 30 && (
+                    <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={showAllNodes}
+                        onChange={(e) => setShowAllNodes(e.target.checked)}
+                        style={{ accentColor: "#00f2fe" }}
+                      />
+                      Show all {total} nodes
+                    </label>
+                  )}
+                </div>
                 <div className="rounded-lg overflow-hidden border border-slate-800" style={{ height: "72vh" }}>
                   <NetworkGraph
                     entities={graphEntities}
@@ -493,7 +509,7 @@ export default function CaseView() {
                     selectedId={selected}
                     onSelect={(nid) => { setSelected(nid); setSelectedClusterId(null); setHovered(null); }}
                     onHover={() => {}}
-                    startCollapsed
+                    startCollapsed={!showAllNodes}
                   />
                 </div>
               </Modal>
