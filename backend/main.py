@@ -1,111 +1,65 @@
-"""VERTEX FastAPI application — entry point for the API server."""
+"""
+backend/main.py — FastAPI entrypoint for VERTEX.
 
-import logging
-import time
+Run:  uvicorn backend.main:app --reload
+Routers (auth, cases, ...) are wired in as later agents add them.
+"""
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
-from dataclasses import asdict
-from typing import Any, AsyncGenerator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
-from backend.config import settings
-from backend.database.db import init_db
-from backend.orchestrator import run_investigation
-from backend.schemas import Identifier, IdentifierType
-
-logging.basicConfig(
-    level=settings.LOG_LEVEL,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-)
-logger = logging.getLogger(__name__)
+from backend import config
+from backend.database import init_db
 
 
-# ── Request / Response schemas ───────────────────────────────────────
-class InvestigateRequest(BaseModel):
-    """Incoming investigation seed."""
-
-    type: str
-    value: str
-
-
-class InvestigateResponse(BaseModel):
-    """Investigation result with profiles and clusters."""
-
-    status: str
-    profile_count: int
-    profiles: list[dict[str, Any]]
-    cluster_count: int
-    clusters: list[dict[str, Any]]
-
-
-# ── Lifespan ─────────────────────────────────────────────────────────
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Startup: init DB. Shutdown: nothing yet."""
-    logger.info("VERTEX starting — DATA_MODE=%s", settings.DATA_MODE)
-    init_db(settings.DB_PATH)
+async def lifespan(app: FastAPI):
+    init_db()
+    config.validate_keys()
     yield
-    logger.info("VERTEX shutting down")
 
 
-# ── App ──────────────────────────────────────────────────────────────
-app = FastAPI(
-    title="VERTEX",
-    description="SOCMINT/OSINT suspect profiling tool",
-    version="0.3.0",
-    lifespan=lifespan,
-)
+app = FastAPI(title="VERTEX", description="SOCMINT/OSINT suspect-profiling API",
+              version="0.1.0", lifespan=lifespan)
 
+# Auth uses Bearer tokens (not cookies), so credentials are not needed — and
+# allow_origins=["*"] WITH allow_credentials=True is an invalid combo browsers reject.
+# Origins are configurable via CORS_ORIGINS (comma-separated); defaults to the local UI.
+import os as _os
+_origins = [o.strip() for o in _os.getenv(
+    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:3005,http://127.0.0.1:3005").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── Routes ───────────────────────────────────────────────────────────
-@app.post("/investigate", response_model=InvestigateResponse)
-async def investigate(req: InvestigateRequest) -> InvestigateResponse:
-    """Run the full investigation pipeline: scrape → correlate → score."""
-    # Validate identifier type against the enum
-    try:
-        id_type = IdentifierType(req.type)
-    except ValueError:
-        valid = [t.value for t in IdentifierType]
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid identifier type '{req.type}'. Valid types: {valid}",
-        )
-
-    identifier = Identifier(type=id_type, value=req.value)
-
-    t0 = time.perf_counter()
-    profiles, clusters = await run_investigation(identifier)
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-
-    logger.info(
-        "Investigate complete: type=%s value=%s profiles=%d clusters=%d elapsed=%.1fms",
-        req.type,
-        req.value,
-        len(profiles),
-        len(clusters),
-        elapsed_ms,
-    )
-
-    return InvestigateResponse(
-        status="complete",
-        profile_count=len(profiles),
-        profiles=[asdict(p) for p in profiles],
-        cluster_count=len(clusters),
-        clusters=[asdict(c) for c in clusters],
-    )
-
-
 @app.get("/health")
-async def health() -> dict[str, str]:
-    """Health check."""
-    return {"status": "ok", "data_mode": settings.DATA_MODE}
+def health() -> dict:
+    return {"status": "ok", "data_mode": config.DATA_MODE}
+
+
+# ---- Routers (added by later agents) ----
+try:
+    from backend.auth.auth_routes import router as auth_router
+    app.include_router(auth_router)
+except Exception as e:  # ASCII only — Windows console is cp1252
+    print(f"[main] WARNING: auth routes failed to load: {e}")
+
+try:
+    from backend.cases.case_routes import router as case_router
+    app.include_router(case_router)
+except Exception as e:
+    print(f"[main] WARNING: case routes failed to load: {e}")
+
+try:
+    from backend.agentic_browser.api import router as agentic_router
+    app.include_router(agentic_router)
+except Exception as e:
+    print(f"[main] WARNING: agentic browser routes failed to load: {e}")

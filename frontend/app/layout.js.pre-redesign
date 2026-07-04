@@ -1,0 +1,34 @@
+/* app/layout.js
+   CHANGED: load Space Grotesk + JetBrains Mono via next/font/google and expose them
+   as the --font-display / --font-mono CSS variables on <html>.
+   DECISION: variables (not direct className) so Tailwind font-display/font-mono and the
+   .display/.mono utility classes both resolve to the same loaded fonts. */
+import "./globals.css";
+import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-display",
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-mono",
+  display: "swap",
+});
+
+export const metadata = {
+  title: "VERTEX — SOCMINT Intelligence Platform",
+  description: "SOCMINT/OSINT suspect-profiling system",
+};
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en" className={`${spaceGrotesk.variable} ${jetbrainsMono.variable}`}>
+      <body className="min-h-screen bg-ink text-body font-display antialiased">{children}</body>
+    </html>
+  );
+}

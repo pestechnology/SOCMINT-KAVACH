@@ -1,1 +1,170 @@
-@import "tailwindcss";
+/* app/globals.css
+   CHANGED: dropped old .card/.btn/.input/.badge; added the Case Room utility classes,
+   tier color helpers, login-graph keyframes, and dark vis-timeline overrides.
+   DECISION: zero border-radius, hairline edges, no glow/blur — utilities only, layout
+   lives in the component JSX with Tailwind tokens. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+
+  /* --- Redesign design system (§2.1) --- */
+  --bg-primary: #070a12;
+  --bg-secondary: #0f172a;
+  --bg-glass: rgba(15, 23, 42, 0.75);
+  --bg-glass-hover: rgba(30, 41, 59, 0.85);
+  --border-glass: rgba(0, 242, 254, 0.25);
+  --border-glow: rgba(0, 242, 254, 0.6);
+
+  --accent-cyan: #00f2fe;
+  --accent-purple: #4facfe;
+  --accent-emerald: #00ff88;
+  --accent-amber: #ffb703;
+  --accent-crimson: #ff3366;
+
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+}
+
+html, body {
+  background: var(--bg-primary);
+  color: var(--text-main);
+  font-family: "Outfit", var(--font-display), system-ui, sans-serif;
+  font-size: 14px;
+  color-scheme: dark;
+}
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: #0E1117; }
+::-webkit-scrollbar-thumb { background: #2A3148; }
+::-webkit-scrollbar-thumb:hover { background: #4A5568; }
+
+.mono, .font-mono { font-family: "JetBrains Mono", var(--font-mono), ui-monospace, monospace; }
+.display { font-family: "Outfit", var(--font-display), "Space Grotesk", sans-serif; }
+
+/* --- Ambient background layers (§2.3) --- */
+.glow-bg {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(ellipse 60% 40% at 50% 0%,
+    rgba(0, 242, 254, 0.15) 0%, transparent 60%);
+}
+.grid-overlay {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.4;
+  background-image:
+    linear-gradient(rgba(0, 242, 254, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 242, 254, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+main { position: relative; z-index: 10; }
+
+/* --- Pulse dot for StatusPill (§3.2) --- */
+.pulse-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: currentColor; box-shadow: 0 0 8px currentColor;
+  animation: pulse 1.5s infinite ease-in-out;
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.4); opacity: 0.5; }
+}
+
+.tier-high { color: #D4900A; }
+.tier-medium { color: #5B9BD5; }
+.tier-low { color: #E08A4A; }
+.tier-reject { color: #8A97AD; }
+.tier-complete { color: #27AE60; }
+.tier-error { color: #C0392B; }
+
+.panel-label {
+  font-family: var(--font-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: #8693A8;
+}
+
+.status-dot-running {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #D4900A;
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.case-row:hover { background: #1E2235; }
+
+.hash-val {
+  font-family: var(--font-mono), monospace;
+  font-size: 9px;
+  color: #707E96;
+  opacity: 0.85;
+}
+
+/* login left-panel animated correlation graph (pure CSS, no library) */
+.lg-edge {
+  stroke: #D4900A;
+  stroke-width: 1;
+  stroke-opacity: 0.3;
+  stroke-dasharray: 140;
+  animation: lg-draw 7s ease-in-out infinite;
+}
+.lg-node {
+  fill: #D4900A;
+  animation: lg-pulse 7s ease-in-out infinite;
+}
+@keyframes lg-draw {
+  0% { stroke-dashoffset: 140; }
+  45% { stroke-dashoffset: 0; }
+  90%, 100% { stroke-dashoffset: 0; }
+}
+@keyframes lg-pulse {
+  0% { opacity: 0.2; }
+  50% { opacity: 1; }
+  100% { opacity: 0.25; }
+}
+
+/* dark overrides for vis-timeline */
+.vis-timeline { border-color: #2A3148 !important; font-family: var(--font-mono), monospace; }
+.vis-panel.vis-center, .vis-panel.vis-left, .vis-panel.vis-right,
+.vis-panel.vis-top, .vis-panel.vis-bottom { border-color: #2A3148 !important; }
+.vis-time-axis .vis-text { color: #4A5568 !important; }
+.vis-time-axis .vis-grid.vis-minor { border-color: #1E2235 !important; }
+.vis-time-axis .vis-grid.vis-major { border-color: #2A3148 !important; }
+.vis-panel, .vis-background { background: #0E1117 !important; }
+
+.vis-item {
+  border-width: 1px;
+  border-radius: 2px;
+  color: #CBD5E0 !important;
+  border-color: #2A3148 !important;
+  background: #1E2235 !important;
+  font-size: 10px !important;
+}
+.vis-item .vis-item-content { padding: 2px 6px; }
+
+.vis-item.vis-selected {
+  border-width: 2px !important;
+  box-shadow: 0 0 0 1px rgba(212,144,10,0.25) !important;
+}
+
+.vis-labelset .vis-label {
+  background: #161B27 !important;
+  color: #8693A8 !important;
+  border-color: #2A3148 !important;
+}
+
+.vis-current-time { background: rgba(212,144,10,0.35) !important; width: 1px !important; }
+
+/* Investigation scan progress bar (indeterminate — pipeline stages aren't a clean %) */
+@keyframes vertex-scan {
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(340%); }
+}

@@ -1,1 +1,1 @@
-"""Scoring engine — computes confidence and tier for linked identities."""
+"""Scoring layer — turns correlation signals into confidence tiers + clusters."""

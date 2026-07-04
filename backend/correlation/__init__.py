@@ -1,1 +1,1 @@
-"""Correlation engine — groups profiles into linked identities."""
+"""Correlation layer — pairwise signal computation between profiles."""

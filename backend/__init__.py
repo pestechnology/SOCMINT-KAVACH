@@ -1,1 +1,1 @@
-"""VERTEX — SOCMINT/OSINT suspect profiling backend."""
+"""VERTEX — SOCMINT/OSINT suspect-profiling backend."""

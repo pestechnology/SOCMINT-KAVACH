@@ -1,24 +1,79 @@
-# Database
+# ============================================================
+# VERTEX .gitignore — keep secrets, junk, and big files OUT of git
+# ============================================================
+
+# ---- SECRETS — never commit these ----
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+*.pem
+*.key
+secrets.json
+credentials.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Databases (regenerable) ----
+*.db
+*.sqlite
+*.sqlite3
+cidecode.db
 vertex.db
 
-# Environment
-.env
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
-*.egg-info/
-
-# Generated outputs
+# ---- Scraper output / generated artifacts ----
 reports/
+report_*.json
+data/synthetic_dataset.json
 artifacts/
+*.har
 
-# IDE
-.vscode/
+# ---- Pretrained model binaries (downloaded by setup, not committed) ----
+backend/models/*.onnx
+
+# ---- Node / Next.js frontend ----
+node_modules/
+.next/
+out/
+.turbo/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ---- Editor / OS ----
+.vscode/*
+!.vscode/settings.json
 .idea/
-*.swp
-*.swo
 .DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ---- Logs ----
+*.log
+logs/
+
+# ---- Local tooling / scratch ----
+.claude/
+.serena/
+scratchpad/
