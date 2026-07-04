@@ -204,6 +204,34 @@ def _is_valid_expansion_handle(val: str) -> bool:
     return True
 
 
+def _username_seed_permutations(val: str) -> list[str]:
+    """Plausible alternate handles for a username seed, fed to the first-pass full scan.
+
+    Concatenation/separator forms are always safe (they preserve every token):
+    ash29_03 -> ash2903, ash29.03. INITIAL-based forms (first-initial + last, first +
+    last-initial) are produced ONLY for real alphabetic NAME tokens — "arjun mehta" ->
+    "amehta" — never for a handle+number split like "ash29_03" (which would yield the
+    3-char noise handle "a03" that collides with thousands of unrelated accounts). Every
+    result passes _is_valid_expansion_handle, so short/numeric junk never becomes a seed.
+    """
+    val = (val or "").lower().strip()
+    parts = [p for p in val.replace(".", " ").replace("_", " ").split() if p]
+    if len(parts) < 2:
+        return []
+    first, last = parts[0], parts[-1]
+    perms = [f"{first}{last}", f"{first}_{last}", f"{first}.{last}", "".join(parts)]
+    if first.isalpha() and last.isalpha():
+        if len(last) >= 3:
+            perms.append(f"{first[0]}{last}")
+        if len(first) >= 3:
+            perms.append(f"{first}{last[0]}")
+    out: list[str] = []
+    for p in set(perms):
+        if p != val and _is_valid_expansion_handle(p) and p not in out:
+            out.append(p)
+    return out
+
+
 def _is_legitimate_and_target_country(p: RawProfile) -> bool:
     """Identifier-collection completeness gate. Kept for call-site compatibility.
 
@@ -346,17 +374,8 @@ async def run_investigation(case_id: str) -> dict:
         expanded_seeds.append(s)
         # Only generate username permutations for actual username seeds (no spaces)
         if s.get("type") == "username" and isinstance(s.get("value"), str) and " " not in s["value"].strip():
-            val = s["value"].lower().strip()
-            parts = [p for p in val.replace(".", " ").replace("_", " ").split() if p]
-            if len(parts) >= 2:
-                first, last = parts[0], parts[-1]
-                perms = [
-                    f"{first}{last}", f"{first}_{last}", f"{first}.{last}",
-                    f"{first[0]}{last}", f"{first}{last[0]}", "".join(parts)
-                ]
-                for p in set(perms):
-                    if p != val:
-                        expanded_seeds.append({"type": "username", "value": p})
+            for p in _username_seed_permutations(s["value"]):
+                expanded_seeds.append({"type": "username", "value": p})
     seeds = expanded_seeds
 
     set_status(case_id, "running")

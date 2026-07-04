@@ -46,6 +46,10 @@ SIGNAL_WEIGHTS = {
     "username_fuzzy_match": 15,
     "exact_name_match": 35,
     "fuzzy_name_match": 20,
+    # Multilingual normalization: a shared phonetic key across scripts/romanizations.
+    # LOW weight and NOT a hard anchor — with LINK_MIN_SIGNALS>=2 it can only reinforce a
+    # pair that already shares another signal, never form a cluster on its own.
+    "phonetic_name_match": 15,
     "location_overlap": 15,
     "profile_photo_phash": 35,
     "posting_hours_overlap": 15,
@@ -403,6 +407,13 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
             ratio = (_fuzz.ratio(na, nb) if _HAVE_FUZZ else int(difflib.SequenceMatcher(None, na, nb).ratio() * 100))
             if ratio >= 80:
                 fired["fuzzy_name_match"] = fuzzy_w
+
+    # phonetic name key (multilingual normalization layer). Reinforcing signal ONLY: it is
+    # deliberately below fuzzy_name_match and NOT in HARD_ANCHOR_SIGNALS, so LINK_MIN_SIGNALS>=2
+    # means it can never link a pair by itself — only strengthen one already sharing a signal.
+    pka, pkb = str(ma.get("phonetic_key") or ""), str(mb.get("phonetic_key") or "")
+    if pka and pka == pkb and len(pka) >= 3:
+        fired["phonetic_name_match"] = SIGNAL_WEIGHTS["phonetic_name_match"]
 
     # location overlap — require at least 4-char strings to avoid
     # spurious substring matches like "new" matching "new york" AND "new delhi".

@@ -41,7 +41,7 @@ const letter = (i) => (i < 26 ? String.fromCharCode(65 + i) : `#${i + 1}`);
 const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s || "");
 
 // entities: [{entity_id, platform, value, metadata}], clusters: [{cluster_id, tier, entity_ids, confidence_score, relevance}]
-export default function NetworkGraph({ entities, clusters, onSelect, onHover, selectedId, seed }) {
+export default function NetworkGraph({ entities, clusters, onSelect, onHover, selectedId, seed, startCollapsed = false }) {
   const svgRef = useRef(null);
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [query, setQuery] = useState("");
@@ -139,6 +139,17 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover, se
     const seedLabel = (seed || "").trim() || "Target";
     return { id: "__root__", kind: "root", label: seedLabel, children: cats };
   }, [entities, clusters, seed]);
+
+  // Progressive disclosure: start with just the root + its category nodes collapsed, so the
+  // graph opens small (a few nodes) and the analyst clicks a branch to expand its accounts.
+  const categoryIds = useMemo(
+    () => (tree.children || []).filter((c) => c.children && c.children.length).map((c) => c.id),
+    [tree]
+  );
+  useEffect(() => {
+    if (startCollapsed && categoryIds.length) setCollapsed(new Set(categoryIds));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startCollapsed, categoryIds.join("|")]);
 
   // -------- tidy horizontal layout (leaves stack; parents center on children) --------
   const layout = useMemo(() => {

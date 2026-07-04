@@ -11,5 +11,5 @@ payload = {
     ]
 }
 
-res = requests.post("http://localhost:8000/cases", json=payload, headers=headers)
+res = requests.post("http://localhost:8005/cases", json=payload, headers=headers)
 print("Result:", res.json())

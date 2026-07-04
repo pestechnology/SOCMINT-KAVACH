@@ -73,6 +73,54 @@ def investigate(request: AgenticInvestigateRequest, background_tasks: Background
     return task
 
 
+class SmartLookupRequest(BaseModel):
+    """Route an identifier to every source that handles its type, fetch + extract + merge."""
+    query: str = Field(..., description="the identifier value")
+    id_type: str = "username"           # username | email | name | instagram | phone
+    include_login: bool = True
+    max_public: int = 6                  # cap on Supadata scrapes per lookup (quota)
+
+
+@router.post("/smart-lookup")
+def smart_lookup_endpoint(req: SmartLookupRequest, user_id: str = Depends(get_current_user)):
+    """Run a multi-source OSINT lookup and return the merged dossier + per-source results
+    (each with its provenance/source). Public sources → Supadata, login → authed browser,
+    api → IntelBase. Does not persist — it's lead-generation for the analyst to act on."""
+    from .smart import smart_lookup
+    return smart_lookup(req.id_type, req.query,
+                        include_login=req.include_login, max_public=req.max_public)
+
+
+class SmartSendRequest(BaseModel):
+    """Promote a Quick-Lookup dossier into a real investigation (the bridge)."""
+    query: str
+    id_type: str = "username"
+    dossier: Optional[dict] = None      # the merged OsintDossier from the lookup (as JSON)
+
+
+@router.post("/smart-lookup/send")
+def smart_lookup_send(req: SmartSendRequest, user_id: str = Depends(get_current_user)):
+    """Create a case seeded with the query and ingest the dossier's accounts/identifiers
+    through the correlation pipeline. Returns {case_id, added}."""
+    from .extractor import OsintDossier
+    from .smart import dossier_to_profiles
+    from backend.pipeline.orchestrator import ingest_external_profiles
+    from backend.cases.case_service import set_status
+
+    # 'instagram' isn't a valid case seed type — route it to username.
+    seed_type = req.id_type if req.id_type in ("name", "email", "phone", "username", "upi") else "username"
+    try:
+        case_id = create_case(user_id, f"Lookup: {req.query}", [{"type": seed_type, "value": req.query}])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    dossier = req.dossier if isinstance(req.dossier, OsintDossier) else OsintDossier(**(req.dossier or {}))
+    profs = dossier_to_profiles(dossier, req.query, req.id_type)
+    set_status(case_id, "running")
+    stats = ingest_external_profiles(case_id, profs)
+    set_status(case_id, "complete")
+    return {"case_id": case_id, "added": stats.get("added", 0)}
+
+
 @router.get("/status/{task_id}", response_model=AgenticTaskStatus)
 def get_task_status(task_id: str, user_id: str = Depends(get_current_user)):
     """Live execution logs + extracted profiles for a task (must own the task's case)."""

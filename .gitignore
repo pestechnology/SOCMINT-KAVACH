@@ -75,4 +75,5 @@ logs/
 
 # ---- Local tooling / scratch ----
 .claude/
+.serena/
 scratchpad/

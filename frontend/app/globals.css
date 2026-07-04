@@ -162,3 +162,9 @@ main { position: relative; z-index: 10; }
 }
 
 .vis-current-time { background: rgba(212,144,10,0.35) !important; width: 1px !important; }
+
+/* Investigation scan progress bar (indeterminate — pipeline stages aren't a clean %) */
+@keyframes vertex-scan {
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(340%); }
+}

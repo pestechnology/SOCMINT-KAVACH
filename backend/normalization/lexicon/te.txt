@@ -1,0 +1,6 @@
+# VERTEX threat/slur lexicon — Telugu (te)
+# FORMAT: one term per line. Lines beginning with '#' are comments.
+#
+# PURPOSE: flag content for ANALYST REVIEW only. Never used to auto-classify or auto-act.
+# CURATION: entries require a native-speaker analyst's sign-off. Do NOT auto-generate or
+#           scrape this list. Ships EMPTY by design.

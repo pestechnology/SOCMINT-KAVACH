@@ -154,6 +154,27 @@ def test_compute_never_raises_on_garbage():
     assert res["tier"] == "LOW"
 
 
+# ---- gaming/low-value platforms are capped LOW even when they exactly match ----
+def test_gaming_platform_capped_low_even_on_exact_match():
+    """A gaming handle that exactly matches the seed is kept but must stay LOW — a game
+    handle is not identity evidence (product decision)."""
+    p = make_profile("social_account", "ghost_rider99", "leagueoflegends",
+                     "https://leagueoflegends.com/ghost_rider99", {"username": "ghost_rider99"})
+    p.metadata["exact_seed_match"] = True
+    seed_vals = seed_value_set([{"type": "username", "value": "ghost_rider99"}])
+    res = compute(_Cl(member_indices=[0], relevance_score=100), [p], seed_vals)
+    assert res["tier"] == "LOW"
+
+
+def test_mixed_cluster_with_a_game_account_not_capped():
+    """A cluster mixing a real account with a game account is NOT low-value — real evidence
+    stands (only ALL-gaming clusters are capped)."""
+    real = make_profile("social_account", "gr99", "github", "https://github.com/gr99", {})
+    game = make_profile("social_account", "gr99", "steam", "https://steamcommunity.com/id/gr99", {})
+    res = compute(_Cl(member_indices=[0, 1], confidence_score=80.0), [real, game], set())
+    assert res["tier"] == "HIGH"
+
+
 # ---- gaming/low-value platforms are capped to LOW even on an exact match ----
 def test_gaming_exact_match_capped_low():
     """A gaming handle is kept but never ranks high — even when it exactly matches the seed."""

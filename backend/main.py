@@ -30,7 +30,7 @@ app = FastAPI(title="VERTEX", description="SOCMINT/OSINT suspect-profiling API",
 # Origins are configurable via CORS_ORIGINS (comma-separated); defaults to the local UI.
 import os as _os
 _origins = [o.strip() for o in _os.getenv(
-    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001").split(",") if o.strip()]
+    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:3005,http://127.0.0.1:3005").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
