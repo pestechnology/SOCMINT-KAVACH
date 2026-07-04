@@ -567,7 +567,7 @@ function ReportButton({ id, disabled }) {
   }
   const summaryBtn = (
     <Button variant="secondary" onClick={() => grab("summary")} disabled={disabled || !!busy} className="text-sm px-3 py-2">
-      {busy === "summary" ? "Preparing…" : "📋 Summary briefing"}
+      {busy === "summary" ? "Preparing…" : "📋 Summary Report"}
     </Button>
   );
   const reportBtn = (
@@ -606,7 +606,7 @@ function SummaryReportButton({ id, disabled }) {
   }
   const btn = (
     <Button variant="primary" onClick={generate} disabled={disabled || busy} className="text-sm px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 border border-cyan-400/30 text-white font-semibold shadow-md shadow-cyan-500/10">
-      {busy ? "Preparing…" : "📄 Summary Report"}
+      {busy ? "Preparing…" : "📄 Summary briefing"}
     </Button>
   );
   return (
