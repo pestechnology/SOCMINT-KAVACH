@@ -17,6 +17,7 @@ import AccountCard from "@/components/ui/AccountCard";
 import ConfidenceBadge from "@/components/ui/ConfidenceBadge";
 import EmptyState from "@/components/ui/EmptyState";
 import PivotPill from "@/components/ui/PivotPill";
+import ReiterateBar from "@/components/ui/ReiterateBar";
 import ExecutiveSummaryModal from "@/components/ui/ExecutiveSummaryModal";
 import { labelFor, iconFor, tierFor } from "@/lib/signalLabels";
 
@@ -44,6 +45,27 @@ export default function CaseView() {
   const [tierFilter, setTierFilter] = useState("all");   // all | HIGH | MEDIUM
   const [platformFilter, setPlatformFilter] = useState("all");
   const [showSummaryModal, setShowSummaryModal] = useState(false);
+  // Re-iterate staging: ANYTHING can be added here — a checked account, a name/alias
+  // or profile picture dragged (or clicked) from the Summary tab — and it all lands in
+  // ONE tray above the floating Re-iterate button, combined into a single pivot, not a
+  // per-item button. Cleared after each run so the investigator can stage a fresh batch
+  // from the larger result set (that's what "re-iterate" means).
+  const [stagedSeeds, setStagedSeeds] = useState(() => new Map()); // key -> {type,value,strategy,label}
+  const stageKey = (type, value) => `${type}:${String(value).trim().toLowerCase()}`;
+  const addStagedSeed = useCallback((seed) => {
+    if (!seed || !seed.type || !seed.value) return;
+    setStagedSeeds((m) => {
+      const key = stageKey(seed.type, seed.value);
+      if (m.has(key)) return m;
+      const next = new Map(m);
+      next.set(key, seed);
+      return next;
+    });
+  }, []);
+  const removeStagedSeed = useCallback((key) => {
+    setStagedSeeds((m) => { const next = new Map(m); next.delete(key); return next; });
+  }, []);
+  const clearStaged = useCallback(() => setStagedSeeds(new Map()), []);
 
   // ---------- POLLING (UNCHANGED) ----------
   const load = useCallback(async () => {
@@ -64,6 +86,15 @@ export default function CaseView() {
     }
   }, [data?.status, load]);
   // ---------- /POLLING ----------
+
+  // A pivot flips the case back to running server-side, but once the poller above
+  // stops (status === "complete") nothing re-fires load() to notice — the client's
+  // local `data` snapshot would stay frozen forever. Optimistically flipping status
+  // to "running" here re-arms the SAME effect (it re-runs on data?.status changing),
+  // so the pivot's growth streams in exactly like the original investigation did.
+  const onPivotStarted = useCallback(() => {
+    setData((d) => (d ? { ...d, status: "running" } : d));
+  }, []);
 
   if (!data) {
     return <div className="flex items-center justify-center h-screen text-sm text-slate-500">Loading…</div>;
@@ -90,6 +121,30 @@ export default function CaseView() {
 
   const entById = {};
   entities.forEach((e) => (entById[e.entity_id] = e));
+
+  // Account checkbox toggle — uses a stable "account:<entity_id>" key (rather than
+  // type:value) so the checked state never depends on re-deriving pivotSeedFor at
+  // render time; the seed itself is only resolved once, at the moment it's staged.
+  const accountStageKey = (entityId) => `account:${entityId}`;
+  const isAccountStaged = (entityId) => stagedSeeds.has(accountStageKey(entityId));
+  const toggleAccountStaged = (entityId) => {
+    const key = accountStageKey(entityId);
+    if (stagedSeeds.has(key)) { removeStagedSeed(key); return; }
+    const seed = pivotSeedFor(entById[entityId]);
+    if (!seed) return;
+    setStagedSeeds((m) => {
+      const next = new Map(m);
+      next.set(key, { ...seed, strategy: "existing_account", label: entById[entityId]?.value || seed.value });
+      return next;
+    });
+  };
+  // Derived Set<entity_id> so AccountCard/IdentityList/ClusterGroup's existing
+  // reiterateSet.has(entity_id) checks work unchanged against the unified staging map.
+  const reiterateSet = new Set(
+    Array.from(stagedSeeds.keys())
+      .filter((k) => k.startsWith("account:"))
+      .map((k) => k.slice("account:".length))
+  );
 
   // §4.4.1 verdict counts: strong/possible = multi-member HIGH/MEDIUM clusters.
   const strong = clusters.filter((c) => c.tier === "HIGH" && (c.entity_ids || []).length >= 2).length;
@@ -297,11 +352,12 @@ export default function CaseView() {
           )}
 
           {/* Row 3 — stats strip */}
-          <div className="grid grid-cols-4 gap-3 pt-3 mt-3 border-t border-slate-800">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 pt-3 mt-3 border-t border-slate-800">
             <MiniStat n={total} label="Accounts found" />
             <MiniStat n={strong} label="Strong matches" color="#00ff88" />
             <MiniStat n={possible} label="Possible matches" color="#ffb703" />
             <MiniStat n={clusters.length} label="Identity groups" />
+            <MiniStat n={data.reiteration_count || 0} label="Re-iterations" color="#22d3ee" />
           </div>
         </GlassPanel>
       </div>
@@ -383,6 +439,8 @@ export default function CaseView() {
               signalLabel={signalFilter ? labelFor(signalFilter) : ""}
               signalClusters={signalClusters}
               signalAccountCount={signalAccountCount}
+              reiterateSet={reiterateSet}
+              onToggleReiterate={toggleAccountStaged}
             />
           </GlassPanel>
         </div>
@@ -417,6 +475,8 @@ export default function CaseView() {
                 identity={fx.identity}
                 signalFilter={signalFilter}
                 onToggleSignal={onToggleSignal}
+                onAddSeed={addStagedSeed}
+                isStaged={(type, value) => stagedSeeds.has(stageKey(type, value))}
               />
             )}
 
@@ -573,6 +633,14 @@ export default function CaseView() {
         clusterMembers={clusterMembers}
       />
 
+      <ReiterateBar
+        caseId={id}
+        stagedSeeds={Array.from(stagedSeeds.entries()).map(([key, seed]) => ({ key, ...seed }))}
+        onDropSeed={addStagedSeed}
+        onRemoveSeed={removeStagedSeed}
+        onClear={clearStaged}
+        onPivotStarted={onPivotStarted}
+      />
     </div>
   );
 }
@@ -667,6 +735,7 @@ function IdentityList({
   infoByEntity, selectedEntityId, onSelectEntity, onSelectCluster, autoExpandNotLinked,
   anyFilter = false, onClearFilters,
   signalFilter = null, signalLabel = "", signalClusters = [], signalAccountCount = 0,
+  reiterateSet = new Set(), onToggleReiterate = null,
 }) {
   const [openNotLinked, setOpenNotLinked] = useState(autoExpandNotLinked);
   useEffect(() => { setOpenNotLinked(autoExpandNotLinked); }, [autoExpandNotLinked]);
@@ -695,6 +764,8 @@ function IdentityList({
             selectedEntityId={selectedEntityId}
             onSelectEntity={onSelectEntity}
             onSelectCluster={onSelectCluster}
+            reiterateSet={reiterateSet}
+            onToggleReiterate={onToggleReiterate}
           />
         ))}
       </div>
@@ -728,6 +799,8 @@ function IdentityList({
                 entity={{ ...e, _tier: infoByEntity[e.entity_id]?.tier, _exactMatch: true }}
                 selected={selectedEntityId === e.entity_id}
                 onClick={() => onSelectEntity(e.entity_id)}
+                reiterateChecked={reiterateSet.has(e.entity_id)}
+                onToggleReiterate={onToggleReiterate}
               />
             ))}
           </div>
@@ -747,6 +820,8 @@ function IdentityList({
           selectedEntityId={selectedEntityId}
           onSelectEntity={onSelectEntity}
           onSelectCluster={onSelectCluster}
+          reiterateSet={reiterateSet}
+          onToggleReiterate={onToggleReiterate}
         />
       ))}
 
@@ -763,6 +838,8 @@ function IdentityList({
           selectedEntityId={selectedEntityId}
           onSelectEntity={onSelectEntity}
           onSelectCluster={onSelectCluster}
+          reiterateSet={reiterateSet}
+          onToggleReiterate={onToggleReiterate}
         />
       ))}
 
@@ -783,6 +860,8 @@ function IdentityList({
                 selected={selectedEntityId === e.entity_id}
                 onClick={() => onSelectEntity(e.entity_id)}
                 exactMatch={((infoByEntity[e.entity_id]?.cluster?.relevance?.score) || 0) >= 100}
+                reiterateChecked={reiterateSet.has(e.entity_id)}
+                onToggleReiterate={onToggleReiterate}
               />
             ))}
             {notLinkedEntities.length === 0 && (
@@ -796,7 +875,10 @@ function IdentityList({
 }
 
 // A single cluster's clickable header + its member AccountCards.
-function ClusterGroup({ cluster, letter, members, selectedEntityId, onSelectEntity, onSelectCluster }) {
+function ClusterGroup({
+  cluster, letter, members, selectedEntityId, onSelectEntity, onSelectCluster,
+  reiterateSet = new Set(), onToggleReiterate = null,
+}) {
   const exact = (cluster.relevance?.score || 0) >= 100;
   return (
     <div className="mb-3">
@@ -826,6 +908,8 @@ function ClusterGroup({ cluster, letter, members, selectedEntityId, onSelectEnti
             entity={{ ...e, _tier: cluster.match?.tier || cluster.tier }}
             selected={selectedEntityId === e.entity_id}
             onClick={() => onSelectEntity(e.entity_id)}
+            reiterateChecked={reiterateSet.has(e.entity_id)}
+            onToggleReiterate={onToggleReiterate}
           />
         ))}
       </div>
@@ -881,6 +965,75 @@ function NextActions({ actions = [] }) {
 }
 
 // §4.4.5 — Same-person analysis: (A) empty, (B) cluster, (C) single account.
+// A discovered account's `.value` is almost always the platform handle; an "@"
+// means it's actually an email-typed entity (breach/registration hit). No
+// derivation strategy exists for phone/upi yet (see derive.py), so those return null.
+function pivotSeedFor(entity) {
+  if (!entity) return null;
+  const val = String(entity.value || "").trim();
+  if (!val) return null;
+  if (val.includes("@")) return { type: "email", value: val };
+  const meta = entity.metadata || {};
+  if (meta.email) return { type: "email", value: meta.email };
+  if (entity.type === "phone" || entity.type === "upi" || meta.phone || meta.upi) return null;
+  return { type: "username", value: meta.username || val };
+}
+
+// Gather http(s) links self-disclosed anywhere in an account's metadata (bio, blog,
+// website, ...) — the same fields the backend's bio-link cascade follows.
+function bioLinks(meta) {
+  const fields = ["blog", "website", "url", "external_url", "homepage"];
+  const out = [];
+  const seen = new Set();
+  const push = (u) => {
+    const s = safeUrl(String(u || "").trim());
+    if (s && !seen.has(s)) { seen.add(s); out.push(s); }
+  };
+  fields.forEach((f) => { if (meta[f]) push(meta[f]); });
+  const text = [meta.bio, meta.snippet].filter(Boolean).join(" ");
+  (text.match(/https?:\/\/[^\s"'<>)]+/g) || []).forEach(push);
+  return out;
+}
+
+// "Extracted from bio" — the deterministic facts VERTEX pulled from an account's
+// profile/bio (real name, employer/college, city, linked accounts). These are exactly
+// the "points" the investigator can drag/stage into a re-iteration to widen the search.
+function BioFacts({ meta = {} }) {
+  const name = meta.fullname || meta.name;
+  const employers = meta.employer_candidates || [];
+  const city = meta.location || (meta.location_candidates || [])[0];
+  const links = bioLinks(meta);
+  const has = name || employers.length || city || links.length;
+  if (!has) return null;
+  return (
+    <div className="mt-4 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.04] p-3">
+      <div className="text-[10px] font-mono uppercase tracking-wide text-cyan-300 mb-2">Extracted from bio</div>
+      <div className="space-y-1.5 text-xs">
+        {name && (
+          <div className="flex gap-2"><span className="text-slate-500 w-16 shrink-0">Name</span><span className="text-slate-200">{name}</span></div>
+        )}
+        {employers.length > 0 && (
+          <div className="flex gap-2"><span className="text-slate-500 w-16 shrink-0">Employer / school</span><span className="text-slate-200">{employers.join(", ")}</span></div>
+        )}
+        {city && (
+          <div className="flex gap-2"><span className="text-slate-500 w-16 shrink-0">City</span><span className="text-slate-200">{city}</span></div>
+        )}
+        {links.length > 0 && (
+          <div className="flex gap-2">
+            <span className="text-slate-500 w-16 shrink-0">Linked</span>
+            <span className="min-w-0 space-y-0.5">
+              {links.map((l, i) => (
+                <a key={i} href={l} target="_blank" rel="noreferrer noopener" className="block text-cyan-400 hover:underline truncate">{l} ↗</a>
+              ))}
+            </span>
+          </div>
+        )}
+      </div>
+      <div className="mt-2 text-[10px] text-slate-500">Tip: stage these from the Summary tab to re-iterate on them.</div>
+    </div>
+  );
+}
+
 function AnalysisPanel({ cluster, letter, members, entity }) {
   // State B — cluster selected
   if (cluster) {
@@ -921,6 +1074,13 @@ function AnalysisPanel({ cluster, letter, members, entity }) {
         {cluster.explanation && (
           <p className="mt-3 text-sm text-slate-200 leading-relaxed">{cluster.explanation}</p>
         )}
+
+        {/* Facts extracted from the richest member's bio (name / employer / city / links). */}
+        <BioFacts meta={(members || [])
+          .map((e) => e.metadata || {})
+          .sort((a, b) =>
+            ((b.employer_candidates?.length || 0) + (b.fullname || b.name ? 1 : 0) + (b.bio ? 1 : 0)) -
+            ((a.employer_candidates?.length || 0) + (a.fullname || a.name ? 1 : 0) + (a.bio ? 1 : 0)))[0] || {}} />
 
         <div className="mt-4 text-[11px] font-mono uppercase tracking-wide text-slate-400">Matching evidence</div>
         <div className="mt-2 space-y-1.5">
@@ -1001,6 +1161,8 @@ function AnalysisPanel({ cluster, letter, members, entity }) {
             {url} ↗
           </a>
         )}
+
+        <BioFacts meta={m} />
 
         <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-xs text-slate-400 leading-relaxed">
           Not linked to other accounts. VERTEX refused to link because fewer than 2 corroborating signals were found.
@@ -1103,20 +1265,43 @@ function ExpandableList({ items, initial = 4, render }) {
 }
 
 // Expandable profile-photo wall: shows one row, click to reveal all in a wrapping grid.
-function PhotoGrid({ photos }) {
+// A discovered profile picture, staged as a "face" seed — dragging it (or clicking
+// it) into re-iteration re-runs face-embedding matching against that photo to find
+// OTHER accounts using the same face (backend: build_face_seed_profile).
+function photoSeed(p) {
+  return { type: "face", value: p.url, strategy: "summary_pick", label: p.platform || "photo" };
+}
+
+function PhotoThumb({ p, onAddSeed, isStaged, className = "" }) {
+  const staged = isStaged ? isStaged("face", p.url) : false;
+  return (
+    <div
+      className={`relative shrink-0 cursor-grab active:cursor-grabbing ${className}`}
+      draggable={!!onAddSeed}
+      onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify(photoSeed(p))); e.dataTransfer.effectAllowed = "copy"; }}
+      onClick={() => onAddSeed?.(photoSeed(p))}
+      title="Drag into Re-iterate, or click to stage"
+    >
+      <img src={p.url} alt="" className={`w-full h-full rounded-md object-cover border ${staged ? "border-cyan-400" : "border-white/10"}`}
+        onError={(ev) => { ev.currentTarget.parentElement.style.display = "none"; }} />
+      <span className="absolute bottom-0 left-0 text-[8px] font-mono px-1 rounded-tr rounded-bl-md bg-black/70 text-slate-300">
+        {platformShort(p.platform)}
+      </span>
+      {staged && (
+        <span className="absolute top-0.5 right-0.5 text-[9px] leading-none bg-cyan-400 text-black rounded-full w-3.5 h-3.5 flex items-center justify-center">✓</span>
+      )}
+    </div>
+  );
+}
+
+function PhotoGrid({ photos, onAddSeed, isStaged }) {
   const [open, setOpen] = useState(false);
   const shown = open ? photos : photos.slice(0, 5);
   return (
     <div>
       <div className={open ? "flex flex-wrap gap-2" : "flex gap-2 overflow-x-auto pb-1"}>
         {shown.map((p, i) => (
-          <div key={i} className="relative shrink-0 w-14 h-14">
-            <img src={p.url} alt="" className="w-14 h-14 rounded-md object-cover border border-white/10"
-              onError={(ev) => { ev.currentTarget.parentElement.style.display = "none"; }} />
-            <span className="absolute bottom-0 left-0 text-[8px] font-mono px-1 rounded-tr rounded-bl-md bg-black/70 text-slate-300">
-              {platformShort(p.platform)}
-            </span>
-          </div>
+          <PhotoThumb key={i} p={p} onAddSeed={onAddSeed} isStaged={isStaged} className="w-14 h-14" />
         ))}
       </div>
       {photos.length > 5 && (
@@ -1128,7 +1313,7 @@ function PhotoGrid({ photos }) {
   );
 }
 
-function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal }) {
+function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal, onAddSeed, isStaged }) {
   const [modal, setModal] = useState(null);   // "photos" | "platforms" | "names" | "locations" | null
   // Profile pictures — EVERY image fetched from every account (dedupe only exact-same URL,
   // regardless of the account's confidence/tier). Carries source_url so the popup links out.
@@ -1212,7 +1397,7 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
           {photos.length === 0 ? (
             <EmptyLine>No profile pictures found.</EmptyLine>
           ) : (
-            <PhotoGrid photos={photos} />
+            <PhotoGrid photos={photos} onAddSeed={onAddSeed} isStaged={isStaged} />
           )}
         </MatrixCard>
 
@@ -1242,14 +1427,25 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
             <ExpandableList
               items={nameRows}
               initial={4}
-              render={(r, i) => (
-                <div key={i} className="flex items-center justify-between gap-2 text-[13px]">
-                  <span className="text-slate-200 truncate">{r.v}</span>
-                  <span className={`text-[10px] font-mono uppercase shrink-0 ${r.alias ? "text-slate-500" : "text-cyan-400"}`}>
-                    {r.alias ? "Alias" : "Name"}
-                  </span>
-                </div>
-              )}
+              render={(r, i) => {
+                const seed = { type: "name", value: r.v, strategy: "summary_pick", label: r.v };
+                const staged = isStaged ? isStaged("name", r.v) : false;
+                return (
+                  <div
+                    key={i}
+                    className={`flex items-center justify-between gap-2 text-[13px] rounded px-1 -mx-1 cursor-grab active:cursor-grabbing ${staged ? "bg-cyan-400/10" : "hover:bg-white/[0.04]"}`}
+                    draggable
+                    onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify(seed)); e.dataTransfer.effectAllowed = "copy"; }}
+                    onClick={() => onAddSeed?.(seed)}
+                    title="Drag into Re-iterate, or click to stage"
+                  >
+                    <span className="text-slate-200 truncate">{staged && "✓ "}{r.v}</span>
+                    <span className={`text-[10px] font-mono uppercase shrink-0 ${r.alias ? "text-slate-500" : "text-cyan-400"}`}>
+                      {r.alias ? "Alias" : "Name"}
+                    </span>
+                  </div>
+                );
+              }}
             />
           )}
         </MatrixCard>
@@ -1272,18 +1468,14 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
 
       {/* Full-view popups (click a card) */}
       {modal === "photos" && (
-        <Modal icon="🖼️" title="All profile pictures" subtitle={`${photos.length} images across every platform`} onClose={() => setModal(null)}>
+        <Modal icon="🖼️" title="All profile pictures" subtitle={`${photos.length} images across every platform — drag one into Re-iterate to face-search`} onClose={() => setModal(null)}>
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
             {photos.map((p, i) => (
-              <a key={i} href={safeUrl(p.source_url) || p.url} target="_blank" rel="noreferrer noopener" className="group">
-                <div className="relative aspect-square rounded-md overflow-hidden border border-white/10">
-                  <img src={p.url} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                    onError={(ev) => { ev.currentTarget.parentElement.parentElement.style.display = "none"; }} />
-                  <span className="absolute bottom-0 left-0 text-[9px] font-mono px-1 rounded-tr rounded-bl-md bg-black/75 text-slate-200">
-                    {decodeEntities(p.platform || "")}
-                  </span>
-                </div>
-              </a>
+              <div key={i} className="group">
+                <PhotoThumb p={p} onAddSeed={onAddSeed} isStaged={isStaged} className="aspect-square w-full h-auto" />
+                <a href={safeUrl(p.source_url) || p.url} target="_blank" rel="noreferrer noopener"
+                  className="block mt-1 text-[10px] text-cyan-400 hover:underline truncate">Open source ↗</a>
+              </div>
             ))}
           </div>
         </Modal>
@@ -1301,16 +1493,27 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
         </Modal>
       )}
       {modal === "names" && (
-        <Modal icon="👤" title="Names & aliases" subtitle={`${nameRows.length} total`} onClose={() => setModal(null)}>
+        <Modal icon="👤" title="Names & aliases" subtitle={`${nameRows.length} total — drag one into Re-iterate`} onClose={() => setModal(null)}>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
-            {nameRows.map((r, i) => (
-              <div key={i} className="flex items-center justify-between gap-2 text-[13px] border-b border-slate-800/60 py-1">
-                <span className="text-slate-200 truncate">{r.v}</span>
-                <span className={`text-[10px] font-mono uppercase shrink-0 ${r.alias ? "text-slate-500" : "text-cyan-400"}`}>
-                  {r.alias ? "Alias" : "Name"}
-                </span>
-              </div>
-            ))}
+            {nameRows.map((r, i) => {
+              const seed = { type: "name", value: r.v, strategy: "summary_pick", label: r.v };
+              const staged = isStaged ? isStaged("name", r.v) : false;
+              return (
+                <div
+                  key={i}
+                  className={`flex items-center justify-between gap-2 text-[13px] border-b border-slate-800/60 py-1 cursor-grab active:cursor-grabbing ${staged ? "bg-cyan-400/10" : ""}`}
+                  draggable
+                  onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify(seed)); e.dataTransfer.effectAllowed = "copy"; }}
+                  onClick={() => onAddSeed?.(seed)}
+                  title="Drag into Re-iterate, or click to stage"
+                >
+                  <span className="text-slate-200 truncate">{staged && "✓ "}{r.v}</span>
+                  <span className={`text-[10px] font-mono uppercase shrink-0 ${r.alias ? "text-slate-500" : "text-cyan-400"}`}>
+                    {r.alias ? "Alias" : "Name"}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </Modal>
       )}

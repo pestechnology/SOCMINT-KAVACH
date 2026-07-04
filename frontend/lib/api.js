@@ -93,6 +93,11 @@ export const api = {
   // Quick Lookup (multi-source OSINT dossier)
   smartLookup: (body) => req("/api/agentic-browser/smart-lookup", { method: "POST", body }),
   smartLookupSend: (body) => req("/api/agentic-browser/smart-lookup/send", { method: "POST", body }),
+  // Re-iteration / identifier cross-pivoting (multi-select: any mix of already-
+  // discovered accounts, suggested candidates, and manually-typed identifiers, run as
+  // ONE combined pivot; repeatable — select a new batch after each run completes).
+  suggestPivot: (id, seeds) => req(`/cases/${id}/pivot/suggest`, { method: "POST", body: { seeds } }),
+  runPivot: (id, seeds) => req(`/cases/${id}/pivot`, { method: "POST", body: { seeds } }),
 };
 
 export { BASE };

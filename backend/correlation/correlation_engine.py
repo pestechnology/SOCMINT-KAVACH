@@ -120,6 +120,23 @@ def _norm(s) -> str:
     return str(s or "").strip().lower()
 
 
+def _norm_email(s) -> str:
+    """Email-specific normalization on top of _norm(): Gmail/Googlemail ignore dots
+    in the local part and anything after a "+tag", so "vismay.hs@gmail.com" and
+    "vismayhs+work@googlemail.com" are the SAME inbox as "vismayhs@gmail.com" —
+    without this, exact_email_match (a 60-pt hard anchor) misses that a derived/
+    guessed email is actually the seed's own address under a dotted variant."""
+    s = _norm(s)
+    if "@" not in s:
+        return s
+    local, _, domain = s.partition("@")
+    local = local.split("+", 1)[0]
+    if domain in ("gmail.com", "googlemail.com"):
+        local = local.replace(".", "")
+        domain = "gmail.com"
+    return f"{local}@{domain}"
+
+
 def _phone(s) -> str:
     return "".join(ch for ch in str(s or "") if ch.isdigit())[-10:]
 
@@ -316,7 +333,7 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
     pa, pb = _phone(ma.get("phone") or ""), _phone(mb.get("phone") or "")
     if pa and pa == pb:
         fired["exact_phone_match"] = SIGNAL_WEIGHTS["exact_phone_match"]
-    ea, eb = _norm(ma.get("email") or ""), _norm(mb.get("email") or "")
+    ea, eb = _norm_email(ma.get("email") or ""), _norm_email(mb.get("email") or "")
     if ea and ea == eb:
         fired["exact_email_match"] = SIGNAL_WEIGHTS["exact_email_match"]
     ua, ub = _norm(ma.get("upi") or ""), _norm(mb.get("upi") or "")

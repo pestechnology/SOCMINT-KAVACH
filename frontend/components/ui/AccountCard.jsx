@@ -18,7 +18,21 @@ function truncate(str, n = 80) {
   return str.length > n ? `${str.slice(0, n - 1)}…` : str;
 }
 
-export default function AccountCard({ entity = {}, selected = false, onClick, exactMatch = false }) {
+// Only allow http(s) — blocks a javascript:/data: URI from ever becoming a clickable
+// href (an XSS vector if a scraped field were ever malicious). Same rule page.js's
+// own safeUrl() uses; duplicated here since this is a separate component file.
+function safeUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
+  } catch { return null; }
+}
+
+export default function AccountCard({
+  entity = {}, selected = false, onClick, exactMatch = false,
+  reiterateChecked = false, onToggleReiterate = null,
+}) {
   const meta = entity.metadata || {};
   const platform = entity.platform || entity.type || "account";
   const tier = entity._tier || tierFromConfidence(entity.confidence);
@@ -28,6 +42,7 @@ export default function AccountCard({ entity = {}, selected = false, onClick, ex
   const primary = meta.fullname || entity.value || "Unknown account";
   const secondary = truncate(meta.title || meta.bio || "", 80);
   const isLive = entity.data_mode === "live";
+  const link = safeUrl(entity.source_url);
 
   return (
     <button
@@ -40,9 +55,19 @@ export default function AccountCard({ entity = {}, selected = false, onClick, ex
           : "border-white/[0.08] bg-slate-900/50 hover:border-cyan-400 hover:translate-x-1 hover:shadow-[0_4px_16px_-8px_rgba(0,242,254,0.35)]"}
       `}
     >
-      {/* Row 1: platform + Live chip */}
+      {/* Row 1: re-iterate checkbox + platform + Live chip */}
       <div className="flex items-center justify-between gap-2">
         <span className="inline-flex items-center gap-1.5 min-w-0">
+          {onToggleReiterate && (
+            <input
+              type="checkbox"
+              checked={reiterateChecked}
+              onChange={() => onToggleReiterate(entity.entity_id)}
+              onClick={(e) => e.stopPropagation()}
+              title="Select for re-iterate"
+              className="accent-cyan-400 shrink-0"
+            />
+          )}
           <PlatformLogo platform={platform} width={12} height={12} />
           <span className="text-[11px] font-mono uppercase tracking-wide text-slate-400 truncate">
             {platform}
@@ -67,9 +92,23 @@ export default function AccountCard({ entity = {}, selected = false, onClick, ex
         </span>
       </div>
 
-      {/* Row 2: primary display */}
-      <div className="mt-1.5 text-sm font-medium text-slate-100 truncate">
-        {primary}
+      {/* Row 2: primary display + clickable link to the actual discovered page */}
+      <div className="mt-1.5 flex items-center gap-2 min-w-0">
+        <span className="text-sm font-medium text-slate-100 truncate min-w-0">
+          {primary}
+        </span>
+        {link && (
+          <a
+            href={link}
+            target="_blank"
+            rel="noreferrer noopener"
+            onClick={(e) => e.stopPropagation()}
+            title={link}
+            className="shrink-0 text-[11px] text-cyan-400 hover:text-cyan-300 hover:underline"
+          >
+            Open ↗
+          </a>
+        )}
       </div>
 
       {/* Row 3: secondary (title | bio) */}

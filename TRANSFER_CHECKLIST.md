@@ -51,7 +51,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 pip install --upgrade pip
-pip install -r requirements.txt        # includes maigret, sherlock-project, holehe, socialscan, truststore, vaderSentiment, opencv-python-headless
+pip install -r requirements.txt        # includes maigret, sherlock-project, holehe, socialscan, socid-extractor, truststore, vaderSentiment, opencv-python-headless
 pip install pytest pytest-asyncio      # test deps (NOT in requirements.txt)
 
 # Face-matching models (one-time, ~37 MB) — a zip transfer will already include
@@ -98,6 +98,8 @@ Then edit `.env`:
 - **(Optional) Deeper breach coverage** — `DEHASHED_EMAIL`/`DEHASHED_API_KEY` and/or
   `LEAKCHECK_API_KEY` (both paid). Without them, those two scrapers cleanly return no
   results — every other feature is unaffected.
+- **(Optional) Gravatar/EmailRep** — `GRAVATAR_API_KEY` / `EMAILREP_API_KEY` (both
+  free-tier). Gravatar still does a free no-key avatar-existence check without one.
 
 > If the original keys were ever shared more widely than your team, **rotate them** in each
 > provider's console.
@@ -128,7 +130,7 @@ uvicorn backend.main:app --reload --port 8000      # http://localhost:8000/docs
 # frontend (separate terminal)
 cd frontend && npm run dev                          # http://localhost:3000 (3001 if 3000 busy)
 # tests
-python -m pytest tests/ -q                          # 101 tests
+python -m pytest tests/ -q                          # 189 tests
 ```
 
 ---
@@ -141,7 +143,7 @@ python -m pytest tests/ -q                          # 101 tests
 - [ ] `.env.example` (the template, no real secrets) **is** committed — that's intended.
 - [ ] If this repo's git history is from the original, confirm no secret was ever committed:
       `git log --all -- .env` should be **empty** (it was never tracked in the original).
-- [ ] Run `python -m pytest tests/ -q` → 71 passing before you push.
+- [ ] Run `python -m pytest tests/ -q` → 189 passing before you push.
 
 > Quick secret scan before pushing:
 > ```bash
@@ -161,4 +163,7 @@ python -m pytest tests/ -q                          # 101 tests
 - **Blackbird needs `BLACKBIRD_PATH` in `.env`** — set it to wherever you cloned the repo (e.g. `C:\tools\blackbird`). The scraper also needs a `venv\Scripts\blackbird.bat` wrapper; create it manually (details in `SETUP.md` §3).
 - **Name searches (seed type `name`)** use three Serper dorks (`site:linkedin.com/in`, `site:instagram.com`, `site:twitter.com`). LinkedIn/Instagram/Twitter handles are now extracted from the result URL paths, so correlation works correctly without needing Maigret/Sherlock on top.
 - **False-positive filter** runs a hex control-username against Maigret, Sherlock, and Blackbird in parallel; broken-detector sites are excluded from real results and cached for 6 h in `reports/false_positive_sites.json`. This directory is created automatically.
-- **Full engineering detail:** see `context.md` (read Sections 11–17 for the complete current state; §17 is a from-scratch setup walk-through).
+- **Full engineering detail:** see `context.md` (read Sections 11–17 for the complete
+  current state, §17 is a from-scratch setup walk-through, §21 covers re-iteration /
+  cross-pivoting and the new Tier-1 scrapers). For the re-iteration system specifically,
+  see `REITERATION_AND_SEARCH_SYSTEM.md`.

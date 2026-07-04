@@ -33,6 +33,7 @@ Only meaningful in DATA_MODE=live; the orchestrator guards the call.
 from __future__ import annotations
 
 import asyncio
+import re
 
 from backend.llm.llm_client import LLMClient
 
@@ -43,16 +44,92 @@ _MAX_PROFILES = 6    # Keeps the per-investigation LLM call budget small. This f
                       # 429-retry paths. 6 covers the richest-bio profiles, which is where
                       # employer/city facts actually come from.
 
+# -------------------------------------------------------------------------- #
+#  Deterministic fallback (used when the LLM is unavailable — e.g. Groq 429'd
+#  and NVIDIA timed out). Conservative, high-precision patterns only: these
+#  feed context-tier signals (employer_overlap / city_match), so recall matters
+#  less than not manufacturing a shared "University" token that could falsely
+#  link two unrelated people. Deliberately generic across platforms — any bio
+#  text, not GitHub-specific.
+# -------------------------------------------------------------------------- #
+
+# A proper-noun token: starts capitalized, no interior '.' (so "University." can't
+# swallow the following sentence's first word). Allows &, ', - for "AT&T", "O'Reilly".
+_TOK = r"[A-Z][A-Za-z0-9&'-]*"
+# "<role> at/@ <Proper Noun>" — captures the employer/school after a role verb.
+_ROLE_AT_RE = re.compile(
+    r"(?i:\b(?:works?|working|worked|employed|studies|studying|student|intern|interning|"
+    r"engineer|developer|sde|swe|analyst|manager|founder|co-?founder|ceo|cto|researcher|"
+    r"scientist|consultant|associate|freelancer)\s+(?:at|@)\s+)"
+    rf"({_TOK}(?:\s+{_TOK}){{0,4}})"
+)
+# Explicit institution phrases ending in a school/company keyword.
+_INSTITUTION_RE = re.compile(
+    rf"\b({_TOK}(?:\s+{_TOK}){{0,4}}\s+"
+    r"(?:University|College|Institute|Polytechnic|Academy|School|Technologies|Technology|Labs|Systems|Solutions))\b"
+)
+# Well-known Indian institute acronyms (optionally with a campus name).
+_ACRONYM_INST_RE = re.compile(
+    r"\b((?:IIT|NIT|IIIT|BITS|VIT|SRM|PES|RVCE|BMSCE|MSRIT|DTU|NSUT|VTU|IIM|IISc|AIIMS)"
+    r"(?:\s+[A-Z][a-zA-Z]+){0,2})\b"
+)
+# City cues — only unambiguous ones ("from X" is deliberately excluded; it mis-fires,
+# e.g. "photos from Ashwin", per profile_page_fetcher's same note).
+_CITY_RE = re.compile(
+    r"(?i:\b(?:based\s+in|lives?\s+in|living\s+in|located\s+in|location[:\-]\s*|currently\s+in)\s*|📍\s*)"
+    rf"({_TOK}(?:\s+{_TOK}){{0,2}})"
+)
+
+# Single generic words that must NEVER stand alone as an employer/school candidate —
+# they'd match across unrelated people and manufacture a false employer_overlap.
+_GENERIC_ORG = {
+    "university", "college", "institute", "school", "academy", "technology",
+    "technologies", "labs", "systems", "solutions", "polytechnic", "company",
+}
+
+
+def _clean_candidate(s: str, max_len: int = 60) -> str:
+    return re.sub(r"\s+", " ", str(s or "")).strip().strip(".,;:").strip()[:max_len]
+
+
+def _dedupe_ci(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in values:
+        v = _clean_candidate(v)
+        k = v.lower()
+        if v and k not in seen and k not in _GENERIC_ORG and len(v) >= 3:
+            seen.add(k)
+            out.append(v)
+    return out
+
+
+def deterministic_facts(text: str) -> dict:
+    """Regex-only employer/school + city extraction. Never raises; used as a fallback
+    (and augmenter) for the LLM path so bio facts still surface when the LLM is down."""
+    text = str(text or "")
+    if not text.strip():
+        return {"employers": [], "locations": []}
+    employers = _dedupe_ci([
+        *_ROLE_AT_RE.findall(text),
+        *_INSTITUTION_RE.findall(text),
+        *_ACRONYM_INST_RE.findall(text),
+    ])[:5]
+    locations = _dedupe_ci(_CITY_RE.findall(text))[:5]
+    return {"employers": employers, "locations": locations}
+
 
 def _text_of(meta: dict) -> str:
-    return " ".join(str(meta.get(k) or "") for k in ("bio", "text_sample")).strip()
+    return " ".join(str(meta.get(k) or "") for k in ("bio", "text_sample", "snippet")).strip()
 
 
 async def enrich_facts(profiles) -> int:
     """Extract employer/city candidates for profiles with bio/text_sample content.
 
-    Mutates profile.metadata in place. Returns the count of profiles that yielded at
-    least one candidate.
+    LLM first (NER-style), then unioned with a deterministic regex pass so the fields
+    still populate when the LLM provider is rate-limited or down (the common case on a
+    free tier). Mutates profile.metadata in place. Returns the count of profiles that
+    yielded at least one candidate.
     """
     targets = [p.metadata for p in profiles
               if isinstance(getattr(p, "metadata", None), dict)
@@ -65,12 +142,14 @@ async def enrich_facts(profiles) -> int:
     llm = LLMClient()
 
     async def _one(meta: dict) -> None:
+        text = _text_of(meta)
         try:
-            facts = await asyncio.to_thread(llm.extract_facts, _text_of(meta))
+            facts = await asyncio.to_thread(llm.extract_facts, text)
         except Exception:
             facts = {"employers": [], "locations": []}
-        meta["employer_candidates"] = facts.get("employers", [])
-        meta["location_candidates"] = facts.get("locations", [])
+        det = deterministic_facts(text)
+        meta["employer_candidates"] = _dedupe_ci([*(facts.get("employers") or []), *det["employers"]])
+        meta["location_candidates"] = _dedupe_ci([*(facts.get("locations") or []), *det["locations"]])
 
     await asyncio.gather(*[_one(m) for m in targets], return_exceptions=True)
     return sum(1 for m in targets

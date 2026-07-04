@@ -106,6 +106,14 @@ def get_results(case_id: str, user_id: str) -> dict | None:
         clusters = [dict(c) for c in conn.execute(
             "SELECT * FROM clusters WHERE case_id = ? ORDER BY confidence_score DESC",
             (case_id,)).fetchall()]
+        # Re-iteration count: how many pivot runs the investigator has launched on this
+        # case (each run logs exactly one 'pivot_started' to the tamper-evident ledger).
+        try:
+            reiteration_count = conn.execute(
+                "SELECT COUNT(*) FROM audit_ledger WHERE case_id = ? AND action = 'pivot_started'",
+                (case_id,)).fetchone()[0]
+        except Exception:
+            reiteration_count = 0
     finally:
         conn.close()
     for e in entities:
@@ -201,4 +209,5 @@ def get_results(case_id: str, user_id: str) -> dict | None:
             chat_suggestions = []
     return {"case": case, "entities": entities, "clusters": clusters,
             "forensics": forensics, "next_actions": next_actions,
-            "chat_suggestions": chat_suggestions, "status": case.get("status")}
+            "chat_suggestions": chat_suggestions, "status": case.get("status"),
+            "reiteration_count": reiteration_count}
