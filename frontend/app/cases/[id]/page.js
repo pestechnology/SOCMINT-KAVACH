@@ -209,6 +209,7 @@ export default function CaseView() {
     { id: "network", label: "Network" },
     ...(hasPostingHours ? [{ id: "timeline", label: "Timeline" }] : []),
     ...(hasForensics ? [{ id: "writing", label: "Writing & Activity" }] : []),
+    { id: "kavach", label: "⚡ KAVACH CHAT", isHighlight: true },
   ];
   const activeTabId = centerTabs.some((t) => t.id === tab) ? tab : "summary";
 
@@ -389,13 +390,19 @@ export default function CaseView() {
         {/* CENTER — TABBED MAIN VIEW (§4.4.4) */}
         <div className="lg:col-span-6">
           <GlassPanel className="p-4">
-            <div className="flex gap-5 border-b border-slate-800 mb-4">
+            <div className="flex gap-5 border-b border-slate-800 mb-4 overflow-x-auto">
               {centerTabs.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => setTab(t.id)}
-                  className={`pb-2 -mb-px text-[11px] font-mono uppercase tracking-wider transition-colors ${
-                    activeTabId === t.id ? "text-cyan-400 border-b-2 border-cyan-400" : "text-slate-500 hover:text-slate-300"
+                  className={`pb-2 -mb-px text-[11px] font-mono uppercase tracking-wider transition-all whitespace-nowrap ${
+                    activeTabId === t.id
+                      ? t.isHighlight
+                        ? "text-amber-300 border-b-2 border-amber-400 font-bold drop-shadow-[0_0_10px_rgba(251,191,36,0.6)]"
+                        : "text-cyan-400 border-b-2 border-cyan-400"
+                      : t.isHighlight
+                        ? "text-amber-400/90 hover:text-amber-300 font-semibold animate-pulse hover:drop-shadow-[0_0_6px_rgba(251,191,36,0.4)]"
+                        : "text-slate-500 hover:text-slate-300"
                   }`}
                 >
                   {t.label}
@@ -499,8 +506,13 @@ export default function CaseView() {
             )}
 
             {activeTabId === "writing" && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+              <div className="pt-1">
                 <WritingActivity fx={fx} />
+              </div>
+            )}
+
+            {activeTabId === "kavach" && (
+              <div className="pt-1">
                 <CaseChat caseId={id} suggestions={data.chat_suggestions || []} disabled={status !== "complete"} />
               </div>
             )}
@@ -1376,12 +1388,12 @@ function CaseChat({ caseId, suggestions = [], disabled = false }) {
   }
 
   return (
-    <div className="rounded-xl border border-white/[0.08] bg-slate-900/50 flex flex-col h-[520px]">
-      <div className="px-4 py-3 border-b border-white/[0.06] flex items-center gap-2">
-        <span className="text-[13px]" aria-hidden>💬</span>
+    <div className="rounded-xl border border-amber-500/30 bg-slate-900/80 shadow-[0_0_25px_rgba(251,191,36,0.08)] flex flex-col h-[600px] backdrop-blur-md">
+      <div className="px-4 py-3 border-b border-white/[0.08] flex items-center gap-2 bg-gradient-to-r from-amber-500/[0.08] to-transparent">
+        <span className="text-[14px]" aria-hidden>🛡️</span>
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-slate-100 leading-tight">Ask this case</div>
-          <div className="text-[10px] text-slate-500">Answers only from this investigation's data</div>
+          <div className="text-sm font-bold bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-500 bg-clip-text text-transparent leading-tight tracking-wide">⚡ KAVACH AI INTEL CHAT</div>
+          <div className="text-[10px] text-amber-300/70 font-mono">Grounded neural RAG · Answers strictly from this investigation's evidence</div>
         </div>
       </div>
 
