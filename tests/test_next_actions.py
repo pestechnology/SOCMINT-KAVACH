@@ -104,13 +104,18 @@ def test_few_accounts_suggests_agentic_lookup():
     assert any(a["action"] == "agentic_lookup" for a in acts)
 
 
-def test_recovered_name_yields_records_search():
+def test_recovered_name_yields_name_search():
+    # A recovered real name yields a concrete "search this name" step. It now surfaces as
+    # the richer cross-pivot (pivot_identifier, naming specific sites); records_search is
+    # the older generic form — accept either, but the name MUST be the target.
     ents = [_ent("e1", "gr99", "github"), _ent("e2", "gr_99", "reddit")]
     clusters = [_cluster(["e1", "e2"], match_tier="HIGH", tier="HIGH",
                          identity={"name": "Sushil Kumar"})]
     acts = deterministic_actions(_case(), ents, clusters)
-    rec = [a for a in acts if a["action"] == "records_search"]
-    assert rec and "Sushil Kumar" in rec[0]["target"]
+    name_search = [a for a in acts
+                   if a["action"] in ("records_search", "pivot_identifier")
+                   and "Sushil Kumar" in (a.get("target") or "")]
+    assert name_search, acts
 
 
 def test_actions_are_ranked_and_capped():

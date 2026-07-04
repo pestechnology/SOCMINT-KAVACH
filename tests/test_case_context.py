@@ -81,3 +81,45 @@ def test_digest_omits_context_line_when_blank():
     case = {"case_id": "t3", "case_context": "   ", "seeds": CASE["seeds"]}
     digest = _build_digest(case, ENTITIES, CLUSTERS, [])
     assert "CASE CONTEXT" not in digest
+
+
+# ── cross-pivot: concrete "search THIS identifier on THESE sites" step ──
+_ENTS_CP = [
+    {"entity_id": "e1", "type": "social_account", "platform": "telegram",
+     "value": "fraudster_tg", "source_url": "https://t.me/x", "metadata": {}},
+    {"entity_id": "e2", "type": "social_account", "platform": "instagram",
+     "value": "ig_alt_handle", "source_url": "https://instagram.com/x",
+     "metadata": {"email": "leak@example.com"}},
+]
+_CASE_CP = {"case_id": "cp", "case_context": "investment fraud through telegram",
+            "seeds": [{"type": "username", "value": "fraudster_tg"}]}
+
+
+def test_cross_pivot_prefers_recovered_name_with_named_sites():
+    clusters = [{"cluster_id": "c1", "entity_ids": ["e1", "e2"], "tier": "HIGH",
+                 "match": {"tier": "HIGH", "score": 95}, "identity": {"name": "Ravi Kumar"}}]
+    acts = deterministic_actions(_CASE_CP, _ENTS_CP, clusters)
+    cp = [a for a in acts if a["action"] == "pivot_identifier"]
+    assert cp, acts
+    assert "Ravi Kumar" in cp[0]["title"]
+    assert "LinkedIn" in cp[0]["detail"]
+    # no duplicate name step
+    assert sum(1 for a in acts if a.get("target") == "Ravi Kumar") == 1
+
+
+def test_cross_pivot_falls_back_to_nonseed_handle_never_the_seed():
+    clusters = [{"cluster_id": "c1", "entity_ids": ["e1", "e2"], "tier": "HIGH",
+                 "match": {"tier": "HIGH", "score": 95}}]
+    acts = deterministic_actions(_CASE_CP, _ENTS_CP, clusters)
+    cp = [a for a in acts if a["action"] == "pivot_identifier"]
+    assert cp, acts
+    assert "ig_alt_handle" in cp[0]["title"]
+    assert "fraudster_tg" not in cp[0]["title"]  # never re-search the seed
+
+
+def test_email_breach_step_names_concrete_sites():
+    clusters = [{"cluster_id": "c1", "entity_ids": ["e1", "e2"], "tier": "HIGH",
+                 "match": {"tier": "HIGH", "score": 95}}]
+    acts = deterministic_actions(_CASE_CP, _ENTS_CP, clusters)
+    br = [a for a in acts if a["action"] == "breach_lookup"]
+    assert br and "Epieos" in br[0]["detail"]

@@ -202,6 +202,55 @@ def _legal_request_action(case: dict, entities: list[dict], clusters: list[dict]
     }
 
 
+# Concrete cross-search targets per identifier type — the "take THIS value and search it on
+# THESE named sites" step officers ask for. Real, publicly usable OSINT surfaces.
+_CROSS_PIVOT_SITES = {
+    "name": "LinkedIn, Truecaller, Justdial and the eCourts / news archives",
+    "username": "the other networks it may be reused on — GitHub, Reddit, X, Instagram, "
+                "Telegram — via a username-search tool (WhatsMyName / Sherlock-style)",
+    "email": "Epieos, HaveIBeenPwned, Gravatar and holehe",
+}
+
+
+def _cross_pivot_action(clusters: list[dict], seeds: set, ent_by_id: dict) -> dict | None:
+    """One concrete 'search THIS identifier on THESE sites' step. Picks the single most
+    useful NON-SEED identifier: a recovered real name > a strong/confirmed handle that
+    isn't the seed. (Leaked emails already get their own concrete breach step below.)"""
+    def _mt(c):
+        return (c.get("match") or {}).get("tier") or c.get("tier") or "LOW"
+
+    # (a) A real name recovered behind a persona — highest cross-search value.
+    for c in clusters:
+        nm = (c.get("identity") or {}).get("name")
+        if nm and str(nm).strip().lower() not in seeds:
+            return {
+                "priority": "high", "action": "pivot_identifier",
+                "title": f"Search the name '{nm}' on other sites",
+                "detail": f"A real name surfaced on a linked account — search it on "
+                          f"{_CROSS_PIVOT_SITES['name']} to corroborate the identity and "
+                          f"pull address, associates and prior records.",
+                "target": str(nm),
+            }
+    # (b) A strong/confirmed handle that ISN'T the original seed — check for reuse elsewhere.
+    for c in sorted(clusters, key=lambda x: 0 if _mt(x) == "HIGH" else 1):
+        if _mt(c) not in ("HIGH", "MEDIUM"):
+            continue
+        for eid in (c.get("entity_ids") or []):
+            e = ent_by_id.get(eid)
+            if (e and e.get("value") and e.get("type") in (None, "social_account")
+                    and str(e.get("value")).strip().lower() not in seeds):
+                uname = e.get("value")
+                return {
+                    "priority": "high", "action": "pivot_identifier",
+                    "title": f"Search the handle '{uname}' on other platforms",
+                    "detail": f"Check whether the subject reuses this handle across "
+                              f"{_CROSS_PIVOT_SITES['username']} — reused handles are the "
+                              f"fastest way to widen the account map.",
+                    "target": str(uname),
+                }
+    return None
+
+
 def _seed_values(case: dict) -> set[str]:
     out = set()
     for s in (case.get("seeds") or []):
@@ -230,6 +279,11 @@ def deterministic_actions(case: dict, entities: list[dict], clusters: list[dict]
     lr = _legal_request_action(case, entities, clusters, ent_by_id_early)
     if lr:
         actions.append(lr)
+
+    # 0.5) Concrete cross-pivot: "take THIS name/handle and search it on THESE sites."
+    cp = _cross_pivot_action(clusters, seeds, ent_by_id_early)
+    if cp:
+        actions.append(cp)
 
     # 1) Corroborate the strongest UNCONFIRMED lead (has a URL we can fetch).
     leads = [c for c in clusters
@@ -275,8 +329,9 @@ def deterministic_actions(case: dict, entities: list[dict], clusters: list[dict]
         actions.append({
             "priority": "high", "action": "breach_lookup",
             "title": f"Pivot on the leaked email {em}",
-            "detail": "This email surfaced during the scan and wasn't the search seed — run a "
-                      "breach/registration lookup on it to find accounts and passwords tied to it.",
+            "detail": f"This email surfaced during the scan and wasn't the search seed — run it "
+                      f"through {_CROSS_PIVOT_SITES['email']} to find every linked account, "
+                      f"breach and the owner's name tied to it.",
             "target": str(em),
         })
     for ph in phones:
@@ -303,7 +358,8 @@ def deterministic_actions(case: dict, entities: list[dict], clusters: list[dict]
         if nm:
             real_name = nm
             break
-    if real_name:
+    # Skip if the cross-pivot (0.5) already surfaced this same name — no double name step.
+    if real_name and not any(a.get("target") == real_name for a in actions):
         actions.append({
             "priority": "medium", "action": "records_search",
             "title": f"Run public-records / news search on '{real_name}'",
