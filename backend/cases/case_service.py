@@ -183,5 +183,16 @@ def get_results(case_id: str, user_id: str) -> dict | None:
                 forensics["keywords"] = ident["interests"]
         except Exception:
             pass
+    # "What should the officer do next?" — VERTEX's investigative-copilot layer. Ranked,
+    # actionable next steps derived from the case state (LLM + deterministic fallback). Only
+    # meaningful once the scan is complete; cached per case so polling doesn't re-run the LLM.
+    next_actions = []
+    if case.get("status") == "complete":
+        try:
+            from backend.analysis.next_actions import recommend as _recommend_actions
+            next_actions = _recommend_actions(case, entities, clusters)
+        except Exception:
+            next_actions = []
     return {"case": case, "entities": entities, "clusters": clusters,
-            "forensics": forensics, "status": case.get("status")}
+            "forensics": forensics, "next_actions": next_actions,
+            "status": case.get("status")}

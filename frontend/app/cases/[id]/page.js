@@ -502,9 +502,19 @@ export default function CaseView() {
           </GlassPanel>
         </div>
 
-        {/* RIGHT — SAME-PERSON ANALYSIS (§4.4.5) */}
-        <div className="lg:col-span-3">
-          <GlassPanel className="p-4 max-h-[720px] overflow-y-auto lg:sticky lg:top-4">
+        {/* RIGHT — NEXT ACTIONS + SAME-PERSON ANALYSIS (§4.4.5) */}
+        <div className="lg:col-span-3 space-y-4 lg:sticky lg:top-4">
+          {status === "complete" && (data.next_actions || []).length > 0 && (
+            <GlassPanel className="p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-[11px] font-mono uppercase tracking-wide text-cyan-300">
+                  ◆ Recommended next steps
+                </span>
+              </div>
+              <NextActions actions={data.next_actions} />
+            </GlassPanel>
+          )}
+          <GlassPanel className="p-4 max-h-[720px] overflow-y-auto">
             <div className="text-[11px] font-mono uppercase tracking-wide text-slate-400 mb-3">
               Same-person analysis
             </div>
@@ -795,6 +805,46 @@ function sigPoints(v) {
   if (typeof v === "number") return v;
   if (v && typeof v === "object") return v.points ?? v.weight ?? "";
   return v;
+}
+
+// Investigative-copilot panel — ranked "what to do next" actions from the backend.
+const ACTION_ICON = {
+  fetch_profile: "🔎", breach_lookup: "🛡️", phone_lookup: "📞", verify_upi: "🏦",
+  reverse_image: "🖼️", records_search: "📄", pivot_identifier: "🔀", rerun_wider: "🌐",
+  expand_seeds: "🌱", manual_review: "✅", agentic_lookup: "🤖",
+};
+const PRIORITY_STYLE = {
+  high: { color: "#ff8fa3", bg: "rgba(255,51,102,0.10)", border: "rgba(255,51,102,0.30)", label: "HIGH" },
+  medium: { color: "#ffce7a", bg: "rgba(255,183,3,0.10)", border: "rgba(255,183,3,0.30)", label: "MED" },
+  low: { color: "#8fd6ff", bg: "rgba(0,242,254,0.08)", border: "rgba(0,242,254,0.25)", label: "LOW" },
+};
+
+function NextActions({ actions = [] }) {
+  return (
+    <div className="space-y-2">
+      {actions.map((a, i) => {
+        const p = PRIORITY_STYLE[a.priority] || PRIORITY_STYLE.medium;
+        return (
+          <div key={i} className="rounded-lg border p-2.5" style={{ borderColor: p.border, background: p.bg }}>
+            <div className="flex items-start gap-2">
+              <span className="text-[13px] leading-tight shrink-0" aria-hidden>{ACTION_ICON[a.action] || "•"}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[13px] font-medium text-slate-100 leading-tight">{a.title}</span>
+                  <span className="ml-auto text-[9px] font-mono font-semibold shrink-0 rounded px-1 py-0.5"
+                        style={{ color: p.color, border: `1px solid ${p.border}` }}>{p.label}</span>
+                </div>
+                {a.detail && <p className="mt-1 text-[11px] text-slate-400 leading-snug">{a.detail}</p>}
+                {a.target && (
+                  <div className="mt-1 text-[10px] font-mono text-slate-500 truncate" title={a.target}>↳ {a.target}</div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // §4.4.5 — Same-person analysis: (A) empty, (B) cluster, (C) single account.
