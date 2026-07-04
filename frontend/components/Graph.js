@@ -147,7 +147,11 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover, se
     [tree]
   );
   useEffect(() => {
-    if (startCollapsed && categoryIds.length) setCollapsed(new Set(categoryIds));
+    if (startCollapsed && categoryIds.length) {
+      setCollapsed(new Set(categoryIds));
+    } else if (!startCollapsed) {
+      setCollapsed(new Set());
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startCollapsed, categoryIds.join("|")]);
 
