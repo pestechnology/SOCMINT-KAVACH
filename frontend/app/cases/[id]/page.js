@@ -5,7 +5,7 @@
    DECISION: polling logic + api.getResults/downloadReport are UNCHANGED; report button
    stays disabled until status==='complete'; chain integrity derives from completion. */
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { api, getToken } from "@/lib/api";
@@ -498,7 +498,12 @@ export default function CaseView() {
               </div>
             )}
 
-            {activeTabId === "writing" && <WritingActivity fx={fx} />}
+            {activeTabId === "writing" && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                <WritingActivity fx={fx} />
+                <CaseChat caseId={id} suggestions={data.chat_suggestions || []} disabled={status !== "complete"} />
+              </div>
+            )}
           </GlassPanel>
         </div>
 
@@ -1342,6 +1347,111 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
 
 // §4.4.4.4 — Writing & Activity: tone strip, active-hours bars, keywords/hashtags,
 // engagement. Renders only populated fields (§5.4 / §9.5 — hide, don't dash).
+// Grounded case chat — asks the backend questions answered ONLY from this case's data.
+function CaseChat({ caseId, suggestions = [], disabled = false }) {
+  const [messages, setMessages] = useState([]);   // {role, content, grounded?}
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, busy]);
+
+  async function ask(q) {
+    const question = (q ?? input).trim();
+    if (!question || busy || disabled) return;
+    const history = messages.map((m) => ({ role: m.role, content: m.content }));
+    setMessages((prev) => [...prev, { role: "user", content: question }]);
+    setInput("");
+    setBusy(true);
+    try {
+      const res = await api.caseChat(caseId, question, history);
+      setMessages((prev) => [...prev, { role: "assistant", content: res.answer, grounded: res.grounded }]);
+    } catch (e) {
+      setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${e.message || "chat failed"}`, grounded: false }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-white/[0.08] bg-slate-900/50 flex flex-col h-[520px]">
+      <div className="px-4 py-3 border-b border-white/[0.06] flex items-center gap-2">
+        <span className="text-[13px]" aria-hidden>💬</span>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-slate-100 leading-tight">Ask this case</div>
+          <div className="text-[10px] text-slate-500">Answers only from this investigation's data</div>
+        </div>
+      </div>
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        {messages.length === 0 && (
+          <div className="space-y-2">
+            <div className="text-xs text-slate-400">
+              {disabled ? "Available once the investigation completes." : "Try one of these, or ask your own:"}
+            </div>
+            {!disabled && suggestions.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => ask(s)}
+                className="block w-full text-left text-[12px] text-cyan-200 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.06] px-2.5 py-1.5 hover:border-cyan-400/40 hover:bg-cyan-400/[0.1] transition-colors"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div
+              className={`max-w-[85%] rounded-xl px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap ${
+                m.role === "user"
+                  ? "bg-cyan-500/15 border border-cyan-400/25 text-slate-100"
+                  : "bg-slate-800/70 border border-white/[0.06] text-slate-200"
+              }`}
+            >
+              {m.content}
+              {m.role === "assistant" && m.grounded === false && (
+                <div className="mt-1 text-[10px] text-amber-400/80">⚠ model offline — showing raw case data</div>
+              )}
+            </div>
+          </div>
+        ))}
+        {busy && (
+          <div className="flex justify-start">
+            <div className="rounded-xl px-3 py-2 text-[13px] bg-slate-800/70 border border-white/[0.06] text-slate-400">
+              <span className="inline-flex gap-1">
+                <span className="animate-pulse">●</span>
+                <span className="animate-pulse [animation-delay:150ms]">●</span>
+                <span className="animate-pulse [animation-delay:300ms]">●</span>
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="px-3 py-3 border-t border-white/[0.06] flex items-center gap-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") ask(); }}
+          disabled={disabled || busy}
+          placeholder={disabled ? "Waiting for results…" : "Ask about this case…"}
+          className="flex-1 rounded-lg bg-slate-950/80 border border-slate-700 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400 transition-colors disabled:opacity-50"
+        />
+        <button
+          onClick={() => ask()}
+          disabled={disabled || busy || !input.trim()}
+          className="rounded-lg px-3 py-2 text-sm font-medium bg-cyan-500/20 border border-cyan-400/30 text-cyan-200 hover:bg-cyan-500/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function WritingActivity({ fx }) {
   const [showAllKw, setShowAllKw] = useState(false);
   const [showAllHt, setShowAllHt] = useState(false);

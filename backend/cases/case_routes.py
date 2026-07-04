@@ -33,6 +33,16 @@ class NewCase(BaseModel):
     country_filter: str = "ALL"
 
 
+class ChatTurn(BaseModel):
+    role: str
+    content: str
+
+
+class ChatBody(BaseModel):
+    question: str
+    history: list[ChatTurn] = []
+
+
 @router.post("")
 def create(body: NewCase, background: BackgroundTasks, user_id: str = Depends(get_current_user)):
     try:
@@ -92,3 +102,24 @@ def summary_report(case_id: str, user_id: str = Depends(get_current_user)):
     return FileResponse(path, media_type="application/pdf",
                         filename=f"BSA63_summary_{case_id}.pdf")
 
+
+@router.get("/{case_id}/summary")
+def summary(case_id: str, user_id: str = Depends(get_current_user)):
+    """Officer-facing intelligence briefing (verdict-first, tiered graph). Separate from the
+    full court report above."""
+    if not get_case(case_id, user_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    from backend.report.summary_report import generate_summary_report
+    path = generate_summary_report(case_id)
+    return FileResponse(path, media_type="application/pdf",
+                        filename=f"BSA63_summary_{case_id}.pdf")
+
+
+@router.post("/{case_id}/chat")
+def chat(case_id: str, body: ChatBody, user_id: str = Depends(get_current_user)):
+    """Grounded Q&A over this case's data — answers strictly from what the case found."""
+    if not get_case(case_id, user_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    from backend.analysis.case_chat import answer
+    history = [t.model_dump() for t in body.history]
+    return answer(case_id, user_id, body.question, history)

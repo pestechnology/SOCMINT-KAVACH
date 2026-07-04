@@ -49,6 +49,11 @@ DEMO_FALLBACK_ENABLED: bool = _get_bool("DEMO_FALLBACK_ENABLED", True)
 
 # ---- API keys ----
 SERPER_API_KEY: str = _get("SERPER_API_KEY")
+SUPADATA_API_KEY: str = _get("SUPADATA_API_KEY")  # web scrape API (anti-bot bypass)
+INTELBASE_API_KEY: str = _get("INTELBASE_API_KEY")  # breach/OSINT lookup API (email/username/phone)
+# Route entity/fact extraction for Indic-script text to Gemini/IndicNER instead of Llama.
+# OFF by default; the deterministic normalization layer does not depend on this.
+INDIC_EXTRACTION_ENABLED: bool = _get("INDIC_EXTRACTION_ENABLED", "false").lower() == "true"
 GITHUB_TOKEN: str = _get("GITHUB_TOKEN")
 NVIDIA_API_KEY: str = _get("NVIDIA_API_KEY")
 NVIDIA_BASE_URL: str = _get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
@@ -78,6 +83,18 @@ LLM_TIMEOUT_SECONDS: int = int(_get("LLM_TIMEOUT_SECONDS", "45"))
 GROQ_API_KEY: str = _get("GROQ_API_KEY")
 GROQ_BASE_URL: str = _get("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 GROQ_MODEL: str = _get("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+# ---- Case chat assistant (grounded Q&A over a single case's data) ----
+# A DEDICATED NVIDIA key can be set here so the interactive chat doesn't compete with the
+# investigation pipeline's quota (the pipeline is Groq-first / NVIDIA-fallback; the chat is
+# NVIDIA-first by request). Falls back to the main NVIDIA key when unset, and the answerer
+# further falls back to the Groq path — so it works with zero extra config.
+CHAT_NVIDIA_API_KEY: str = _get("CHAT_NVIDIA_API_KEY") or NVIDIA_API_KEY
+CHAT_NVIDIA_BASE_URL: str = _get("CHAT_NVIDIA_BASE_URL", NVIDIA_BASE_URL)
+# llama-3.3-70b on the NVIDIA integrate tier queues hard and times out (~80s); the 3.1-70b
+# build answers in ~5s at comparable quality — the right default for interactive chat. Fast
+# 8b (meta/llama-3.1-8b-instruct, ~0.8s) is the fallback for the lowest latency.
+CHAT_LLM_MODEL: str = _get("CHAT_LLM_MODEL", "meta/llama-3.1-70b-instruct")
 
 # ---- Paths ----
 _ROOT = Path(__file__).resolve().parent.parent

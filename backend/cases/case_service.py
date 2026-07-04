@@ -187,12 +187,18 @@ def get_results(case_id: str, user_id: str) -> dict | None:
     # actionable next steps derived from the case state (LLM + deterministic fallback). Only
     # meaningful once the scan is complete; cached per case so polling doesn't re-run the LLM.
     next_actions = []
+    chat_suggestions = []
     if case.get("status") == "complete":
         try:
             from backend.analysis.next_actions import recommend as _recommend_actions
             next_actions = _recommend_actions(case, entities, clusters)
         except Exception:
             next_actions = []
+        try:
+            from backend.analysis.case_chat import suggested_queries as _chat_suggest
+            chat_suggestions = _chat_suggest(case, entities, clusters)
+        except Exception:
+            chat_suggestions = []
     return {"case": case, "entities": entities, "clusters": clusters,
             "forensics": forensics, "next_actions": next_actions,
-            "status": case.get("status")}
+            "chat_suggestions": chat_suggestions, "status": case.get("status")}
