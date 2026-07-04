@@ -87,6 +87,14 @@ def _looks_like_real_name(s: str, known_handles: set[str]) -> bool:
     # shape (all one word, lowercase) is almost certainly a username, not a name.
     if len(tokens) == 1 and _HANDLE_RE.match(s) and s == low:
         return False
+    # Fake / gibberish display names ("xk3vzq", "asdfgh") are not real names — a suspect's
+    # made-up name must be treated as an alias, never shown as their identity. Fail-open.
+    try:
+        from backend.analysis.name_intel import is_plausible_name
+        if not is_plausible_name(s):
+            return False
+    except Exception:
+        pass
     return True
 
 

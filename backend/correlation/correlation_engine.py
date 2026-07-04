@@ -385,14 +385,24 @@ def _pair_signals(a: RawProfile, b: RawProfile) -> dict:
     na, nb = _clean_name(ma), _clean_name(mb)
     va, vb = _norm(a.value), _norm(b.value)
     if na and nb and len(na) >= 3 and len(nb) >= 3 and na != va and nb != vb:
+        # A shared PLACEHOLDER name ("John Doe") or a lone common first name ("Ashwin") is
+        # not identifying — demote the weight so two unrelated accounts can't be linked on
+        # a common/fake name alone. Distinctive names ("Ashwin Harish") keep full weight.
+        try:
+            from backend.analysis.name_intel import is_generic_name
+            generic = is_generic_name(na) or is_generic_name(nb)
+        except Exception:
+            generic = False
+        exact_w = 8 if generic else SIGNAL_WEIGHTS["exact_name_match"]
+        fuzzy_w = 6 if generic else SIGNAL_WEIGHTS["fuzzy_name_match"]
         if na == nb:
-            fired["exact_name_match"] = SIGNAL_WEIGHTS["exact_name_match"]
+            fired["exact_name_match"] = exact_w
         elif (len(na) >= 8 and len(nb) >= 8) and (na in nb or nb in na):
-            fired["exact_name_match"] = SIGNAL_WEIGHTS["exact_name_match"]
+            fired["exact_name_match"] = exact_w
         else:
             ratio = (_fuzz.ratio(na, nb) if _HAVE_FUZZ else int(difflib.SequenceMatcher(None, na, nb).ratio() * 100))
             if ratio >= 80:
-                fired["fuzzy_name_match"] = SIGNAL_WEIGHTS["fuzzy_name_match"]
+                fired["fuzzy_name_match"] = fuzzy_w
 
     # location overlap — require at least 4-char strings to avoid
     # spurious substring matches like "new" matching "new york" AND "new delhi".

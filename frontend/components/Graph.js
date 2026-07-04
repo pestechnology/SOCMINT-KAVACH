@@ -94,11 +94,15 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover, se
     multi.forEach((c) => {
       const members = (c.entity_ids || []).filter((id) => shown.has(id));
       members.forEach((id) => accounted.add(id));
+      const letr = letter(idx++);
+      // Leak-account pivot: label the persona with the recovered real name when a member
+      // leaked one, else fall back to "Identity A/B/…".
+      const idName = c.identity && c.identity.name;
       cats.push({
         id: `cl:${c.cluster_id}`,
         kind: "category",
         tier: c.tier,
-        label: `Identity ${letter(idx++)}`,
+        label: idName || `Identity ${letr}`,
         meta: `${Math.round(c.confidence_score || 0)}%`,
         children: members.map((id) => account(entById[id])),
       });

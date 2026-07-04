@@ -642,6 +642,11 @@ function ClusterGroup({ cluster, letter, members, selectedEntityId, onSelectEnti
           {members.length > 1 || letter !== "•" ? `Identity group ${letter} · ` : "Single account · "}
           {members.length} {members.length === 1 ? "account" : "accounts"}
         </span>
+        {cluster.identity?.name && (
+          <span className="text-[11px] text-emerald-300" title={cluster.identity.source_platform ? `recovered from ${cluster.identity.source_platform}` : "recovered identity"}>
+            👤 {cluster.identity.name}
+          </span>
+        )}
         {exact && (
           <span className="text-[9px] font-mono uppercase tracking-wider text-cyan-300 border border-cyan-400/40 bg-cyan-400/10 rounded px-1.5 py-0.5">
             ★ Exact match

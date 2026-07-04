@@ -129,6 +129,19 @@ def get_results(case_id: str, user_id: str) -> dict | None:
         c["ai_confirmed"] = bool(raw_signals.get("_ai_confirmed"))
         c["ai_confidence"] = raw_signals.get("_ai_confidence") or 0
         c["ai_reason"] = raw_signals.get("_ai_reason") or ""
+    # Leak-account pivot: lift the best real name found on ANY member up to label the
+    # whole persona cluster. Suspects fake their name on the main account but often leak
+    # it on a careless/old account tied in by hard signals; this attributes the cluster.
+    try:
+        from backend.analysis.name_intel import resolve_cluster_identity
+        ent_by_id = {e["entity_id"]: e for e in entities}
+        for c in clusters:
+            members = [ent_by_id[i] for i in c.get("entity_ids", []) if i in ent_by_id]
+            ident = resolve_cluster_identity(members)
+            if ident:
+                c["identity"] = ident
+    except Exception:
+        pass
     clusters.sort(
         key=lambda c: (
             (c.get("relevance", {}).get("score") or 0) >= 100,

@@ -136,6 +136,15 @@ def _clean_name(title: str, handle: str) -> str | None:
         return None
     if len(name) > 60 or low in ("profile", "home", "login", "sign in"):
         return None
+    # Fake / gibberish display names ("xk3vzq") must never be surfaced as a real name.
+    # This is the DISPLAY name only — the handle is exempt (handles are meant to be
+    # gibberish). Fail-open: keep the name if the check is unavailable.
+    try:
+        from backend.analysis.name_intel import is_plausible_name
+        if not is_plausible_name(name):
+            return None
+    except Exception:
+        pass
     return name
 
 
