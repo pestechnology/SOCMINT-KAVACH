@@ -121,8 +121,8 @@ export default function Cases() {
           <GlassPanel className="p-4 mt-6">
             <div className="grid grid-cols-3 gap-4">
               <StatCard n={nTotal} label="Total investigations" />
-              <StatCard n={nRunning} label="In progress" color="#00f2fe" pulse={nRunning > 0} />
-              <StatCard n={nComplete} label="Complete" color="#00ff88" />
+              <StatCard n={nRunning} label="In progress" color="var(--tone-cyan)" pulse={nRunning > 0} />
+              <StatCard n={nComplete} label="Complete" color="var(--tone-emerald)" />
             </div>
           </GlassPanel>
         )}
@@ -211,7 +211,7 @@ export default function Cases() {
   );
 }
 
-function StatCard({ n, label, color = "#f8fafc", pulse = false }) {
+function StatCard({ n, label, color = "var(--stat-num-strong)", pulse = false }) {
   return (
     <div>
       <div className="flex items-center gap-2">
@@ -330,7 +330,7 @@ function NewInvestigation({ onClose, onCreated }) {
         {error && (
           <div
             className="mt-4 rounded-lg px-3 py-2 text-[13px]"
-            style={{ color: "#ff3366", background: "rgba(255,51,102,0.12)", border: "1px solid rgba(255,51,102,0.35)" }}
+            style={{ color: "var(--tone-rose)", background: "rgba(255,51,102,0.12)", border: "1px solid rgba(255,51,102,0.35)" }}
           >
             {error}
           </div>
@@ -493,18 +493,18 @@ function NewInvestigation({ onClose, onCreated }) {
               ))}
               {!terminal && (
                 <div className="text-[12px] font-mono text-cyan-400 flex items-center gap-2">
-                  <span className="pulse-dot" style={{ color: "#00f2fe" }} /> working…
+                  <span className="pulse-dot" style={{ color: "var(--tone-cyan)" }} /> working…
                 </div>
               )}
             </div>
 
             {agTask.status === "blocked" && (
-              <p className="mt-3 text-[12px]" style={{ color: "#ffb703" }}>
+              <p className="mt-3 text-[12px]" style={{ color: "var(--tone-amber)" }}>
                 🚧 The site blocked automated access (CAPTCHA / login wall). No data was fabricated.
               </p>
             )}
             {agTask.status === "error" && (
-              <p className="mt-3 text-[12px]" style={{ color: "#ff3366" }}>
+              <p className="mt-3 text-[12px]" style={{ color: "var(--tone-rose)" }}>
                 {agTask.error_message || "The agent could not complete the task."}
               </p>
             )}

@@ -125,7 +125,7 @@ export default function Lookup() {
             </div>
             <Button variant="primary" onClick={run} disabled={busy}>{busy ? "Looking up…" : "🔎 Look up"}</Button>
           </div>
-          {error && <div className="mt-3 text-[13px]" style={{ color: "#ff3366" }}>{error}</div>}
+          {error && <div className="mt-3 text-[13px]" style={{ color: "var(--tone-rose)" }}>{error}</div>}
         </GlassPanel>
 
         {busy && <div className="mt-8 text-center text-sm text-slate-500">Querying sources…</div>}

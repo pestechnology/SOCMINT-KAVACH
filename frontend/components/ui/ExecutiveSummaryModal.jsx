@@ -55,7 +55,7 @@ export default function ExecutiveSummaryModal({
           <div>
             <div className="flex items-center gap-2.5">
               <span className="text-xl">⚖️</span>
-              <h2 className="text-lg font-bold tracking-tight text-white uppercase font-sans">
+              <h2 className="text-lg font-bold tracking-tight text-slate-100 uppercase font-sans">
                 Electronic Evidence Report — Executive Briefing
               </h2>
             </div>
@@ -69,7 +69,7 @@ export default function ExecutiveSummaryModal({
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors text-lg"
+            className="w-8 h-8 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-100 flex items-center justify-center transition-colors text-lg"
             title="Close summary"
           >
             ✕
@@ -114,7 +114,7 @@ export default function ExecutiveSummaryModal({
           <div className="space-y-4">
             <div className="border-b border-slate-800 pb-2 flex items-center justify-between">
               <div>
-                <h3 className="text-base font-bold text-white uppercase tracking-wide">
+                <h3 className="text-base font-bold text-slate-100 uppercase tracking-wide">
                   1. Confirmed & Probable Linkages (Corroborated Evidence)
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
@@ -180,7 +180,7 @@ export default function ExecutiveSummaryModal({
                               <div className="text-[11px] font-mono uppercase tracking-wider text-cyan-400 truncate">
                                 {ent.platform || "Account"}
                               </div>
-                              <div className="text-sm font-semibold text-white truncate mt-0.5" title={ent.value}>
+                              <div className="text-sm font-semibold text-slate-100 truncate mt-0.5" title={ent.value}>
                                 {ent.value}
                               </div>
                             </div>
@@ -219,7 +219,7 @@ export default function ExecutiveSummaryModal({
             <div className="space-y-3 pt-2">
               <div className="border-b border-slate-800 pb-2 flex items-center justify-between">
                 <div>
-                  <h3 className="text-base font-bold text-white uppercase tracking-wide">
+                  <h3 className="text-base font-bold text-slate-100 uppercase tracking-wide">
                     2. Appendix A — Unconfirmed Leads ({notLinkedEntities.length})
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">

@@ -120,7 +120,7 @@ function ReiterateModal({ caseId, baseSeeds, onClose, onPivotStarted, onDone }) 
           <button type="button" onClick={onClose} className="text-xs text-slate-500 hover:text-slate-300">✕</button>
         </div>
 
-        {error && <div className="text-xs mb-2" style={{ color: "#ff3366" }}>{error}</div>}
+        {error && <div className="text-xs mb-2" style={{ color: "var(--tone-rose)" }}>{error}</div>}
 
         {/* Base selection — what was staged in the tray */}
         <div className="text-[11px] font-mono uppercase tracking-wide text-slate-400 mb-1.5">

@@ -1,11 +1,12 @@
 // components/ui/StatusPill.jsx
 // §3.2 — investigation status indicator. Obeys the §1.7 semantic color map:
 // running/pending -> cyan (+pulse), complete -> emerald, error -> crimson.
+// Theme-aware text tones (globals.css) so the pill label + dot darken in light mode.
 const CONFIG = {
-  running:  { color: "#00f2fe", label: "In progress", pulse: true },
-  pending:  { color: "#00f2fe", label: "In progress", pulse: true },
-  complete: { color: "#00ff88", label: "Complete",    pulse: false },
-  error:    { color: "#ff3366", label: "Error",       pulse: false },
+  running:  { color: "var(--tone-cyan)",    label: "In progress", pulse: true },
+  pending:  { color: "var(--tone-cyan)",    label: "In progress", pulse: true },
+  complete: { color: "var(--tone-emerald)", label: "Complete",    pulse: false },
+  error:    { color: "var(--tone-rose)",    label: "Error",       pulse: false },
 };
 
 export default function StatusPill({ status = "pending", className = "" }) {

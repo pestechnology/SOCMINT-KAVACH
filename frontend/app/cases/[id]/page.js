@@ -309,7 +309,6 @@ export default function CaseView() {
                 <span>✨</span>
                 <span>Briefing</span>
               </button>
-              <SummaryReportButton id={id} disabled={status !== "complete"} />
               <ReportButton id={id} disabled={status !== "complete"} />
             </div>
           </div>
@@ -321,9 +320,9 @@ export default function CaseView() {
                 <>Discovering accounts… <span className="text-slate-200">{total}</span> found so far</>
               ) : (
                 <>
-                  Found <span style={{ color: "#00ff88" }}>{strong}</span> strong{" "}
+                  Found <span style={{ color: "var(--tone-emerald)" }}>{strong}</span> strong{" "}
                   {strong === 1 ? "match" : "matches"} ·{" "}
-                  <span style={{ color: "#ffb703" }}>{possible}</span> possible ·{" "}
+                  <span style={{ color: "var(--tone-amber)" }}>{possible}</span> possible ·{" "}
                   <span className="text-slate-200">{total}</span> accounts discovered
                 </>
               )}
@@ -356,10 +355,10 @@ export default function CaseView() {
           {/* Row 3 — stats strip */}
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 pt-3 mt-3 border-t border-slate-800">
             <MiniStat n={total} label="Accounts found" />
-            <MiniStat n={strong} label="Strong matches" color="#00ff88" />
-            <MiniStat n={possible} label="Possible matches" color="#ffb703" />
+            <MiniStat n={strong} label="Strong matches" color="var(--tone-emerald)" />
+            <MiniStat n={possible} label="Possible matches" color="var(--tone-amber)" />
             <MiniStat n={clusters.length} label="Identity groups" />
-            <MiniStat n={data.reiteration_count || 0} label="Re-iterations" color="#22d3ee" />
+            <MiniStat n={data.reiteration_count || 0} label="Re-iterations" color="var(--tone-cyan-bright)" />
           </div>
         </GlassPanel>
       </div>
@@ -380,8 +379,8 @@ export default function CaseView() {
                 <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500 w-14 shrink-0">Confidence</span>
                 {[
                   { id: "all", label: "All" },
-                  { id: "HIGH", label: "Strong", color: "#00ff88" },
-                  { id: "MEDIUM", label: "Possible", color: "#ffb703" },
+                  { id: "HIGH", label: "Strong", color: "var(--tone-emerald)" },
+                  { id: "MEDIUM", label: "Possible", color: "var(--tone-amber)" },
                 ].map((o) => (
                   <button
                     key={o.id}
@@ -391,7 +390,7 @@ export default function CaseView() {
                         ? "border-cyan-400/60 bg-cyan-400/10 text-cyan-200"
                         : "border-slate-700 text-slate-400 hover:text-slate-200"
                     }`}
-                    style={tierFilter === o.id && o.color ? { color: o.color, borderColor: `${o.color}66` } : undefined}
+                    style={tierFilter === o.id && o.color ? { color: o.color, borderColor: o.color } : undefined}
                   >
                     {o.label}
                   </button>
@@ -596,16 +595,16 @@ export default function CaseView() {
             )}
           </GlassPanel>
 
-          {/* Recommended next steps — moved BELOW the middle tabs panel, shown as a
-              horizontal row of cards for a cleaner, more scannable layout. */}
+          {/* Recommended next steps — below the middle tabs panel, full-width horizontal
+              cards stacked for a clean, scannable read. */}
           {status === "complete" && (data.next_actions || []).length > 0 && (
             <GlassPanel className="p-4">
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-[11px] font-mono uppercase tracking-wide text-cyan-300">
+                <span className="text-[13px] font-mono font-bold uppercase tracking-wide text-cyan-300">
                   ◆ Recommended next steps
                 </span>
               </div>
-              <NextActions actions={data.next_actions} horizontal />
+              <NextActions actions={data.next_actions} />
             </GlassPanel>
           )}
         </div>
@@ -683,7 +682,7 @@ function ReportButton({ id, disabled }) {
   );
   return (
     <span className="flex items-center gap-2">
-      {err && <span className="text-xs" style={{ color: "#ff3366" }}>{err}</span>}
+      {err && <span className="text-xs" style={{ color: "var(--tone-rose)" }}>{err}</span>}
       {disabled ? (
         <Tooltip content="Available when investigation completes"><span className="flex gap-2">{summaryBtn}{reportBtn}</span></Tooltip>
       ) : (<>{summaryBtn}{reportBtn}</>)}
@@ -691,40 +690,8 @@ function ReportButton({ id, disabled }) {
   );
 }
 
-function SummaryReportButton({ id, disabled }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  async function generate() {
-    if (disabled) return;
-    setErr(""); setBusy(true);
-    try {
-      const blob = await api.downloadSummaryReport(id);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `BSA63_summary_${id}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) { setErr(e.message); }
-    finally { setBusy(false); }
-  }
-  const btn = (
-    <Button variant="primary" onClick={generate} disabled={disabled || busy} className="text-sm px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 border border-cyan-400/30 text-white font-semibold shadow-md shadow-cyan-500/10">
-      {busy ? "Preparing…" : "📄 Summary briefing"}
-    </Button>
-  );
-  return (
-    <span className="flex items-center gap-2">
-      {err && <span className="text-xs" style={{ color: "#ff3366" }}>{err}</span>}
-      {disabled ? <Tooltip content="Available when investigation completes">{btn}</Tooltip> : btn}
-    </span>
-  );
-}
-
 // §4.4.1 Row 3 — one number + label cell in the verdict stats strip.
-function MiniStat({ n, label, color = "#e2e8f0" }) {
+function MiniStat({ n, label, color = "var(--stat-num)" }) {
   return (
     <div>
       <div className="text-xl font-semibold" style={{ color }}>{n}</div>
@@ -794,7 +761,7 @@ function IdentityList({
       {/* Exact match to the search query — pinned above everything (§ exact-match priority) */}
       {exactMatchEntities.length > 0 && (
         <div className="mb-4">
-          <div className="text-[11px] font-mono uppercase tracking-wide mb-2 flex items-center gap-1.5" style={{ color: "#22d3ee" }}>
+          <div className="text-[11px] font-mono uppercase tracking-wide mb-2 flex items-center gap-1.5" style={{ color: "var(--tone-cyan-bright)" }}>
             🎯 Exact match to your search ({exactMatchTotal > exactMatchEntities.length ? `top ${exactMatchEntities.length} of ${exactMatchTotal}` : exactMatchEntities.length})
           </div>
           <div className="space-y-2">
@@ -813,7 +780,7 @@ function IdentityList({
       )}
 
       {/* Strong matches */}
-      <div className="text-[11px] font-mono uppercase tracking-wide mb-2" style={{ color: "#00ff88" }}>
+      <div className="text-[11px] font-mono uppercase tracking-wide mb-2" style={{ color: "var(--tone-emerald)" }}>
         Strong matches ({strongCount})
       </div>
       {strongClusters.map((c) => (
@@ -831,7 +798,7 @@ function IdentityList({
       ))}
 
       {/* Possible matches */}
-      <div className="mt-4 mb-2 text-[11px] font-mono uppercase tracking-wide" style={{ color: "#ffb703" }}>
+      <div className="mt-4 mb-2 text-[11px] font-mono uppercase tracking-wide" style={{ color: "var(--tone-amber)" }}>
         Possible matches ({possibleCount})
       </div>
       {possibleClusters.map((c) => (
@@ -851,7 +818,7 @@ function IdentityList({
       {/* Not linked (collapsible; auto-expanded when no strong/possible — §1.5, §4.4.3) */}
       <div className="mt-4 border-t border-slate-800 pt-3">
         <button onClick={() => setOpenNotLinked((v) => !v)} className="w-full flex items-center justify-between">
-          <span className="text-[11px] font-mono uppercase tracking-wide" style={{ color: "#ff3366" }}>
+          <span className="text-[11px] font-mono uppercase tracking-wide" style={{ color: "var(--tone-rose)" }}>
             Not linked ({notLinkedEntities.length})
           </span>
           <span className="text-xs text-slate-500">{openNotLinked ? "▾" : "▸"}</span>
@@ -936,37 +903,30 @@ const ACTION_ICON = {
   expand_seeds: "🌱", manual_review: "✅", agentic_lookup: "🤖",
 };
 const PRIORITY_STYLE = {
-  high: { color: "#ff8fa3", bg: "rgba(255,51,102,0.10)", border: "rgba(255,51,102,0.30)", label: "HIGH" },
-  medium: { color: "#ffce7a", bg: "rgba(255,183,3,0.10)", border: "rgba(255,183,3,0.30)", label: "MED" },
-  low: { color: "#8fd6ff", bg: "rgba(0,242,254,0.08)", border: "rgba(0,242,254,0.25)", label: "LOW" },
+  high: { color: "var(--tone-rose)", bg: "rgba(255,51,102,0.10)", border: "rgba(255,51,102,0.30)", label: "HIGH" },
+  medium: { color: "var(--tone-amber)", bg: "rgba(255,183,3,0.10)", border: "rgba(255,183,3,0.30)", label: "MED" },
+  low: { color: "var(--tone-cyan-bright)", bg: "rgba(0,242,254,0.08)", border: "rgba(0,242,254,0.25)", label: "LOW" },
 };
 
-function NextActions({ actions = [], horizontal = false }) {
-  // horizontal = a responsive row of equal-height cards (used below the middle panel);
-  // otherwise a vertical stack (used in a narrow side column).
-  const container = horizontal
-    ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 items-stretch"
-    : "space-y-2";
+function NextActions({ actions = [] }) {
+  // Full-width HORIZONTAL cards stacked vertically: icon on the left, content in the
+  // middle, priority chip pinned to the right — reads cleanly across the wide panel.
   return (
-    <div className={container}>
+    <div className="space-y-2.5">
       {actions.map((a, i) => {
         const p = PRIORITY_STYLE[a.priority] || PRIORITY_STYLE.medium;
         return (
-          <div key={i} className="rounded-lg border p-2.5 flex flex-col" style={{ borderColor: p.border, background: p.bg }}>
-            <div className="flex items-start gap-2">
-              <span className="text-[13px] leading-tight shrink-0" aria-hidden>{ACTION_ICON[a.action] || "•"}</span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-medium text-slate-100 leading-tight">{a.title}</span>
-                  <span className="ml-auto text-[9px] font-mono font-semibold shrink-0 rounded px-1 py-0.5"
-                        style={{ color: p.color, border: `1px solid ${p.border}` }}>{p.label}</span>
-                </div>
-                {a.detail && <p className="mt-1 text-[11px] text-slate-400 leading-snug">{a.detail}</p>}
-                {a.target && (
-                  <div className="mt-1 text-[10px] font-mono text-slate-500 truncate" title={a.target}>↳ {a.target}</div>
-                )}
-              </div>
+          <div key={i} className="rounded-lg border p-3 flex items-center gap-3" style={{ borderColor: p.border, background: p.bg }}>
+            <span className="text-lg leading-none shrink-0" aria-hidden>{ACTION_ICON[a.action] || "•"}</span>
+            <div className="min-w-0 flex-1">
+              <span className="text-[13px] font-semibold text-slate-100 leading-tight">{a.title}</span>
+              {a.detail && <p className="mt-0.5 text-[11px] text-slate-400 leading-snug">{a.detail}</p>}
+              {a.target && (
+                <div className="mt-0.5 text-[10px] font-mono text-slate-500 truncate" title={a.target}>↳ {a.target}</div>
+              )}
             </div>
+            <span className="text-[9px] font-mono font-semibold shrink-0 self-start rounded px-1.5 py-0.5"
+                  style={{ color: p.color, border: `1px solid ${p.border}` }}>{p.label}</span>
           </div>
         );
       })}
@@ -1698,9 +1658,11 @@ function WritingActivity({ fx }) {
   const [showAllHt, setShowAllHt] = useState(false);
 
   const rawTone = (fx.tone?.label || "").toString().toUpperCase();
-  const tone = rawTone.includes("POS") ? { word: "Positive", color: "#00ff88" }
-    : rawTone.includes("NEG") ? { word: "Negative", color: "#ff3366" }
-    : rawTone ? { word: "Neutral", color: "#94a3b8" }
+  // `color` = themed text/dot (darkens in light mode); `tint` = a fixed hex used only for
+  // the translucent bg/border (alpha is appended, which a var() can't do).
+  const tone = rawTone.includes("POS") ? { word: "Positive", color: "var(--tone-emerald)", tint: "#00ff88" }
+    : rawTone.includes("NEG") ? { word: "Negative", color: "var(--tone-rose)", tint: "#ff3366" }
+    : rawTone ? { word: "Neutral", color: "#94a3b8", tint: "#94a3b8" }
     : null;
 
   const hoursCount = new Array(24).fill(0);
@@ -1730,7 +1692,7 @@ function WritingActivity({ fx }) {
       {tone && (
         <div>
           <div className="text-[11px] font-mono uppercase tracking-wide text-slate-400 mb-1.5">Tone</div>
-          <div className="inline-flex items-center gap-2 rounded-md px-3 py-1.5" style={{ background: `${tone.color}1f`, border: `1px solid ${tone.color}55` }}>
+          <div className="inline-flex items-center gap-2 rounded-md px-3 py-1.5" style={{ background: `${tone.tint}1f`, border: `1px solid ${tone.tint}55` }}>
             <span className="inline-block w-2 h-2 rounded-full" style={{ background: tone.color }} />
             <span className="text-sm" style={{ color: tone.color }}>Tone: {tone.word}</span>
           </div>

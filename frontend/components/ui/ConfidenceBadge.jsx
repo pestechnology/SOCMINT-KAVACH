@@ -1,11 +1,13 @@
 // components/ui/ConfidenceBadge.jsx
 // §3.3 — tier chip. HIGH->emerald "Strong match", MEDIUM->amber "Possible match",
 // LOW/REJECT->crimson "Not linked". Raw score is de-emphasized (§3.3, §9.1).
+// Text colors use theme-aware CSS vars (globals.css) so the label darkens in light mode;
+// the translucent bg/border tints read fine on both themes.
 const CONFIG = {
-  HIGH:   { label: "Strong match",   color: "#00ff88", bg: "rgba(0,255,136,0.12)",  border: "rgba(0,255,136,0.35)" },
-  MEDIUM: { label: "Possible match", color: "#ffb703", bg: "rgba(255,183,3,0.12)",  border: "rgba(255,183,3,0.35)" },
-  LOW:    { label: "Not linked",     color: "#ff3366", bg: "rgba(255,51,102,0.12)", border: "rgba(255,51,102,0.35)" },
-  REJECT: { label: "Not linked",     color: "#ff3366", bg: "rgba(255,51,102,0.12)", border: "rgba(255,51,102,0.35)" },
+  HIGH:   { label: "Strong match",   color: "var(--tone-emerald)", bg: "rgba(0,255,136,0.12)",  border: "rgba(0,255,136,0.35)" },
+  MEDIUM: { label: "Possible match", color: "var(--tone-amber)",   bg: "rgba(255,183,3,0.12)",  border: "rgba(255,183,3,0.35)" },
+  LOW:    { label: "Not linked",     color: "var(--tone-rose)",    bg: "rgba(255,51,102,0.12)", border: "rgba(255,51,102,0.35)" },
+  REJECT: { label: "Not linked",     color: "var(--tone-rose)",    bg: "rgba(255,51,102,0.12)", border: "rgba(255,51,102,0.35)" },
 };
 
 export default function ConfidenceBadge({ tier = "LOW", score = null, className = "" }) {

@@ -45,6 +45,16 @@
   --scrollbar-track: #0E1117;
   --scrollbar-thumb: #2A3148;
   --scrollbar-thumb-hover: #4A5568;
+
+  /* Semantic TEXT tones (dark = the original bright accents). Light overrides above. */
+  --tone-emerald: #00ff88;
+  --tone-amber: #ffb703;
+  --tone-rose: #ff3366;
+  --tone-cyan: #00f2fe;
+  --tone-cyan-bright: #22d3ee;
+  --stat-num: #e2e8f0;
+  --stat-num-strong: #f8fafc;
+  --graph-label: #cbd5e0;
 }
 
 /* ============================ LIGHT THEME ============================
@@ -81,6 +91,17 @@
   --scrollbar-track: #e2e8f0;
   --scrollbar-thumb: #cbd5e1;
   --scrollbar-thumb-hover: #94a3b8;
+
+  /* Semantic TEXT tones for inline-styled colors (stat numbers, tier badges, status
+     pills, graph labels) — darkened so they read on light backgrounds. */
+  --tone-emerald: #047857;
+  --tone-amber: #b45309;
+  --tone-rose: #be123c;
+  --tone-cyan: #0e7490;
+  --tone-cyan-bright: #0891b2;
+  --stat-num: #1e293b;
+  --stat-num-strong: #0f172a;
+  --graph-label: #1e293b;
 }
 
 /* Subtle white/low-opacity borders read as invisible on a light bg — flip them to a
@@ -103,6 +124,42 @@
 :root[data-theme="light"] .vis-time-axis .vis-text { color: #64748b !important; }
 :root[data-theme="light"] .vis-item { background: #f1f5f9 !important; color: #0f172a !important; border-color: #cbd5e1 !important; }
 :root[data-theme="light"] .vis-labelset .vis-label { background: #f8fafc !important; color: #475569 !important; border-color: #cbd5e1 !important; }
+
+/* ---- Accent TEXT darkened for light mode ----
+   Bright accent text (cyan/amber/emerald/violet/red) is readable on dark surfaces but
+   low-contrast on the light surfaces of light mode. These sit on light/tinted/transparent
+   backgrounds everywhere they're used (saturated-accent buttons use text-white/text-black,
+   which are untouched), so darkening the TEXT is safe. Includes hover + opacity variants. */
+:root[data-theme="light"] .text-cyan-200,
+:root[data-theme="light"] .text-cyan-300,
+:root[data-theme="light"] .text-cyan-400,
+:root[data-theme="light"] .hover\:text-cyan-200:hover,
+:root[data-theme="light"] .hover\:text-cyan-300:hover,
+:root[data-theme="light"] .hover\:text-cyan-400:hover { color: #0e7490; }
+
+:root[data-theme="light"] .text-amber-300,
+:root[data-theme="light"] .text-amber-400,
+:root[data-theme="light"] .text-amber-300\/70,
+:root[data-theme="light"] .text-amber-400\/80,
+:root[data-theme="light"] .text-amber-400\/90,
+:root[data-theme="light"] .hover\:text-amber-200:hover,
+:root[data-theme="light"] .hover\:text-amber-300:hover { color: #b45309; }
+
+:root[data-theme="light"] .text-emerald-300,
+:root[data-theme="light"] .text-emerald-400 { color: #047857; }
+
+:root[data-theme="light"] .text-violet-300 { color: #6d28d9; }
+:root[data-theme="light"] .text-red-400,
+:root[data-theme="light"] .text-rose-300 { color: #dc2626; }
+:root[data-theme="light"] .text-gray-400 { color: #4b5563; }
+
+/* Arbitrary-value accent text classes used as labels (Minor badge, Agentic chip). */
+:root[data-theme="light"] .text-\[\#ff3366\] { color: #dc2626; }
+:root[data-theme="light"] .text-\[\#00f2fe\] { color: #0e7490; }
+
+/* Network graph draws SVG label text with near-white fills (fill attributes). A CSS fill
+   rule overrides those attributes so labels stay legible on the light graph background. */
+:root[data-theme="light"] #network-graph text tspan { fill: #1e293b; }
 
 html, body {
   background: var(--bg-primary);

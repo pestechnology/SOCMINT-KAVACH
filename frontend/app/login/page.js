@@ -96,7 +96,7 @@ export default function Login() {
             <div
               className="mb-5 rounded-lg px-3 py-2 text-[13px]"
               style={{
-                color: "#ff3366",
+                color: "var(--tone-rose)",
                 background: "rgba(255,51,102,0.12)",
                 border: "1px solid rgba(255,51,102,0.35)",
               }}
