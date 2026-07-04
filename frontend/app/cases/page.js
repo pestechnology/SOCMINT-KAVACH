@@ -31,8 +31,8 @@ const SEED_TYPES = [
 
 // Region maps onto the backend's country_filter (preserved from pre-redesign).
 const REGIONS = [
-  { value: "INDIA", label: "India (Indian websites only)" },
-  { value: "ALL", label: "Global (all platforms)" },
+  { value: "INDIA", label: "India (Indian + Global platforms)" },
+  { value: "ALL", label: "Global" },
 ];
 
 const SELECT_CLS =
