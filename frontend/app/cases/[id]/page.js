@@ -369,6 +369,7 @@ export default function CaseView() {
               <SummaryTab
                 entities={entities}
                 clusters={clusters}
+                identity={fx.identity}
                 signalFilter={signalFilter}
                 onToggleSignal={onToggleSignal}
               />
@@ -802,7 +803,62 @@ function EmptyLine({ children }) {
   return <div className="text-xs text-slate-600">{children}</div>;
 }
 
-function SummaryTab({ entities, clusters, signalFilter, onToggleSignal }) {
+// Decode HTML entities scraped fields arrive with (e.g. "&#064;" -> "@", "&#x2022;" -> "•").
+function decodeEntities(s) {
+  if (!s || typeof s !== "string") return s;
+  if (typeof document !== "undefined") {
+    const el = document.createElement("textarea");
+    el.innerHTML = s;
+    return el.value;
+  }
+  return s.replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(+d))
+          .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+          .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+}
+
+// A list that shows a few items and expands to the rest on click (§ UI: expandable panels).
+function ExpandableList({ items, initial = 4, render }) {
+  const [open, setOpen] = useState(false);
+  const shown = open ? items : items.slice(0, initial);
+  return (
+    <div className="space-y-1">
+      {shown.map((it, i) => render(it, i))}
+      {items.length > initial && (
+        <button onClick={() => setOpen((v) => !v)} className="mt-1 text-[11px] text-cyan-400 hover:underline">
+          {open ? "Show less" : `Show all ${items.length}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Expandable profile-photo wall: shows one row, click to reveal all in a wrapping grid.
+function PhotoGrid({ photos }) {
+  const [open, setOpen] = useState(false);
+  const shown = open ? photos : photos.slice(0, 5);
+  return (
+    <div>
+      <div className={open ? "flex flex-wrap gap-2" : "flex gap-2 overflow-x-auto pb-1"}>
+        {shown.map((p, i) => (
+          <div key={i} className="relative shrink-0 w-14 h-14">
+            <img src={p.url} alt="" className="w-14 h-14 rounded-md object-cover border border-white/10"
+              onError={(ev) => { ev.currentTarget.parentElement.style.display = "none"; }} />
+            <span className="absolute bottom-0 left-0 text-[8px] font-mono px-1 rounded-tr rounded-bl-md bg-black/70 text-slate-300">
+              {platformShort(p.platform)}
+            </span>
+          </div>
+        ))}
+      </div>
+      {photos.length > 5 && (
+        <button onClick={() => setOpen((v) => !v)} className="mt-1.5 text-[11px] text-cyan-400 hover:underline">
+          {open ? "Show less" : `Show all ${photos.length}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal }) {
   // Profile pictures (dedupe by URL)
   const seenPhoto = new Set();
   const photos = [];
@@ -812,40 +868,41 @@ function SummaryTab({ entities, clusters, signalFilter, onToggleSignal }) {
     if (url && !seenPhoto.has(url)) { seenPhoto.add(url); photos.push({ url, platform: e.platform }); }
   });
 
-  // Platforms (count desc, top 10)
+  // Platforms (count desc; full list, panel expands)
   const platformCounts = {};
   entities.forEach((e) => { const p = e.platform || "unknown"; platformCounts[p] = (platformCounts[p] || 0) + 1; });
-  const platforms = Object.entries(platformCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const platforms = Object.entries(platformCounts).sort((a, b) => b[1] - a[1]);
 
-  // Names & aliases (dedupe normalized). Read both fullname and name — scrapers and the
-  // anchor enricher populate different fields. Exact-match (anchor) names sort first.
-  const seenName = new Set();
-  const names = [];
-  [...entities].sort((a, b) => (b.metadata?.exact_seed_match ? 1 : 0) - (a.metadata?.exact_seed_match ? 1 : 0))
-    .forEach((e) => {
-      const n = e.metadata?.fullname || e.metadata?.name;
-      if (n && typeof n === "string") {
-        const key = n.trim().toLowerCase();
-        if (key && !seenName.has(key)) { seenName.add(key); names.push(n.trim()); }
-      }
-    });
-
-  // Locations & context (location + employer/location/city candidates)
-  const seenLoc = new Set();
-  const locations = [];
-  const addLoc = (v) => {
-    if (v && typeof v === "string") {
-      const k = v.trim().toLowerCase();
-      if (k && !seenLoc.has(k)) { seenLoc.add(k); locations.push(v.trim()); }
-    }
+  // Names / aliases / locations: PREFER the LLM identity agent's clean, classified output
+  // (real names vs handles vs locations, junk removed). Fall back to a raw metadata sweep
+  // only if the agent hasn't produced anything (e.g. still running, or LLM unavailable).
+  const dedupeCI = (arr) => {
+    const seen = new Set(); const out = [];
+    (arr || []).forEach((x) => { const v = decodeEntities(String(x || "")).trim(); const k = v.toLowerCase();
+      if (v && !seen.has(k)) { seen.add(k); out.push(v); } });
+    return out;
   };
-  entities.forEach((e) => {
-    const m = e.metadata || {};
-    addLoc(m.location);
-    (m.employer_candidates || []).forEach(addLoc);
-    (m.location_candidates || []).forEach(addLoc);
-    (m.city_candidates || []).forEach(addLoc);
-  });
+
+  let names = dedupeCI(identity?.real_names);
+  let aliases = dedupeCI(identity?.aliases);
+  let locations = dedupeCI([...(identity?.locations || []), ...(identity?.employers || [])]);
+
+  if (names.length === 0) {
+    const raw = [];
+    [...entities].sort((a, b) => (b.metadata?.exact_seed_match ? 1 : 0) - (a.metadata?.exact_seed_match ? 1 : 0))
+      .forEach((e) => { const n = e.metadata?.fullname || e.metadata?.name; if (typeof n === "string") raw.push(n); });
+    names = dedupeCI(raw);
+  }
+  if (locations.length === 0) {
+    const raw = [];
+    entities.forEach((e) => { const m = e.metadata || {};
+      raw.push(m.location, ...(m.employer_candidates || []), ...(m.location_candidates || []), ...(m.city_candidates || [])); });
+    locations = dedupeCI(raw.filter(Boolean));
+  }
+  // Merge names + aliases for the "Names & aliases" panel, names first, aliases tagged.
+  const nameRows = [...names.map((n) => ({ v: n, alias: false })),
+                    ...aliases.filter((a) => !names.some((n) => n.toLowerCase() === a.toLowerCase()))
+                              .map((a) => ({ v: a, alias: true }))];
 
   // Evidence quick-links (§4.4.4.1) — the moat. Count, for every REAL corroborating
   // signal, how many identity groups it links and how many accounts those groups hold.
@@ -879,21 +936,7 @@ function SummaryTab({ entities, clusters, signalFilter, onToggleSignal }) {
           {photos.length === 0 ? (
             <EmptyLine>No profile pictures found.</EmptyLine>
           ) : (
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {photos.map((p, i) => (
-                <div key={i} className="relative shrink-0 w-14 h-14">
-                  <img
-                    src={p.url}
-                    alt=""
-                    className="w-14 h-14 rounded-md object-cover border border-white/10"
-                    onError={(ev) => { ev.currentTarget.parentElement.style.display = "none"; }}
-                  />
-                  <span className="absolute bottom-0 left-0 text-[8px] font-mono px-1 rounded-tr rounded-bl-md bg-black/70 text-slate-300">
-                    {platformShort(p.platform)}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <PhotoGrid photos={photos} />
           )}
         </MatrixCard>
 
@@ -901,29 +944,35 @@ function SummaryTab({ entities, clusters, signalFilter, onToggleSignal }) {
           {platforms.length === 0 ? (
             <EmptyLine>No platforms found.</EmptyLine>
           ) : (
-            <div className="space-y-1">
-              {platforms.map(([p, n]) => (
+            <ExpandableList
+              items={platforms}
+              initial={6}
+              render={([p, n]) => (
                 <div key={p} className="flex items-center justify-between text-[13px]">
-                  <span className="text-slate-200 truncate">{p}</span>
+                  <span className="text-slate-200 truncate">{decodeEntities(p)}</span>
                   <span className="text-[11px] font-mono text-slate-500 border border-slate-700 rounded px-1.5 shrink-0">{n}</span>
                 </div>
-              ))}
-            </div>
+              )}
+            />
           )}
         </MatrixCard>
 
-        <MatrixCard icon="👤" title="Names & aliases" count={names.length}>
-          {names.length === 0 ? (
+        <MatrixCard icon="👤" title="Names & aliases" count={nameRows.length}>
+          {nameRows.length === 0 ? (
             <EmptyLine>No names found.</EmptyLine>
           ) : (
-            <div className="space-y-1">
-              {names.map((n, i) => (
+            <ExpandableList
+              items={nameRows}
+              initial={4}
+              render={(r, i) => (
                 <div key={i} className="flex items-center justify-between gap-2 text-[13px]">
-                  <span className="text-slate-200 truncate">{n}</span>
-                  <span className="text-[10px] font-mono uppercase text-cyan-400 shrink-0">Alias</span>
+                  <span className="text-slate-200 truncate">{r.v}</span>
+                  <span className={`text-[10px] font-mono uppercase shrink-0 ${r.alias ? "text-slate-500" : "text-cyan-400"}`}>
+                    {r.alias ? "Alias" : "Name"}
+                  </span>
                 </div>
-              ))}
-            </div>
+              )}
+            />
           )}
         </MatrixCard>
 
@@ -931,11 +980,13 @@ function SummaryTab({ entities, clusters, signalFilter, onToggleSignal }) {
           {locations.length === 0 ? (
             <EmptyLine>No locations found.</EmptyLine>
           ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {locations.map((l, i) => (
-                <span key={i} className="text-[11px] text-slate-300 bg-slate-800/70 border border-slate-700 rounded px-2 py-0.5">{l}</span>
-              ))}
-            </div>
+            <ExpandableList
+              items={locations}
+              initial={6}
+              render={(l, i) => (
+                <span key={i} className="inline-block mr-1.5 mb-1 text-[11px] text-slate-300 bg-slate-800/70 border border-slate-700 rounded px-2 py-0.5">{l}</span>
+              )}
+            />
           )}
         </MatrixCard>
       </div>

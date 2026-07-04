@@ -139,5 +139,15 @@ def get_results(case_id: str, user_id: str) -> dict | None:
         forensics = _forensics(entities)
     except Exception:
         forensics = {}
+    # Clean, LLM-classified identity (real names / aliases / locations / employers) for the
+    # Names & aliases + Locations panels — replaces the raw metadata dump that leaked junk
+    # (ratings as names, handles as names, locations as names). Only worth the LLM call once
+    # the investigation is complete; the agent caches per case so polling doesn't re-run it.
+    if case.get("status") == "complete":
+        try:
+            from backend.analysis.identity_agent import classify as _classify_identity
+            forensics["identity"] = _classify_identity(entities, case_id=case_id)
+        except Exception:
+            pass
     return {"case": case, "entities": entities, "clusters": clusters,
             "forensics": forensics, "status": case.get("status")}
