@@ -314,6 +314,8 @@ export default function CaseView() {
               onSelectEntity={onSelectEntity}
               onSelectCluster={onSelectCluster}
               autoExpandNotLinked={autoExpandNotLinked}
+              anyFilter={anyFilterActive}
+              onClearFilters={clearAllFilters}
             />
           </GlassPanel>
         </div>
@@ -465,9 +467,22 @@ function IdentityList({
   strongClusters, possibleClusters, letterByCluster, clusterMembers,
   notLinkedEntities, strongCount, possibleCount,
   infoByEntity, selectedEntityId, onSelectEntity, onSelectCluster, autoExpandNotLinked,
+  anyFilter = false, onClearFilters,
 }) {
   const [openNotLinked, setOpenNotLinked] = useState(autoExpandNotLinked);
   useEffect(() => { setOpenNotLinked(autoExpandNotLinked); }, [autoExpandNotLinked]);
+
+  // Nothing to show in ANY section — almost always because an active filter excluded
+  // everything. Make that explicit so a filtered view never reads as "broken/empty".
+  const nothingShown = strongClusters.length === 0 && possibleClusters.length === 0 && notLinkedEntities.length === 0;
+  if (nothingShown && anyFilter) {
+    return (
+      <div className="text-center py-8">
+        <div className="text-sm text-slate-400">No accounts match the active filter.</div>
+        <button onClick={onClearFilters} className="mt-2 text-xs text-cyan-400 hover:underline">Clear filters</button>
+      </div>
+    );
+  }
 
   return (
     <div>

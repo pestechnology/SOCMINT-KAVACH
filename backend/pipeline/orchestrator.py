@@ -286,6 +286,18 @@ async def run_investigation(case_id: str) -> dict:
         # If user typed a full name (with spaces) into a username seed, auto-correct to name!
         if s.get("type") == "username" and isinstance(s.get("value"), str) and " " in s["value"].strip():
             s["type"] = "name"
+        # Symmetric, and the more common failure: the seed-type picker used to default to
+        # "name", so a plain single-token handle typed without switching the dropdown
+        # (e.g. "torvalds", "ash29_03") was routed through ONLY the name path — a few
+        # site:linkedin/instagram/twitter Google-dork queries — which find ~nothing for a
+        # non-name string and complete in ~1s with zero results. That reads as "the
+        # investigation didn't run." A real personal NAME is multi-token (first + last);
+        # a single token with no space is almost always a username/handle, and username
+        # enumeration (Maigret/Sherlock/Blackbird) is exactly the exact-match-first path
+        # such input needs. Multi-token values stay on the name path.
+        elif (s.get("type") == "name" and isinstance(s.get("value"), str)
+              and s["value"].strip() and " " not in s["value"].strip()):
+            s["type"] = "username"
         expanded_seeds.append(s)
         # Only generate username permutations for actual username seeds (no spaces)
         if s.get("type") == "username" and isinstance(s.get("value"), str) and " " not in s["value"].strip():

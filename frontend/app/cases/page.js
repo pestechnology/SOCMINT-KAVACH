@@ -218,7 +218,14 @@ function NewInvestigation({ onClose, onCreated }) {
   const [title, setTitle] = useState("");
   const [region, setRegion] = useState("INDIA");
   const [seeds, setSeeds] = useState([]);
-  const [draftType, setDraftType] = useState("name");
+  // Default to "username" — it's the best-tested, highest-recall identifier path
+  // (Maigret/Sherlock/Blackbird). Defaulting to "name" meant typing a plain handle
+  // without switching the dropdown routed through name-only Google-dork search,
+  // which correctly finds nothing for a non-name string and completes in ~1s —
+  // reading as a broken/instant investigation. The backend now also auto-corrects
+  // unambiguous handle-shaped "name" seeds (digits/underscore, no space), but fixing
+  // the default here prevents the mis-route in the first place.
+  const [draftType, setDraftType] = useState("username");
   const [draftValue, setDraftValue] = useState("");
   const [minor, setMinor] = useState(false);
   const [busy, setBusy] = useState(false);
