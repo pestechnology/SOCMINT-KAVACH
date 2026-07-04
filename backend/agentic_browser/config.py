@@ -9,7 +9,7 @@ AGENTIC_BROWSER_MODE = os.getenv("AGENTIC_BROWSER_MODE", "auto").lower()
 # ---- LLM that drives the browser: Gemini (free tier, fast, vision-capable) ----
 # Navigation/vision runs on Gemini; NVIDIA is far too slow for a multi-step agent loop.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
 # Browser launch settings
 HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "true").lower() == "true"

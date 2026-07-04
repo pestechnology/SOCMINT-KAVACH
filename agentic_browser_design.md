@@ -10,7 +10,7 @@ missing ops (timeouts/cleanup/concurrency/failure-UX). Design only — build aft
 
 | Job | Model | Why |
 |---|---|---|
-| Navigation / vision (agent loop) | **Gemini `gemini-2.x-flash`** (Google AI Studio free tier) | Only free key that is fast AND vision-capable; browser agents need screenshots. |
+| Navigation / vision (agent loop) | **Gemini `gemini-3.1-flash-lite`** (Google AI Studio free tier) | Only free key that is fast AND vision-capable; browser agents need screenshots. |
 | Page → structured JSON (extraction) | **Groq** (existing key, via `LLMClient`) | Fast text model, no vision needed here; keeps Gemini quota for navigation. |
 | Agent loop | **NEVER NVIDIA** | ~80s/call on this network → an agent (many calls/task) never finishes. |
 
