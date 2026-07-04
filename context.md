@@ -1746,3 +1746,233 @@ files were touched in this backend-only pass.
 §17.12. `SIGNAL_WEIGHTS`, `HARD_ANCHOR_SIGNALS`, and `_CONTEXT_SIGNALS` were all
 re-read directly from the running code (not from memory) immediately before writing
 this section, to guarantee this documentation matches the actual code exactly.
+
+# 21. RE-ITERATION / IDENTIFIER CROSS-PIVOTING + NEW TIER-1 SEARCH SOURCES (2026-07-04/05)
+
+This is the big feature added this session: the investigator can now select anything
+already found in a case — a discovered account, a name/alias, a profile picture — plus
+type in identifiers manually, and run ONE combined follow-up search that folds new
+results back into the SAME case. Alongside it, three new Tier-1 OSINT modules, a
+generalised bio-link/fact-extraction pipeline, and a real bug fix for "re-running found
+nothing new." **Full standalone write-up:** `REITERATION_AND_SEARCH_SYSTEM.md` — this
+section is the context.md-style summary; that file has the complete walkthrough
+(architecture diagram, request/response shapes, UI states, worked examples).
+
+## 21.1 The derivation engine — `backend/ingestion/derive.py` (new file)
+
+Pure stdlib, deterministic, dependency-free (bar `username_variants()` and
+`is_plausible_name()`/`is_generic_name()`, both already existing). `derive_seeds(seed_type,
+value)` is the router:
+
+- **username** seed (e.g. `"vismayhs"`) → 5 guessed emails (`{value}@{gmail,yahoo,
+  outlook,protonmail,icloud}.com`) + a recovered name guess (`names_from_handle`) + handle
+  variants recombined **through** that recovered name (`username_variants` applied to the
+  name, not the raw opaque blob — this is what turns `"vismayhs"` into `vismay_hs` /
+  `vismay.hs` / `hsvismay`, since `username_variants` can't split an unseparated string on
+  its own).
+- **name** seed → handle variants directly (`username_variants` already does this) + a
+  compact-form guessed email.
+- **email** seed → the local part treated as a full username (handles + name guesses),
+  i.e. the SAME `names_from_handle`/`username_variants` machinery, entered from the other
+  side.
+
+`names_from_handle(handle)`: splits on separators/camelCase first (`"vismay_hs"` →
+`"Vismay Hs"`); if the handle is one opaque token, finds the LONGEST known first name
+(from `name_intel._COMMON_FIRST_NAMES`) that prefixes it and treats a ≤3-char remainder as
+initials (`"vismayhs"` → `"Vismay HS"`); falls back to a de-numbered mononym
+(`"ghostrider99"` → `"Ghostrider"`) as a last resort. Gated through `is_plausible_name`/
+`is_generic_name` throughout, so a lone common first name (`"arjun"` alone) is never
+surfaced as a "recovered" name — that's not identifying evidence on its own, same
+discipline `resolve_cluster_identity` already uses.
+
+`_valid_handle()` reuses `orchestrator._is_valid_expansion_handle` via a **lazy import
+inside the function body** (not at module top) — `orchestrator.py` imports `derive_seeds`
+at its own top level, so a top-level import the other way would be circular. This mirrors
+an existing pattern in this codebase (`case_service.get_results`'s lazy `name_intel`
+import).
+
+`MAX_DERIVED_SEEDS = 20` caps a single `derive_seeds()` call; `estimate_query_count()`
+counts how many of a candidate list are query-bearing types (username/name/email — phone/
+upi/url aren't derived from anything today) for the UI's "will use ~N Serper queries" line.
+
+## 21.2 Three new Tier-1 scrapers — `gravatar_scraper.py`, `emailrep_scraper.py`, `socid_enrich.py`
+
+Wired into `_seed_tool_map()`'s `"email"` list alongside HIBP/Holehe/DeHashed/etc.
+**Both Gravatar and EmailRep were live-tested against their real APIs on 2026-07-04** to
+verify the actual current behaviour rather than trust older docs:
+
+- **`GravatarScraper`** — the avatar-existence check (`GET /avatar/{sha256}?d=404`) is
+  genuinely free/no-key (verified: 200 vs 404 confirmed live) and feeds a `photo_url` into
+  the existing pHash/face-embedding pipeline like any other discovered photo. The richer
+  profile JSON (display name, verified linked accounts) now requires an API key even for
+  public profiles — confirmed live via a 404 `"Profile not found"` against a known public
+  Gravatar account with no key attached (Automattic locked this down after the WordPress.com
+  acquisition; older "free, no key" documentation is now wrong). Gated behind optional
+  `config.GRAVATAR_API_KEY`; verified linked accounts, when present, are folded into
+  `metadata["bio"]` so the EXISTING `bio_url_match` signal fires on them with zero new
+  correlation code.
+- **`EmailRepScraper`** — verified live: the unauthenticated endpoint now returns HTTP 429
+  `{"status":"fail","reason":"the unauthenticated API is currently disabled..."}` — despite
+  older docs, a key (`config.EMAILREP_API_KEY`) is required for any lookup, not just richer
+  ones. Once configured, returns one `"email_registration"` profile per platform in
+  `details.profiles` (mirrors `holehe_scraper.py`'s shape exactly, so it rides the same
+  breach/registration corroboration path with zero new signal wiring) plus a
+  `is_valid_recipient()` helper (disposable/deliverable check) for future use.
+- **`socid_enrich.enrich_via_socid(profiles)`** — runs `socid_extractor` (github.com/
+  soxoj/socid-extractor, confirmed already installed in this venv at v0.0.27; now also
+  added to `requirements.txt`, which it was missing from) against profile pages still
+  missing a name, using its per-platform regex/JSON schemes. Maps whatever it recovers
+  into `metadata["name"]`/`["fullname"]`/`["location"]`/`["dob_candidate"]` — the SAME
+  fields `profile_page_fetcher.py` already writes, gated through `is_plausible_name` the
+  same way, so `exact_name_match`/`location_overlap` fire on it with zero new signal code.
+  Wired into `run_investigation`'s enrichment sequence (after `enrich_facts`) AND into the
+  pivot task (`run_pivot_seeds`).
+
+**Deliberately NOT built:** GHunt (gmail → Google Maps/YouTube/etc. via scraped cookies).
+Explicitly flagged to the user as ToS-gray (undocumented Google endpoints) rather than
+silently built; it was already marked optional/off-by-default in the plan and was skipped.
+
+## 21.3 Automatic email→username bridge (`run_investigation`, step 1.5)
+
+**The actual gap this closes:** an email seed's tool list (HIBP, Holehe, DeHashed,
+GitHub-by-email, Gravatar, EmailRep, a literal Serper search for the exact email string)
+never runs a username-style Instagram/Twitter/GitHub search — none of those tools split
+the email at `@` and re-check social platforms by handle. A user reported entering
+`vismayhs@gmail.com` and getting no Instagram result even though `github.com/vismayhs`
+existed and was findable by username.
+
+Fix: a new step **1.5** in `run_investigation` (right after the existing Username
+Permutation Engine, before the primary scrape loop) takes every `email`-type seed, derives
+ONLY the `email_local_part` strategy from `derive_seeds("email", value)` (not the 5
+guessed-email-providers or name-guess strategies — those stay pivot-only, manual and
+budget-visible, so this automatic step doesn't silently multiply Serper/API spend on every
+email search), and appends it to `expanded_seeds` as a real `"username"` seed tagged
+`_derived_via`. Because it's injected into the seed list itself (not bolted on after), it
+automatically benefits from the EXISTING username-variant-expansion step (§ "2.5") too —
+zero extra code for that. Resulting profiles are stamped
+`metadata["derived_via"] = {"strategy": "email_local_part", "from_value": <email>}` in the
+primary fan-out loop. Verified: `tests/test_email_bridge.py` (3 tests) + a live drive
+(`vismayhs@gmail.com` → real Facebook/YouTube/GitHub hits tagged with the bridge).
+
+## 21.4 Generalised bio-link cascade — `bio_link_seeds()` (was GitHub-blog-blind)
+
+The ORIGINAL bio-link cascade (§ step "2.8" in `run_investigation`) only scanned
+`metadata["bio"]`/`["snippet"]` for embedded URLs. GitHub's own `blog` field (frequently a
+LinkedIn/Twitter/personal-site link) was captured by `github_scraper.py` but **never
+read by anything** — confirmed by grepping the whole backend for `"blog"` usage before
+touching it.
+
+New shared helper `orchestrator.bio_link_seeds(profiles, already, cap=5)`: scans
+`_TEXT_LINK_FIELDS = (bio, snippet, text_sample)` as free text, and
+`_URL_LINK_FIELDS = (blog, website, url, external_url, homepage, links)` as **dedicated
+URL fields** — normalised through `_normalize_url()` first, because GitHub returns `blog`
+**scheme-less** (`"danabra.mov"`, or `"twitter.com/foo"` with no `https://`), which the
+existing `extract_bio_urls()` regex requires and would silently miss. `_normalize_url`
+prepends `https://` only to strings that are domain-shaped (`_BARE_DOMAIN_RE`); a bare
+personal site with no social handle correctly yields nothing (verified:
+`test_bio_link_seeds_normalizes_scheme_less_blog`). This ONE helper is now called from
+BOTH `run_investigation` (replacing the old inline loop verbatim) and `run_pivot_seeds`
+(new — the pivot path had no bio-link cascade at all before this session), so the two
+paths can't drift apart again.
+
+## 21.5 Deterministic bio-fact fallback — `fact_enrich.deterministic_facts()`
+
+`enrich_facts()` was 100% LLM-dependent for employer/school/city extraction with no
+fallback — confirmed live during this session's own debugging (Groq returned 429, NVIDIA
+timed out, so `extract_facts()` returned empty every time). New `deterministic_facts(text)`
+runs unconditionally alongside the LLM call and the two results are unioned:
+
+- `_ROLE_AT_RE` — `"<role> at/@ <Proper Noun>"` (works/studies/intern/SDE/founder/etc.)
+- `_INSTITUTION_RE` — `<Proper Noun...> University|College|Institute|...`
+- `_ACRONYM_INST_RE` — known Indian institute acronyms (IIT/NIT/IIIT/BITS/VIT/PES/...)
+- `_CITY_RE` — only unambiguous cues (`based in`/`lives in`/`📍`/`location:`) — deliberately
+  **excludes** a bare `"from X"` cue, which mis-fires on text like `"photos from Ashwin"`
+  (same false-positive `profile_page_fetcher.py`'s own location extractor already avoids).
+
+All three proper-noun patterns use a token class with **no interior `.`**
+(`_TOK = r"[A-Z][A-Za-z0-9&'-]*"`) specifically so `"University."` can't swallow the next
+sentence's first word — an actual bug caught and fixed during this session's own testing
+(`"Student at PES University. Based in Bengaluru. Loves ML."` was initially mis-captured
+as `"PES University. Based"` before the token class was tightened). `_GENERIC_ORG` blocks
+bare words like `"university"`/`"college"` from ever standing alone as a candidate — they'd
+manufacture a false `employer_overlap` across unrelated people otherwise. Stays
+context-tier evidence only, same as before (no `scoring_engine.py` change).
+
+## 21.6 The "re-running found nothing new" bug — `ingest_external_profiles` now MERGES
+
+**Root cause (three parts, all confirmed against the running code before fixing):**
+1. `ingest_external_profiles` skipped any profile whose `sha256` matched an existing
+   entity — so re-scraping an account you already had threw away whatever NEW enrichment
+   (name/employer/city/bio-links) that re-scrape found. This was the primary cause.
+2. `run_pivot_seeds` ran no bio-link cascade at all (fixed in §21.4).
+3. Fact extraction was LLM-only with no fallback (fixed in §21.5).
+
+Fix: new `_merge_metadata(existing, incoming)` — fills gaps in `existing` from `incoming`
+in place; NEVER overwrites a non-empty scalar; unions list fields (`_LIST_META_FIELDS`:
+employer_candidates, location_candidates, followers_sample, etc.) instead of replacing
+them; keeps sticky flags (`exact_seed_match`) once True. `ingest_external_profiles` now
+looks up `by_hash[p.sha256]` — a genuinely new sha256 still inserts a new entity row as
+before; a MATCHING sha256 now calls `_merge_metadata` and, if anything changed,
+`UPDATE`s that entity's `metadata_json`/`source_url` instead of silently `continue`-ing
+past it. Return value gained an `"enriched"` count alongside `"added"`.
+Verified: `test_reingest_merges_enrichment_into_existing_entity` (asserts `added==0`,
+`enriched>=1`, no duplicate entity created, the new fact IS present after merge) + a live
+drive on a real `torvalds`-style re-iteration.
+
+## 21.7 Facts surfaced as re-iterate suggestions + reiteration count
+
+`compute_pivot_suggestions(seeds, case_id=None)` gained a second source: when `case_id` is
+given, `_harvest_case_facts()` looks up each staged seed's matching entity in THIS case and
+emits its already-extracted **real name** (`bio_name` strategy), **employer/school**
+(`bio_employer`), and any **bio/blog-linked handle** (`bio_link`) as new checkable
+suggestions — sorted before the plain `derive_seeds()` guesses, since a fact actually
+scraped from the account is a stronger lead than a guessed email permutation. These are
+exactly the "points it can use to improve the search" the investigator asked to see.
+
+`get_results()` (`case_service.py`) gained `reiteration_count` — `COUNT(*)` of
+`audit_ledger` rows with `action='pivot_started'` for the case (each pivot run logs
+exactly one). Shown as a "Re-iterations" tile in the frontend status strip. Frontend also
+gained a `BioFacts` component (name/employer-school/city/linked-accounts) rendered in the
+single-account and cluster analysis views, and the re-iterate panel's suggestion labels
+now distinguish `"real name from bio"` / `"employer / school from bio"` / `"linked account
+from bio"` from the plain derivation strategies.
+
+## 21.8 Frontend — the multi-select + drag-and-drop re-iteration model
+
+Superseded an earlier single-entity "Re-iterate" button design mid-session based on
+explicit user feedback: every account gets a checkbox (not a per-item button); names/
+aliases and profile pictures in the Summary tab are draggable (native HTML5 drag-and-drop)
+AND clickable; everything lands in ONE staging tray (`ReiterateBar.jsx`, a permanent
+dashed drop-zone) fixed above a floating "Re-iterate (N)" button, bottom-right. Opening it
+fetches suggestions for whatever's staged, lets you check them or type a manual identifier,
+shows the Serper-query estimate, and runs ONE combined pivot. The tray clears after a
+successful run so the next batch can be staged from the larger result set — genuinely
+repeatable, verified live (reiteration_count 0→1, entities 42→45 on one real re-iterate).
+
+A profile picture staged this way becomes a `"face"` seed
+(`{type:"face", value:photo_url}`) — re-running face-embedding matching against it via
+`build_face_seed_profile`, which required a new `_scrape_pivot_seed()` wrapper in
+`run_pivot_seeds` (`_seed_tool_map()["face"]` is deliberately `[]`; face seeds are handled
+outside the generic scraper fan-out). Gated behind `DATA_MODE=="live"` — caught during
+testing that `build_face_seed_profile` has no mock-mode branch of its own and would
+otherwise fire a real HTTP request from a mock-mode pivot (e.g. in tests).
+
+**Deliberately deferred (explicit LOCKED decision, not an oversight):** city/location as
+its own searchable seed type. There is no backend seed type for a bare location string
+today (Serper/Maigret/etc. have nothing to do with "search for this city" alone) — city is
+extracted and DISPLAYED (§21.5/21.7) but not wired as a draggable seed. If it's built
+later, the honest options are (a) a location-as-qualifier appended to other seeds'
+queries, or (b) a genuinely stricter country-filter mode — both flagged to the user as
+separate, larger changes, not done in this session.
+
+## 21.9 Test status after this build
+
+**189 tests passing** (`python -m pytest tests/ -q`), up from 101 at the start of this
+session — 88 new tests across `test_derive.py`, `test_email_norm.py`,
+`test_new_scrapers.py`, `test_pivot.py`, `test_email_bridge.py`, and
+`test_bio_enrichment.py`, verified moments before this section was written.
+`npm run build` clean throughout. Every backend change in this section was verified against
+a REAL running server (not just pytest/mock mode) at least once: live Gravatar/EmailRep API
+calls confirming their actual current auth requirements, a live `torvalds` investigation +
+pivot, a live `gaearon` GitHub re-iteration confirming the merge fix and reiteration_count,
+and a live multi-seed `/pivot/suggest` + `/pivot` call confirming the combined-run model.

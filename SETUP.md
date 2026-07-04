@@ -22,7 +22,9 @@ Required for a strong demo: `SERPER_API_KEY`, `GITHUB_TOKEN`, `NVIDIA_API_KEY`, 
 
 Optional: `HIBP_API_KEY`, `TELEGRAM_API_ID/HASH`, `NUMVERIFY_KEY`, `REDDIT_CLIENT_ID/SECRET`,
 `DEHASHED_EMAIL`/`DEHASHED_API_KEY`, `LEAKCHECK_API_KEY` (deeper breach coverage — the
-pipeline runs identically, just with fewer breach hits, if these are unset).
+pipeline runs identically, just with fewer breach hits, if these are unset), plus
+`GRAVATAR_API_KEY` / `EMAILREP_API_KEY` (both free-tier — Gravatar still does a free
+no-key avatar-existence check without one; EmailRep returns `[]` until a key is set).
 
 > If any key was ever pasted into chat/screenshots, ROTATE it before use.
 
@@ -122,6 +124,9 @@ python -c "from backend.report.bsa63_generator import generate_report; print(gen
 2. `POST /cases` `{title, seeds:[{type,value}]}` (Bearer token) → returns `case_id`, starts investigation
 3. Poll `GET /cases/{case_id}/results` → `status` goes `pending → running → complete`
 4. `GET /cases/{case_id}/report` → downloads the BSA-63 PDF
+5. (Re-iterate) `POST /cases/{case_id}/pivot/suggest` `{seeds:[{type,value}]}` → free
+   candidate-identifier list; `POST /cases/{case_id}/pivot` `{seeds:[...]}` → runs a
+   combined follow-up search, `status` flips back to `running → complete`, repeatable
 
 Seed types: `username`, `email`, `phone`, `upi`, `name`, `url`, `face`
 
@@ -142,7 +147,7 @@ shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
 
 ## 9. What's built
 
-**Built and tested (101 pytest tests passing):**
+**Built and tested (189 pytest tests passing):**
 
 - Config, DB, auth, cases, data-source interface, mock scraper, correlation (20
   signals — 7 hard-anchor, 7 context-tier, see context.md §17.12), scoring
@@ -152,12 +157,26 @@ shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
   (incl. filetype/medium/pinterest/pastebin dorks), HIBP, XposedOrNot, DeHashed,
   LeakCheck (both stubbed pending API keys), Holehe, Maigret, Sherlock, Blackbird
   (username + email), Socialscan, ignorant, PhoneInfoga, UPI, Wayback, Reddit,
-  Telethon, URL scraper.
+  Telethon, URL scraper, Gravatar (avatar existence + verified accounts), EmailRep
+  (registered-service lookup), socid_extractor (structured profile-page facts).
 - False-positive filter: Maigret (36 excluded sites), Sherlock (3), Blackbird (1).
 - Profile photo og:image enrichment, perceptual-hash matching, and face-embedding
   matching (OpenCV YuNet+SFace — see §3 above) + frontend avatar display.
-- Bio-link extraction (self-disclosed cross-platform links) and NER-style
-  employer/city fact extraction (LLM-based, context-tier evidence only).
+- Bio-link extraction — generalised beyond a bio field to a platform's dedicated
+  blog/website field too (e.g. GitHub's `blog`, incl. scheme-less values) — and
+  NER-style employer/school/city fact extraction (LLM-based with a deterministic
+  regex fallback so facts still populate when the LLM provider is rate-limited;
+  context-tier evidence only).
+- **Re-iteration / identifier cross-pivoting** — `backend/ingestion/derive.py` derives
+  new candidate identifiers (guessed emails, recovered names, handle variants) from
+  anything already in a case; the frontend lets you multi-select discovered accounts,
+  suggested candidates, and profile pictures (drag-and-drop) into one staging tray and
+  run a single combined follow-up search, merged back into the same case. See
+  [`REITERATION_AND_SEARCH_SYSTEM.md`](REITERATION_AND_SEARCH_SYSTEM.md) for the full
+  design.
+- An email seed automatically also runs its local part as a username search (finds
+  Instagram/GitHub/etc., not just breach records), and re-scraping an account you
+  already have now MERGES newly-found facts into it instead of discarding them.
 - Confidence labels: CONFIRMED / POSSIBLE LEAD / UNCONFIRMED.
 - Lead reverification pipeline.
 - Username extraction from Serper result URLs (LinkedIn/Instagram/Twitter/GitHub handles).
@@ -165,7 +184,8 @@ shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
 - Frontend auto-expands unlinked section when no clusters are found.
 
 **Frontend:** Next.js + Tailwind dashboard — profile photos, confidence labels, sigma.js
-graph, vis-timeline, forensics panel. `npm run build` passes.
+graph, vis-timeline, forensics panel, re-iteration staging tray + floating action
+button. `npm run build` passes.
 
 **Pending (optional):** Telethon (needs bot-token), Playwright-based Facebook/UPI-name
 lookups, Reddit OAuth (needs CLIENT_ID/SECRET).

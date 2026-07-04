@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 
 from backend import config
@@ -53,6 +54,10 @@ from backend.ingestion.profile_page_fetcher import enrich_profiles_from_page, en
 from backend.ingestion.fact_enrich import enrich_facts
 from backend.ingestion.dehashed_scraper import DehashedScraper
 from backend.ingestion.leakcheck_scraper import LeakcheckScraper
+from backend.ingestion.gravatar_scraper import GravatarScraper
+from backend.ingestion.emailrep_scraper import EmailRepScraper
+from backend.ingestion.socid_enrich import enrich_via_socid
+from backend.ingestion.derive import derive_seeds
 from backend.correlation.correlation_engine import extract_bio_urls
 from backend.ingestion.url_scraper import extract_handle
 from backend.ledger.audit_ledger import log_action, save_artifact
@@ -73,7 +78,8 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         # (return [] — see each module's docstring); wired here so the moment a key is
         # added to .env, deeper breach coverage activates with zero other changes.
         "email":    [HIBPScraper(), XposedOrNotScraper(), DehashedScraper(), LeakcheckScraper(),
-                     HoleheScraper(), BlackbirdEmailScraper(), GitHubScraper(), SerperScraper('"{q}"')],
+                     HoleheScraper(), BlackbirdEmailScraper(), GitHubScraper(), GravatarScraper(),
+                     EmailRepScraper(), SerperScraper('"{q}"')],
         # NumVerify (carrier/line-type/country) works with the configured key; a PLAIN
         # Serper search returns real web mentions, whereas the old site:truecaller.com
         # dork returned nothing (Truecaller blocks indexing). PhoneInfoga/ignorant stay
@@ -82,7 +88,13 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         # phone-indexed breach records where the provider supports it.
         "phone":    [NumVerifyScraper(), PhoneInfogaScraper(), IgnorantScraper(),
                      DehashedScraper(), LeakcheckScraper(), SerperScraper('"{q}"')],
-        "username": [_maigret, _sherlock, _blackbird, SocialscanScraper(), RedditScraper(), TelethonScraper(), GitHubScraper(), SerperScraper('"{q}"')],
+        # LinkedIn blocks the WhatsMyName-style enumeration Maigret/Sherlock/Blackbird use
+        # (verified: maigret's own site database has zero linkedin.com entries), so a
+        # username seed had NO path to LinkedIn at all without this dork — confirmed live
+        # that the dork itself works (site:linkedin.com/in "{q}" returns real profile URLs
+        # via Serper); it just wasn't wired in for anything but a full-name seed before.
+        "username": [_maigret, _sherlock, _blackbird, SocialscanScraper(), RedditScraper(), TelethonScraper(), GitHubScraper(),
+                     SerperScraper('site:linkedin.com/in "{q}"'), SerperScraper('"{q}"')],
         "upi":      [UPIScraper(), SerperScraper('"{q}"')],
         "name":     [SerperScraper('site:linkedin.com/in "{q}"'),
                      SerperScraper('site:instagram.com "{q}"'),
@@ -298,6 +310,77 @@ def _dedup(profiles: list[RawProfile]) -> list[RawProfile]:
     return out
 
 
+# Free-text fields whose embedded http(s):// URLs we extract as-is.
+_TEXT_LINK_FIELDS = ("bio", "snippet", "text_sample")
+# Dedicated URL fields — often stored SCHEME-LESS (GitHub returns blog as "danabra.mov"
+# or "twitter.com/foo" with no https://), so we normalize a bare domain to a URL here.
+_URL_LINK_FIELDS = ("blog", "website", "url", "external_url", "homepage", "links")
+
+_BARE_DOMAIN_RE = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/\S*)?$", re.I)
+
+
+def _normalize_url(v: str) -> str:
+    """Prepend https:// to a scheme-less bare domain so URL extraction catches it;
+    pass through anything that already has a scheme or isn't domain-shaped."""
+    v = str(v or "").strip()
+    if not v:
+        return ""
+    if v.startswith(("http://", "https://")):
+        return v
+    if _BARE_DOMAIN_RE.match(v):
+        return "https://" + v
+    return v
+
+
+def _link_text(meta: dict) -> str:
+    """Concatenate every link-bearing metadata field into one blob for URL extraction.
+    Dedicated URL fields are scheme-normalized; list fields (e.g. `links`) are flattened."""
+    parts: list[str] = []
+    for k in _TEXT_LINK_FIELDS:
+        v = (meta or {}).get(k)
+        if v:
+            parts.append(str(v))
+    for k in _URL_LINK_FIELDS:
+        v = (meta or {}).get(k)
+        if not v:
+            continue
+        items = v if isinstance(v, (list, tuple)) else [v]
+        parts.extend(_normalize_url(str(x)) for x in items if x)
+    return " ".join(parts)
+
+
+def bio_link_seeds(profiles: list[RawProfile], already: set[str],
+                   cap: int = 5) -> list[RawProfile]:
+    """Scan every profile's link-bearing fields (bio, blog/website, ...) for URLs that
+    resolve to a social handle we have NOT already discovered, and return them as new
+    'derived' cascade RawProfiles (platform='derived', metadata.cascade=True). Mutates
+    `already` (lowercased handle set) so repeated calls don't re-add the same handle.
+    Bounded by `cap`; deterministic and fail-safe (never raises).
+
+    Shared by the first investigation and the re-iterate pivot so both follow bio/blog
+    links identically — this is what turns "found the GitHub" into "…and the LinkedIn/
+    Twitter its profile links to".
+    """
+    out: list[RawProfile] = []
+    for p in list(profiles):
+        text = _link_text(p.metadata or {})
+        if not text:
+            continue
+        for url in extract_bio_urls(text):
+            found = extract_handle(url)
+            if not found:
+                continue
+            _, handle = found
+            if not _is_valid_expansion_handle(handle) or handle.lower() in already:
+                continue
+            already.add(handle.lower())
+            out.append(make_profile("username", handle, "derived", url,
+                        metadata={"derived_from_bio": p.value, "cascade": True}))
+            if len(out) >= cap:
+                return out
+    return out
+
+
 async def run_investigation(case_id: str) -> dict:
     conn = get_db()
     try:
@@ -356,6 +439,29 @@ async def run_investigation(case_id: str) -> dict:
                 for p in set(perms):
                     if p != val:
                         expanded_seeds.append({"type": "username", "value": p})
+
+    # 1.5: Email -> username bridge. An email's local part is very often reused as a
+    # handle elsewhere, but the email tool_map (HIBP, Holehe, DeHashed, ...) never checks
+    # social platforms by handle — without this, an email seed can complete having never
+    # even looked at Instagram/GitHub/etc. This runs the SAME "email_local_part" strategy
+    # derive_seeds() uses for manual re-iteration, automatically and immediately, through
+    # the full username tool_map (Maigret/Sherlock/Blackbird/Socialscan/...). Deliberately
+    # ONLY that one strategy here — not the guessed-email-providers or name-guess
+    # strategies, which stay pivot-only (manual, budget-visible) to keep this automatic
+    # step's extra query cost small and predictable.
+    for s in list(expanded_seeds):
+        if s.get("type") != "email" or not isinstance(s.get("value"), str):
+            continue
+        for d in derive_seeds("email", s["value"]):
+            if d["strategy"] != "email_local_part":
+                continue
+            if any(es.get("type") == "username" and str(es.get("value", "")).lower() == d["value"].lower()
+                  for es in expanded_seeds):
+                continue
+            expanded_seeds.append({
+                "type": "username", "value": d["value"],
+                "_derived_via": {"strategy": d["strategy"], "from_value": s["value"]},
+            })
     seeds = expanded_seeds
 
     set_status(case_id, "running")
@@ -384,6 +490,9 @@ async def run_investigation(case_id: str) -> dict:
         ps = await _scrape_seed(seed.get("type"), seed.get("value"), tool_map)
         log_action(case_id, f"scrape:{seed.get('type')}",
                    {"value": seed.get("value")}, {"found": len(ps)}, "system")
+        if seed.get("_derived_via"):
+            for p in ps:
+                p.metadata.setdefault("derived_via", seed["_derived_via"])
         all_profiles.extend(ps)
         # Log false-positive filter results for username seeds (maigret + sherlock + blackbird).
         # fp_filter.py runs both real + control in parallel and caches results 6 h.
@@ -448,28 +557,10 @@ async def run_investigation(case_id: str) -> dict:
     # correlation_engine.py's bio_url_match signal — that's corroboration, this is
     # finding NEW accounts.)
     existing_handles = {p.value.lower() for p in all_profiles if p.value}
-    bio_link_count = 0
-    for p in list(all_profiles):
-        text = " ".join(str((p.metadata or {}).get(k) or "") for k in ("bio", "snippet"))
-        if not text:
-            continue
-        for url in extract_bio_urls(text):
-            found = extract_handle(url)
-            if not found:
-                continue
-            _, handle = found
-            if not _is_valid_expansion_handle(handle) or handle.lower() in existing_handles:
-                continue
-            existing_handles.add(handle.lower())
-            all_profiles.append(make_profile("username", handle, "derived", url,
-                                metadata={"derived_from_bio": p.value, "cascade": True}))
-            bio_link_count += 1
-            if bio_link_count >= 5:   # hard cap, mirrors every other expansion step
-                break
-        if bio_link_count >= 5:
-            break
-    if bio_link_count:
-        log_action(case_id, "bio_link_cascade", {"found": bio_link_count}, None, "system")
+    bio_seeds = bio_link_seeds(all_profiles, existing_handles, cap=5)
+    all_profiles.extend(bio_seeds)
+    if bio_seeds:
+        log_action(case_id, "bio_link_cascade", {"found": len(bio_seeds)}, None, "system")
 
     # 3: one-level cascade for derived seeds (e.g. UPI -> username/phone, bio-link above)
     derived = [p for p in all_profiles if p.platform == "derived"
@@ -507,7 +598,13 @@ async def run_investigation(case_id: str) -> dict:
         if discovered_names:
             top_name = sorted(discovered_names)[0]
             try:
-                serp_res = await SerperScraper('"{q}"').resolve(top_name, "live")
+                # A bare search AND a LinkedIn-scoped dork — a real name discovered from
+                # another platform (e.g. a GitHub bio) is exactly the professional-identity
+                # case LinkedIn matters for, and the username path never checks it at all.
+                pivot_tasks = [SerperScraper('"{q}"').resolve(top_name, "live"),
+                               SerperScraper('site:linkedin.com/in "{q}"').resolve(top_name, "live")]
+                pivot_results = await asyncio.gather(*pivot_tasks, return_exceptions=True)
+                serp_res = [p for r in pivot_results if isinstance(r, list) for p in r]
                 if serp_res:
                     for sp in serp_res:
                         sp.metadata["found_via_name_pivot"] = top_name
@@ -698,6 +795,12 @@ async def run_investigation(case_id: str) -> dict:
             log_action(case_id, "fact_enrichment", {"candidates": len(profiles)},
                        {"profiles_with_facts": facts}, "system")
         except Exception:  # fail-safe: fact extraction must never stop a run
+            pass
+        try:
+            socid = await enrich_via_socid(profiles)
+            log_action(case_id, "socid_enrichment", {"candidates": len(profiles)},
+                       {"profiles_enriched": socid}, "system")
+        except Exception:  # fail-safe: socid_extractor is optional
             pass
 
         # 5c: face seed (investigator-supplied reference photo). Added as its own
@@ -904,25 +1007,73 @@ async def run_investigation(case_id: str) -> dict:
     return {"status": "complete", "accounts": len(profiles), "clusters": len(clusters)}
 
 
-def ingest_external_profiles(case_id: str, new_profiles: list[RawProfile]) -> dict:
-    """Add externally-collected profiles (e.g. from the agentic browser) to an EXISTING
-    case and RE-CORRELATE, so they are linked/scored against everything else — never
-    inserted as standalone island entities that bypass the reasoning layer.
+# Metadata fields that are LISTS (unioned on merge) rather than scalars (gap-filled).
+_LIST_META_FIELDS = {
+    "employer_candidates", "location_candidates", "city_candidates",
+    "followers_sample", "gravatar_verified_accounts", "recent_posts",
+    "breaches", "linked_accounts",
+}
+# Internal flags that must never be downgraded by a merge (once True, stay True).
+_STICKY_TRUE_FIELDS = {"exact_seed_match"}
 
-    Existing entity rows are preserved (not re-deduped/rebuilt); only clusters are
-    recomputed. New profiles that duplicate an existing account (same sha256) are skipped.
-    Synchronous + self-contained; safe to call from a background task via to_thread.
-    Returns {added, total_entities, clusters}.
+
+def _merge_metadata(existing: dict, incoming: dict) -> bool:
+    """Fill gaps in `existing` from `incoming` in-place; never overwrite a non-empty
+    scalar, union list fields, keep sticky flags. Returns True if anything changed.
+
+    This is what makes re-iterating on an already-discovered account actually persist
+    what the re-scrape learned (a GitHub bio's newly-extracted name/employer/city),
+    instead of the enriched re-scrape being silently dropped as a sha256 duplicate.
+    """
+    changed = False
+    for k, v in (incoming or {}).items():
+        if v in (None, "", [], {}):
+            continue
+        if k in _STICKY_TRUE_FIELDS:
+            if v and not existing.get(k):
+                existing[k] = v
+                changed = True
+            continue
+        if k in _LIST_META_FIELDS or isinstance(v, list):
+            cur = existing.get(k)
+            cur_list = list(cur) if isinstance(cur, list) else ([] if cur in (None, "") else [cur])
+            seen = {json.dumps(x, sort_keys=True, default=str) for x in cur_list}
+            for item in (v if isinstance(v, list) else [v]):
+                key = json.dumps(item, sort_keys=True, default=str)
+                if key not in seen:
+                    cur_list.append(item)
+                    seen.add(key)
+                    changed = True
+            if cur_list != cur:
+                existing[k] = cur_list
+        elif not existing.get(k):        # scalar: only fill a genuinely empty slot
+            existing[k] = v
+            changed = True
+    return changed
+
+
+def ingest_external_profiles(case_id: str, new_profiles: list[RawProfile]) -> dict:
+    """Add externally-collected profiles (e.g. from the agentic browser, or a re-iterate
+    pivot) to an EXISTING case and RE-CORRELATE, so they are linked/scored against
+    everything else — never inserted as standalone island entities that bypass the
+    reasoning layer.
+
+    A genuinely NEW account (unseen sha256) is inserted. A re-scrape of an account we
+    already have (matching sha256) is MERGED into the existing entity — any new metadata
+    it carries (freshly-extracted name/employer/city/linked handles from a bio) fills the
+    gaps on the stored entity rather than being discarded. Synchronous + self-contained;
+    safe to call from a background task via to_thread.
+    Returns {added, enriched, total_entities, clusters}.
     """
     new_profiles = [p for p in (new_profiles or []) if p is not None]
     if not new_profiles:
-        return {"added": 0, "total_entities": 0, "clusters": 0}
+        return {"added": 0, "enriched": 0, "total_entities": 0, "clusters": 0}
 
     conn = get_db()
     try:
         crow = conn.execute("SELECT seeds_json FROM cases WHERE case_id = ?", (case_id,)).fetchone()
         if crow is None:
-            return {"added": 0, "total_entities": 0, "clusters": 0, "error": "case not found"}
+            return {"added": 0, "enriched": 0, "total_entities": 0, "clusters": 0, "error": "case not found"}
         seeds = json.loads((crow["seeds_json"] if crow["seeds_json"] else None) or "[]")
         seed_vals = {str(s.get("value", "")).strip().lower() for s in seeds if s.get("value")}
 
@@ -931,7 +1082,7 @@ def ingest_external_profiles(case_id: str, new_profiles: list[RawProfile]) -> di
             "SELECT * FROM entities WHERE case_id = ? ORDER BY rowid", (case_id,)).fetchall()
         profiles: list[RawProfile] = []
         eids: list[str] = []
-        hashes: set[str] = set()
+        by_hash: dict[str, int] = {}   # sha256 -> index into profiles/eids
         for r in rows:
             md = json.loads(r["metadata_json"] or "{}")
             profiles.append(RawProfile(
@@ -941,16 +1092,26 @@ def ingest_external_profiles(case_id: str, new_profiles: list[RawProfile]) -> di
                 sha256=r["sha256"] or ""))
             eids.append(r["entity_id"])
             if r["sha256"]:
-                hashes.add(r["sha256"])
+                by_hash[r["sha256"]] = len(profiles) - 1
 
-        # insert the new profiles (flag exact-seed match; skip exact-duplicate accounts)
+        # insert genuinely-new profiles; MERGE re-scrapes of existing accounts.
         added = 0
+        enriched = 0
         for p in new_profiles:
             v = str(p.value or "").strip().lower()
             u = str((p.metadata or {}).get("username") or "").strip().lower()
             if (v and v in seed_vals) or (u and u in seed_vals):
                 p.metadata["exact_seed_match"] = True
-            if p.sha256 and p.sha256 in hashes:
+            if p.sha256 and p.sha256 in by_hash:
+                idx = by_hash[p.sha256]
+                existing = profiles[idx]
+                if _merge_metadata(existing.metadata, p.metadata):
+                    if not existing.source_url and p.source_url:
+                        existing.source_url = p.source_url
+                    conn.execute("UPDATE entities SET metadata_json=?, source_url=? WHERE entity_id=?",
+                                 (json.dumps(existing.metadata, default=str),
+                                  existing.source_url, eids[idx]))
+                    enriched += 1
                 continue
             eid = uuid.uuid4().hex
             conn.execute(
@@ -962,7 +1123,7 @@ def ingest_external_profiles(case_id: str, new_profiles: list[RawProfile]) -> di
                  p.data_mode or "agentic_web", p.sha256, p.collected_at or _now()),
             )
             if p.sha256:
-                hashes.add(p.sha256)
+                by_hash[p.sha256] = len(profiles)
             profiles.append(p)
             eids.append(eid)
             added += 1
@@ -987,7 +1148,8 @@ def ingest_external_profiles(case_id: str, new_profiles: list[RawProfile]) -> di
                 conn.execute("UPDATE entities SET confidence=? WHERE entity_id=?",
                              (cl.confidence_score, eid))
         conn.commit()
-        return {"added": added, "total_entities": len(profiles), "clusters": len(clusters)}
+        return {"added": added, "enriched": enriched,
+                "total_entities": len(profiles), "clusters": len(clusters)}
     finally:
         conn.close()
 
@@ -1025,5 +1187,241 @@ def run_investigation_sync(case_id: str) -> dict:
         print(f"[orchestrator] INVESTIGATION FAILED for case {case_id}:\n{tb}")
         set_status(case_id, "error")
         log_action(case_id, "investigation_error", None,
+                   {"error": str(e), "traceback": tb}, "system")
+        return {"status": "error", "reason": str(e)}
+
+
+def _harvest_case_facts(case_id: str, seeds: list[dict],
+                        input_keys: set, seen: set) -> list[dict]:
+    """For each staged seed that matches an already-discovered account in this case,
+    surface the facts scraped from that account's bio/profile as NEW searchable seeds:
+    the real name, employer/college, and any handle self-disclosed in its bio/blog.
+    These are the "points it can use to improve the search" — deterministic, no cost."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT value, metadata_json FROM entities WHERE case_id = ?", (case_id,)).fetchall()
+    finally:
+        conn.close()
+    ent_by_val: dict[str, dict] = {}
+    for r in rows:
+        md = json.loads(r["metadata_json"] or "{}")
+        for k in (r["value"], md.get("username")):
+            if k:
+                ent_by_val.setdefault(str(k).strip().lower(), md)
+
+    try:
+        from backend.analysis.name_intel import is_plausible_name
+    except Exception:
+        is_plausible_name = lambda _s: True   # noqa: E731 - fail open
+
+    out: list[dict] = []
+
+    def emit(type_: str, value, strategy: str, from_value: str) -> None:
+        value = str(value or "").strip()
+        if not value:
+            return
+        key = (type_, value.lower())
+        if key in input_keys or key in seen:
+            return
+        seen.add(key)
+        out.append({"type": type_, "value": value, "strategy": strategy,
+                    "confidence": 0.6, "from_value": from_value})
+
+    for s in (seeds or []):
+        md = ent_by_val.get(str(s.get("value", "")).strip().lower())
+        if not md:
+            continue
+        src = s.get("value")
+        nm = md.get("name") or md.get("fullname")
+        if isinstance(nm, str) and " " in nm.strip() and is_plausible_name(nm.strip()):
+            emit("name", nm, "bio_name", src)
+        for emp in (md.get("employer_candidates") or [])[:3]:
+            emit("name", emp, "bio_employer", src)
+        for url in extract_bio_urls(_link_text(md)):
+            found = extract_handle(url)
+            if found and _is_valid_expansion_handle(found[1]):
+                emit("username", found[1], "bio_link", src)
+    return out
+
+
+def compute_pivot_suggestions(seeds: list[dict], case_id: str | None = None) -> list[dict]:
+    """Merge derive_seeds() candidates across MULTIPLE input identifiers (e.g. several
+    accounts the investigator checked in the UI, all at once) into one deduplicated
+    suggestion list, each tagged with which input value it came from. When case_id is
+    given, ALSO surface facts already scraped from matching discovered accounts (real
+    name, employer/college, bio/blog links). Pure/synchronous — no scraping, no cost;
+    this backs the "Suggested identifiers" list the re-iterate panel shows before
+    anything runs.
+    """
+    input_keys = {
+        (str(s.get("type", "")).strip().lower(), str(s.get("value", "")).strip().lower())
+        for s in (seeds or [])
+    }
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for s in (seeds or []):
+        stype, svalue = s.get("type"), s.get("value")
+        if not stype or not svalue:
+            continue
+        for d in derive_seeds(stype, svalue):
+            key = (d["type"], d["value"].strip().lower())
+            if key in input_keys or key in seen:
+                continue
+            seen.add(key)
+            out.append({**d, "from_value": svalue})
+    # Facts harvested from the case's own discovered accounts sort FIRST — a real name or
+    # a self-disclosed linked handle is a stronger lead than a guessed email permutation.
+    if case_id:
+        try:
+            harvested = _harvest_case_facts(case_id, seeds, input_keys, seen)
+        except Exception:
+            harvested = []
+        out = harvested + out
+    return out[:30]
+
+
+async def _scrape_pivot_seed(s: dict, tool_map: dict) -> list[RawProfile]:
+    """Like _scrape_seed, but also handles "face" seeds — a discovered profile picture
+    selected for re-iteration (e.g. from the Summary tab's Profile pictures panel).
+    _seed_tool_map()["face"] is deliberately [] (face seeds are handled by
+    build_face_seed_profile, not the generic scraper fan-out — see run_investigation),
+    so this is the one seed type _scrape_seed can't handle on its own.
+
+    Gated behind DATA_MODE=="live", mirroring run_investigation's own face-seed step —
+    build_face_seed_profile does a real HTTP fetch with no mock-mode branch of its own,
+    so without this guard a mock-mode pivot (e.g. in tests) would fire a real network
+    request instead of staying offline/deterministic.
+    """
+    if s.get("type") == "face":
+        if config.DATA_MODE != "live":
+            return []
+        try:
+            p = await build_face_seed_profile(s["value"])
+        except Exception:
+            p = None
+        return [p] if p else []
+    return await _scrape_seed(s["type"], s["value"], tool_map)
+
+
+async def run_pivot_seeds(case_id: str, seeds: list[dict]) -> dict:
+    """Re-iteration / identifier cross-pivoting: scrape an EXPLICIT list of seeds — any
+    mix of already-discovered account values the investigator re-selected, suggested
+    candidates from compute_pivot_suggestions(), and manually-typed identifiers — and
+    fold whatever they turn up into the SAME case via ingest_external_profiles, never a
+    standalone island. Repeatable by design: once this completes, the investigator can
+    select a new batch from the now-larger result set and run it again.
+
+    Discipline preserved: nothing here bypasses LINK_MIN_SIGNALS or hard-anchor gating —
+    a re-scraped/derived handle that merely string-matches stays LOW/REJECT until the
+    SAME correlation engine finds real corroborating evidence for it.
+    """
+    seeds = [s for s in (seeds or []) if s.get("type") and s.get("value")]
+    if not seeds:
+        set_status(case_id, "complete")
+        return {"status": "complete", "seeds": 0, "added": 0, "total_entities": 0, "clusters": 0}
+
+    set_status(case_id, "running")
+    log_action(case_id, "pivot_started", {"seeds": seeds}, {"seed_count": len(seeds)}, "system")
+
+    # Record these as first-class case seeds too (BSA-63 hash-chain + exact_seed_match
+    # consistency — a re-iterated identifier that pans out should read like any other
+    # seed in the audit trail and report, not a second-class internal artifact).
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT seeds_json FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+        case_seeds = json.loads((row["seeds_json"] if row else None) or "[]")
+        existing = {(s.get("type"), str(s.get("value", "")).strip().lower()) for s in case_seeds}
+        for s in seeds:
+            key = (s["type"], s["value"].strip().lower())
+            if key not in existing:
+                case_seeds.append({"type": s["type"], "value": s["value"]})
+                existing.add(key)
+        conn.execute("UPDATE cases SET seeds_json=? WHERE case_id=?", (json.dumps(case_seeds), case_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+    tool_map = _seed_tool_map()
+    tasks = [_scrape_pivot_seed(s, tool_map) for s in seeds]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    all_profiles: list[RawProfile] = []
+    for s, r in zip(seeds, results):
+        if isinstance(r, list):
+            for p in r:
+                p.metadata.setdefault(
+                    "derived_via", {"strategy": s.get("strategy", "reiterate"), "from_value": s["value"]})
+            all_profiles.extend(r)
+
+    all_profiles = _dedup(all_profiles)
+
+    # Follow self-disclosed bio/blog links to NEW accounts — the SAME helper the first
+    # investigation uses (bio, blog/website, ...). This is what turns "re-iterated on the
+    # GitHub" into also pulling in the LinkedIn/Twitter/site its profile links to.
+    already = {p.value.lower() for p in all_profiles if p.value}
+    casc_seeds = bio_link_seeds(all_profiles, already, cap=5)
+    if casc_seeds:
+        all_profiles.extend(casc_seeds)
+        casc_results = await asyncio.gather(
+            *[_scrape_seed(d.type, d.value, tool_map) for d in casc_seeds],
+            return_exceptions=True)
+        for d, r in zip(casc_seeds, casc_results):
+            if isinstance(r, list):
+                src = (d.metadata or {}).get("derived_from_bio")
+                for p in r:
+                    p.metadata.setdefault("derived_via", {"strategy": "bio_link", "from_value": src})
+                all_profiles.extend(r)
+        all_profiles = _dedup(all_profiles)
+        log_action(case_id, "pivot_bio_link_cascade", {"found": len(casc_seeds)}, None, "system")
+
+    # ingest_external_profiles only inserts/merges + correlates + scores — it does NOT run
+    # the enrichment passes run_investigation runs, so a Gravatar-derived email's photo
+    # would never get pHash'd/face-embedded and email->photo correlation would never fire.
+    # Run the same enrichment passes here first, same fail-safe-per-pass pattern. The
+    # enriched metadata is then MERGED into the matching existing entity by
+    # ingest_external_profiles (a re-scrape of an account we already have is no longer
+    # dropped — its freshly-extracted name/employer/city fills the stored entity's gaps).
+    if config.DATA_MODE == "live" and all_profiles:
+        for fn in (enrich_profiles_from_page, enrich_photos, enrich_facts):
+            try:
+                await fn(all_profiles)
+            except Exception:
+                pass
+        try:
+            await enrich_via_socid(all_profiles)
+        except Exception:
+            pass
+
+    result = ingest_external_profiles(case_id, all_profiles)
+    log_action(case_id, "pivot_complete", {"seeds": seeds}, result, "system")
+    set_status(case_id, "complete")
+    return {"status": "complete", "seeds": len(seeds), **result}
+
+
+def run_pivot_seeds_sync(case_id: str, seeds: list[dict]) -> dict:
+    """Blocking wrapper for FastAPI BackgroundTasks — same Windows event-loop
+    requirement as run_investigation_sync (see its docstring for the full
+    explanation): without a ProactorEventLoop, a background task inherits
+    uvicorn's SelectorEventLoop policy and every CLI-based scraper (Maigret,
+    Sherlock, Blackbird, Holehe, Ignorant) silently returns [] — a pivot would
+    appear to run and find nothing, indistinguishable from a genuine dead end.
+    """
+    import sys
+    try:
+        if sys.platform == "win32":
+            loop = asyncio.ProactorEventLoop()
+            try:
+                asyncio.set_event_loop(loop)
+                return loop.run_until_complete(run_pivot_seeds(case_id, seeds))
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+        return asyncio.run(run_pivot_seeds(case_id, seeds))
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[orchestrator] PIVOT FAILED for case {case_id}:\n{tb}")
+        set_status(case_id, "error")
+        log_action(case_id, "pivot_error", {"seeds": seeds},
                    {"error": str(e), "traceback": tb}, "system")
         return {"status": "error", "reason": str(e)}

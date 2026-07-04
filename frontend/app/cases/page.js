@@ -30,9 +30,14 @@ const SEED_TYPES = [
 ];
 
 // Region maps onto the backend's country_filter (preserved from pre-redesign).
+// Both modes include worldwide platforms (Instagram, GitHub, ...) on purpose — a
+// stricter "India platforms only" filter was tried before and silently dropped the
+// investigator's own literal search target for having a foreign-looking location
+// (see country_filter.py's docstring). "India" here means noise-reduced (foreign
+// regional networks like VK/Weibo/Naver excluded); "Global" means fully unfiltered.
 const REGIONS = [
-  { value: "INDIA", label: "India (Indian + Global platforms)" },
-  { value: "ALL", label: "Global" },
+  { value: "INDIA", label: "India (focused — excludes foreign-regional noise)" },
+  { value: "ALL", label: "Global (unfiltered)" },
 ];
 
 const SELECT_CLS =

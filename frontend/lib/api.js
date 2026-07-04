@@ -56,6 +56,7 @@ export const api = {
       throw err;
     }
     return res.blob();
+  },
   // Agentic Web Browser
   getAgenticTools: () => req("/api/agentic-browser/tools"),
   startAgenticInvestigate: (body) => req("/api/agentic-browser/investigate", { method: "POST", body }),
@@ -74,6 +75,11 @@ export const api = {
     }
     return res.blob();
   },
+  // Re-iteration / identifier cross-pivoting (multi-select: any mix of already-
+  // discovered accounts, suggested candidates, and manually-typed identifiers, run as
+  // ONE combined pivot; repeatable — select a new batch after each run completes).
+  suggestPivot: (id, seeds) => req(`/cases/${id}/pivot/suggest`, { method: "POST", body: { seeds } }),
+  runPivot: (id, seeds) => req(`/cases/${id}/pivot`, { method: "POST", body: { seeds } }),
 };
 
 export { BASE };

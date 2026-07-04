@@ -54,6 +54,12 @@ NVIDIA_API_KEY: str = _get("NVIDIA_API_KEY")
 NVIDIA_BASE_URL: str = _get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
 HIBP_API_KEY: str = _get("HIBP_API_KEY")
 NUMVERIFY_KEY: str = _get("NUMVERIFY_KEY")
+# Both free-tier keys (sign up at gravatar.com/developers and emailrep.io) — as of
+# 2025 both services require a key even for basic/public lookups, so these are NOT
+# truly "no key" despite older docs; the scrapers below degrade gracefully without one
+# (Gravatar still does a free no-key avatar-existence check; EmailRep returns []).
+GRAVATAR_API_KEY: str = _get("GRAVATAR_API_KEY")
+EMAILREP_API_KEY: str = _get("EMAILREP_API_KEY")
 TELEGRAM_API_ID: str = _get("TELEGRAM_API_ID")
 TELEGRAM_API_HASH: str = _get("TELEGRAM_API_HASH")
 # Reddit app-only OAuth (free "script"/"web" app). When set, the Reddit scraper uses
@@ -103,6 +109,8 @@ _OPTIONAL = {
     "TELEGRAM_API_HASH": TELEGRAM_API_HASH,
     "DEHASHED_API_KEY": DEHASHED_API_KEY,
     "LEAKCHECK_API_KEY": LEAKCHECK_API_KEY,
+    "GRAVATAR_API_KEY": GRAVATAR_API_KEY,
+    "EMAILREP_API_KEY": EMAILREP_API_KEY,
 }
 
 

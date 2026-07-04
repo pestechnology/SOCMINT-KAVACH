@@ -45,6 +45,7 @@ waybackpy==3.0.6
 telethon==1.38.1
 holehe>=1.61                 # email -> registered services (replaces Epieos stub)
 sherlock-project>=0.16.0     # 2nd username enumerator (corroborates Maigret)
+socid-extractor>=0.0.27      # structured field extraction from known-platform profile pages
 # ignorant + PhoneInfoga + Blackbird are installed separately (see SETUP.md)
 
 # ---- NER (employer / city extraction) ----

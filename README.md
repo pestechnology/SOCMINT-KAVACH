@@ -44,6 +44,23 @@ rather refuse a link than over-claim one that couldn't survive in court.
   explanations, always with a deterministic fallback. Never decides linking.
 - **Username extraction from Serper URLs** — LinkedIn/Instagram/Twitter/GitHub handles are
   extracted from URL paths so name-seed searches produce correct correlation matches.
+- **Re-iteration / identifier cross-pivoting** — select any mix of already-discovered
+  accounts, LLM/regex-derived name & alias suggestions, or profile pictures (dragged in
+  from the Summary tab), plus manually-typed identifiers, and run ONE combined follow-up
+  search that folds new results back into the same case. Repeatable — select again from
+  the larger result set after each run. See [`REITERATION_AND_SEARCH_SYSTEM.md`](REITERATION_AND_SEARCH_SYSTEM.md)
+  for the full architecture.
+- **Automatic email→username bridge** — an email seed's local part (`vismayhs` from
+  `vismayhs@gmail.com`) is automatically re-run as a full username search, so an
+  email-only investigation still finds Instagram/GitHub/etc., not just breach records.
+- **Deep bio scraping** — self-disclosed links in a bio *or* a platform's dedicated
+  blog/website field (e.g. GitHub's `blog`) are followed to new accounts; employer/
+  school/city are extracted with an LLM pass backed by a deterministic regex fallback
+  so facts still populate when the LLM provider is rate-limited.
+- **Tier-1 identity enrichment** — Gravatar (avatar existence + verified linked
+  accounts), EmailRep (registered-service/reputation lookup), and socid_extractor
+  (structured name/location/DOB from known-platform pages) all fold into the same
+  fail-safe, no-key-required-by-default pipeline.
 
 ---
 
@@ -56,7 +73,7 @@ rather refuse a link than over-claim one that couldn't survive in court.
 | Correlation | thefuzz, scikit-learn, imagehash (all optional; degrade gracefully) |
 | Report | ReportLab (BSA-63 PDF) |
 | LLM | NVIDIA Cloud (`llama-3.3-70b`, `deepseek-v4-pro`) — enhancement-only |
-| Scrapers | Maigret, Sherlock, Blackbird, Socialscan, GitHub API, Serper, HIBP, XposedOrNot, Holehe, ignorant, PhoneInfoga, NumVerify, Wayback, Reddit, Telethon, UPI parser |
+| Scrapers | Maigret, Sherlock, Blackbird, Socialscan, GitHub API, Serper, HIBP, XposedOrNot, Holehe, ignorant, PhoneInfoga, NumVerify, Wayback, Reddit, Telethon, UPI parser, Gravatar, EmailRep, socid_extractor |
 | Frontend | Next.js 14 (App Router), Tailwind CSS, sigma.js, vis-timeline |
 
 ---
@@ -99,7 +116,7 @@ echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
 npm install && npm run dev           # http://localhost:3000
 
 # 7. Tests
-python -m pytest tests/ -q           # 101 tests
+python -m pytest tests/ -q           # 189 tests
 ```
 
 **Offline demo:** set `DATA_MODE=mock` in `.env`, restart the backend, run an investigation.
@@ -121,22 +138,25 @@ backend/
                        socialscan, github, serper, hibp, xposedornot, holehe,
                        dehashed, leakcheck, phone_scrapers, wayback, reddit, telethon,
                        upi, url, variants, photo_enrich (pHash + face embedding),
-                       fact_enrich (NER-style employer/city), profile_page_fetcher,
-                       fp_filter, mock)
+                       fact_enrich (NER-style employer/city + deterministic fallback),
+                       profile_page_fetcher, fp_filter, mock, gravatar_scraper,
+                       emailrep_scraper, socid_enrich, derive (re-iteration engine))
   analysis/            forensics.py — stylometry, sentiment, keywords, activity
   correlation/         pairwise 20-signal computation
   scoring/             clustering + tiers + red-herring rule (DO NOT MODIFY)
   llm/                 NVIDIA client with regex/template fallbacks
-  pipeline/            orchestrator + lead_reverification
+  pipeline/            orchestrator (investigation + re-iteration/pivot) + lead_reverification
   ledger/              tamper-evident hash chain + artifact hashing
   report/              BSA-63 PDF generator
   models/              face-matching ONNX models (gitignored; run scripts/ below)
   scripts/             download_face_models.py — one-time face-model fetch
   main.py              FastAPI entrypoint
-frontend/              Next.js 14 + Tailwind dashboard
+frontend/              Next.js 14 + Tailwind dashboard (incl. ReiterateBar.jsx —
+                       the re-iteration staging tray + floating action button)
 scripts/               create_admin, seed_demo_case
-tests/                 101 pytest tests
-context.md             full engineering onboarding doc (read §19-20 for latest)
+tests/                 189 pytest tests
+context.md             full engineering onboarding doc (read §21 for the latest)
+REITERATION_AND_SEARCH_SYSTEM.md  full re-iteration / cross-pivoting architecture
 SETUP.md               step-by-step run guide including Blackbird setup
 TRANSFER_CHECKLIST.md  checklist for zip/GitHub transfers to a new machine
 LEGAL_VERIFICATION.md  BSA-63 legal claims verified against primary sources
@@ -154,8 +174,11 @@ LEGAL_VERIFICATION.md  BSA-63 legal claims verified against primary sources
 | POST | `/cases` | yes | create case + start investigation |
 | GET | `/cases` | yes | list your cases |
 | GET | `/cases/{id}` | yes | one case (owner only) |
-| GET | `/cases/{id}/results` | yes | entities + clusters + forensics |
+| GET | `/cases/{id}/results` | yes | entities + clusters + forensics + reiteration_count |
 | GET | `/cases/{id}/report` | yes | download BSA-63 PDF |
+| GET | `/cases/{id}/summary_report` | yes | download the executive-summary PDF |
+| POST | `/cases/{id}/pivot/suggest` | yes | derive candidate seeds from a set of selected identifiers (free — no scrape) |
+| POST | `/cases/{id}/pivot` | yes | run a re-iteration on an explicit list of seeds, merged into this case |
 
 ---
 

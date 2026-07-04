@@ -518,3 +518,45 @@ key/model is absent. Full detail: `context.md` §20.
 pass. Signal count: 15 → 20.
 
 **Test Status:** 76/76 unit and integration tests passing cleanly. Next.js production build (`npm run build`) compiles with zero errors.
+
+---
+
+## 2026-07-04/05 Re-iteration / identifier cross-pivoting + three new Tier-1 sources
+
+The big feature this session: select any mix of already-discovered accounts, LLM/regex-
+derived name & alias suggestions, or profile pictures (drag-and-drop from the Summary
+tab) plus manually-typed identifiers, and run ONE combined follow-up search that merges
+back into the same case — repeatable. Full detail: `context.md` §21 and the standalone
+`REITERATION_AND_SEARCH_SYSTEM.md`.
+
+1. **`backend/ingestion/derive.py`** (new) — deterministic derivation engine:
+   username↔name↔email routing (guessed emails, recovered names, handle variants
+   recombined through the recovered name so an opaque handle like `"vismayhs"` can still
+   yield `vismay_hs`/`vismay.hs`).
+2. **Three new Tier-1 scrapers** — Gravatar, EmailRep, socid_extractor. Both Gravatar and
+   EmailRep were live-tested against their real APIs: the "free, no key" claim in older
+   docs is now wrong for both (Gravatar's rich profile JSON and EmailRep both require a
+   key post-2024 lockdown); the Gravatar avatar-existence check is still genuinely free.
+   GHunt was explicitly NOT built (ToS-gray, flagged rather than silently added).
+3. **Automatic email→username bridge** — an email seed's local part now automatically
+   also runs as a username search, so an email-only investigation finds Instagram/
+   GitHub/etc., not just breach records (previously it never did).
+4. **Generalised bio-link cascade** — now follows a platform's dedicated blog/website
+   field too (e.g. GitHub's `blog`, including scheme-less values like `"twitter.com/foo"`
+   with no `https://`, which the extractor was silently missing before), not just the
+   bio text. One shared helper now used by both the first search and re-iteration.
+5. **Deterministic fact-extraction fallback** — employer/school/city extraction was
+   100% LLM-dependent with zero fallback; a rate-limited LLM (confirmed live: Groq 429,
+   NVIDIA timeout) meant those fields silently came back empty. Now backed by a regex
+   pass that still works when the LLM is down.
+6. **Fixed "re-running found nothing new"** — root cause: `ingest_external_profiles`
+   discarded a re-scraped account's new enrichment by `sha256` match instead of merging
+   it. Now merges gap-filled facts into the existing entity (verified live: entities
+   42→45, reiteration_count 0→1 on a real re-iterate).
+7. **Reiteration count** — `audit_ledger` `pivot_started` rows counted and surfaced as a
+   status-strip tile.
+
+**Test status:** 189 tests pass (up from 101 — 88 new regressions across
+`test_derive.py`, `test_email_norm.py`, `test_new_scrapers.py`, `test_pivot.py`,
+`test_email_bridge.py`, `test_bio_enrichment.py`). `npm run build` clean. Every change
+verified against a real running server at least once, not just mock-mode pytest.

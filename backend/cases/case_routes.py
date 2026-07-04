@@ -6,6 +6,12 @@ backend/cases/case_routes.py — case + results + report endpoints.
     GET  /cases/{id}                one case (access-controlled)
     GET  /cases/{id}/results        entities + clusters for the dashboard
     GET  /cases/{id}/report         generate + download the BSA-63 PDF
+    POST /cases/{id}/pivot/suggest  derive candidate seeds from a SET of selected
+                                     identifiers (spends nothing — no scrape, no query)
+    POST /cases/{id}/pivot          run a pivot on an explicit list of seeds (existing
+                                     accounts re-selected + suggestions + manual entries),
+                                     re-correlate into this case, and resume polling.
+                                     Repeatable: select again from the larger result set.
 """
 from __future__ import annotations
 
@@ -91,4 +97,40 @@ def summary_report(case_id: str, user_id: str = Depends(get_current_user)):
     path = generate_report(case_id)
     return FileResponse(path, media_type="application/pdf",
                         filename=f"BSA63_summary_{case_id}.pdf")
+
+
+class SuggestRequest(BaseModel):
+    seeds: list[Seed]
+
+
+@router.post("/{case_id}/pivot/suggest")
+def pivot_suggest(case_id: str, body: SuggestRequest, user_id: str = Depends(get_current_user)):
+    """Derive candidate seeds from a SET of selected identifiers at once — spends
+    nothing (no scrape, no Serper query). Lets the UI show checkboxes + an estimated
+    query cost before the investigator commits to running a pivot."""
+    if not get_case(case_id, user_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    from backend.ingestion.derive import estimate_query_count
+    from backend.pipeline.orchestrator import compute_pivot_suggestions
+    suggestions = compute_pivot_suggestions([s.model_dump() for s in body.seeds], case_id=case_id)
+    return {"suggestions": suggestions, "estimated_queries": estimate_query_count(suggestions)}
+
+
+class PivotRequest(BaseModel):
+    seeds: list[dict]
+
+
+@router.post("/{case_id}/pivot")
+def pivot(case_id: str, body: PivotRequest, background: BackgroundTasks,
+         user_id: str = Depends(get_current_user)):
+    """Run a pivot on an EXPLICIT list of seeds — any mix of already-discovered account
+    values re-selected, suggested candidates, and manually-typed identifiers — and
+    re-correlate them into THIS case in the background. status flips running ->
+    complete, same as case creation, so the existing results poller streams the growth
+    live. Repeatable: once complete, select a new batch and POST here again."""
+    if not get_case(case_id, user_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    from backend.pipeline.orchestrator import run_pivot_seeds_sync
+    background.add_task(run_pivot_seeds_sync, case_id, body.seeds)
+    return {"status": "running"}
 
