@@ -146,7 +146,13 @@ def get_results(case_id: str, user_id: str) -> dict | None:
     if case.get("status") == "complete":
         try:
             from backend.analysis.identity_agent import classify as _classify_identity
-            forensics["identity"] = _classify_identity(entities, case_id=case_id)
+            ident = _classify_identity(entities, case_id=case_id)
+            forensics["identity"] = ident
+            # The identity agent's `interests` field replaces the old standalone keyword
+            # agent: cleaner (topics/skills, not the person's own name echoed back) and one
+            # fewer LLM call per run. Only override when it actually produced interests.
+            if ident.get("interests"):
+                forensics["keywords"] = ident["interests"]
         except Exception:
             pass
     return {"case": case, "entities": entities, "clusters": clusters,

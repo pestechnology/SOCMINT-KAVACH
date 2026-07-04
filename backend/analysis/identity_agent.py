@@ -25,12 +25,28 @@ from __future__ import annotations
 import html
 import json
 import re
+from collections import Counter
+
+try:
+    from backend.analysis.forensics import _STOP as _FORENSIC_STOP
+except Exception:  # pragma: no cover
+    _FORENSIC_STOP = set()
+
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'+#-]{2,}")
+# Generic bio filler that isn't a real interest/topic (the LLM path avoids these; this is
+# only for the deterministic fallback when the LLM is unavailable).
+_INTEREST_NOISE = {
+    "loves", "love", "student", "player", "play", "based", "currently", "working",
+    "work", "years", "year", "world", "life", "like", "using", "make", "building",
+    "build", "things", "stuff", "here", "welcome", "everything", "anything", "just",
+    "always", "learning", "learn", "passionate", "enthusiast", "lover", "fan",
+}
 
 # case_id -> (entity_count, result). get_results polls repeatedly; only recompute when the
 # set of entities actually changes (i.e. once, when the investigation reaches its final count).
 _CACHE: dict[str, tuple[int, dict]] = {}
 
-_EMPTY = {"real_names": [], "aliases": [], "locations": [], "employers": []}
+_EMPTY = {"real_names": [], "aliases": [], "locations": [], "employers": [], "interests": []}
 
 # Names that are platform/UI boilerplate, not people. Lowercased.
 _NAME_DENY = {
@@ -128,15 +144,35 @@ def _dedupe_ci(items: list[str], limit: int = 12) -> list[str]:
     return out
 
 
+def _interests_from_texts(texts: list[str], exclude: set[str]) -> list[str]:
+    """Deterministic interest/topic guess: most frequent content words in the bios that
+    aren't stopwords, UI-noise, the person's own name tokens, or their handles."""
+    freq: Counter = Counter()
+    for t in texts:
+        for w in _WORD_RE.findall(t.lower()):
+            w = w.strip(".-'")
+            if (len(w) >= 3 and w not in _FORENSIC_STOP and w not in exclude
+                    and w not in _INTEREST_NOISE and not _UI_NOISE_RE.search(w)
+                    and not any(c.isdigit() for c in w)):
+                freq[w] += 1
+    return [w for w, _ in freq.most_common(15)]
+
+
 def _fallback(g: dict) -> dict:
     known_handles = {h.lower().lstrip("@") for h in g["handles"]}
     names = [n for n in g["name_cands"] if _looks_like_real_name(n, known_handles)]
     aliases = [h.lstrip("@") for h in g["handles"]]
+    # exclude the person's own name/handle tokens from interests so it stops echoing them
+    exclude = set(known_handles)
+    for n in names:
+        for tok in n.lower().split():
+            exclude.add(tok)
     return {
         "real_names": _dedupe_ci(names, 10),
         "aliases": _dedupe_ci(aliases, 15),
         "locations": _dedupe_ci(g["loc_cands"], 10),
         "employers": _dedupe_ci(g["emp_cands"], 8),
+        "interests": _interests_from_texts(g["texts"], exclude)[:12],
     }
 
 
@@ -145,7 +181,7 @@ _SYSTEM = (
     "metadata collected from many online accounts believed to belong to ONE person. "
     "Consolidate them into a single clean identity and classify every piece of "
     "information into exactly one field. Output ONLY strict JSON with keys "
-    '"real_names", "aliases", "locations", "employers" (each an array of strings).\n'
+    '"real_names", "aliases", "locations", "employers", "interests" (each an array of strings).\n'
     "Rules:\n"
     "- real_names: genuine human names (e.g. 'Vismay H S'). NEVER usernames, NEVER "
     "numbers (e.g. '1796' is a rating, not a name), NEVER platform names, NEVER UI text "
@@ -153,6 +189,10 @@ _SYSTEM = (
     "- aliases: the distinct usernames/handles the person uses; strip any leading '@'.\n"
     "- locations: cities, regions, or countries where the person lives or is from.\n"
     "- employers: companies, schools, or universities.\n"
+    "- interests: the person's topics, skills, hobbies, or profession (e.g. 'chess', "
+    "'league of legends', 'machine learning', 'photography'). These describe what the "
+    "person is ABOUT. NEVER put their name, handle, location, or a platform name here. "
+    "This field must NOT repeat anything already in real_names or aliases.\n"
     "- Deduplicate. Fix capitalization on names. If unsure whether a token is a real "
     "name, EXCLUDE it. Empty arrays are fine. No prose outside the JSON."
 )
@@ -204,14 +244,19 @@ def classify(entities: list[dict], case_id: str | None = None) -> dict:
                 aliases = [_clean(x).lstrip("@") for x in (data.get("aliases") or []) if _clean(x)]
                 locs = [_clean(x) for x in (data.get("locations") or []) if _clean(x)]
                 emps = [_clean(x) for x in (data.get("employers") or []) if _clean(x)]
+                # interests must not echo the person's name tokens or handles
+                name_toks = {t for n in names for t in n.lower().split()} | known_handles
+                interests = [_clean(x) for x in (data.get("interests") or [])
+                             if _clean(x) and _clean(x).lower() not in name_toks]
                 # Only accept the LLM result if it actually produced something usable;
                 # otherwise keep the deterministic fallback.
-                if names or locs or emps or aliases:
+                if names or locs or emps or aliases or interests:
                     result = {
                         "real_names": _dedupe_ci(names, 10),
                         "aliases": _dedupe_ci(aliases or g["handles"], 15),
                         "locations": _dedupe_ci(locs, 10),
                         "employers": _dedupe_ci(emps, 8),
+                        "interests": _dedupe_ci(interests or result["interests"], 12),
                     }
     except Exception:  # noqa: BLE001 — any failure keeps the deterministic fallback
         pass

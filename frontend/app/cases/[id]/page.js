@@ -1105,7 +1105,7 @@ function WritingActivity({ fx }) {
 
       {keywords.length > 0 && (
         <div>
-          <div className="text-[11px] font-mono uppercase tracking-wide text-slate-400 mb-2">Top keywords</div>
+          <div className="text-[11px] font-mono uppercase tracking-wide text-slate-400 mb-2">Topics &amp; interests</div>
           <div className="flex flex-wrap gap-1.5">
             {kwShown.map((k, i) => (
               <span key={`${k}-${i}`} className="text-[11px] text-slate-300 bg-slate-800/70 border border-slate-700 rounded px-2 py-0.5">{k}</span>

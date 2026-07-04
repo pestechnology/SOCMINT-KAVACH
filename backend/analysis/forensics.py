@@ -220,20 +220,15 @@ def summarize(entities: list[dict]) -> dict:
                     if t_lower not in _STOP and len(t_lower) >= 3 and not t_lower.isdigit():
                         explicit_tokens[t_lower] += 50  # Huge boost for actual person names / handles!
 
-    # 2. Try LLM extraction for NSA-grade identifying keywords
-    keywords: list[str] = []
-    try:
-        from backend.llm.llm_client import LLMClient
-        llm = LLMClient()
-        keywords = llm.extract_keywords(blob, entities)
-    except Exception:
-        pass
-
-    # 3. If LLM returned fewer than 5 keywords, combine with weighted explicit tokens + clean frequency counts
-    if len(keywords) < 5:
-        freq = Counter(w for w in words if w not in _STOP)
-        combined = explicit_tokens + freq
-        keywords = [w for w, _ in combined.most_common(15)]
+    # 2. Deterministic keyword baseline (frequency + boosted explicit name/handle tokens).
+    # This runs on every poll incl. while the case is still RUNNING. The high-quality,
+    # LLM-classified version comes from identity_agent.interests, which case_service swaps
+    # into `keywords` once the case is COMPLETE — so we no longer make a second standalone
+    # LLM keyword call here (that was redundant with the identity agent and cost an extra
+    # call against Groq's per-minute limit on every results fetch).
+    freq = Counter(w for w in words if w not in _STOP)
+    combined = explicit_tokens + freq
+    keywords = [w for w, _ in combined.most_common(15)]
     if explicit_tokens:
         # Guarantee top explicit names appear at the front of the final keyword list
         top_names = [w for w, _ in explicit_tokens.most_common(6) if w not in keywords]
