@@ -802,19 +802,52 @@ function AnalysisPanel({ cluster, letter, members, entity }) {
 }
 
 // §4.4.4.1 — Summary matrix: profile pictures / platforms / names / locations + quick-links.
-function MatrixCard({ icon, title, count, children }) {
+function MatrixCard({ icon, title, count, children, onExpand }) {
   return (
-    <GlassPanel className="p-4">
+    <GlassPanel
+      className={`p-4 ${onExpand ? "cursor-pointer" : ""}`}
+      onClick={onExpand}
+      role={onExpand ? "button" : undefined}
+      title={onExpand ? "Click to expand" : undefined}
+    >
       <div className="flex items-center justify-between mb-2">
         <span className="text-[13px] text-slate-300">
           <span className="mr-1.5" aria-hidden>{icon}</span>{title}
         </span>
-        {typeof count === "number" && (
-          <span className="text-[11px] font-mono text-slate-500 border border-slate-700 rounded px-1.5">{count}</span>
-        )}
+        <span className="flex items-center gap-1.5 shrink-0">
+          {typeof count === "number" && (
+            <span className="text-[11px] font-mono text-slate-500 border border-slate-700 rounded px-1.5">{count}</span>
+          )}
+          {onExpand && <span className="text-slate-500 text-xs" aria-hidden>⤢</span>}
+        </span>
       </div>
       {children}
     </GlassPanel>
+  );
+}
+
+// Full-screen popup for a Summary card's complete contents (§ UI: click card -> full view).
+function Modal({ title, icon, subtitle, onClose, children }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = ""; };
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-xl border border-white/10 bg-[#0b1220] p-5 shadow-2xl"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4 sticky -top-5 bg-[#0b1220] py-2 -my-2">
+          <span className="text-sm font-semibold text-slate-100">
+            <span className="mr-2" aria-hidden>{icon}</span>{title}
+            {subtitle && <span className="ml-2 text-xs font-normal text-slate-500">{subtitle}</span>}
+          </span>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-100 text-xl leading-none px-2" aria-label="Close">✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -878,13 +911,18 @@ function PhotoGrid({ photos }) {
 }
 
 function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal }) {
-  // Profile pictures (dedupe by URL)
+  const [modal, setModal] = useState(null);   // "photos" | "platforms" | "names" | "locations" | null
+  // Profile pictures — EVERY image fetched from every account (dedupe only exact-same URL,
+  // regardless of the account's confidence/tier). Carries source_url so the popup links out.
   const seenPhoto = new Set();
   const photos = [];
   entities.forEach((e) => {
     const m = e.metadata || {};
     const url = m.photo_url || m.avatar || m.avatar_url || m.image;
-    if (url && !seenPhoto.has(url)) { seenPhoto.add(url); photos.push({ url, platform: e.platform }); }
+    if (url && !seenPhoto.has(url)) {
+      seenPhoto.add(url);
+      photos.push({ url, platform: e.platform, source_url: e.source_url });
+    }
   });
 
   // Platforms (count desc; full list, panel expands)
@@ -951,7 +989,8 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
   return (
     <div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-        <MatrixCard icon="🖼️" title="Profile pictures" count={photos.length}>
+        <MatrixCard icon="🖼️" title="Profile pictures" count={photos.length}
+          onExpand={photos.length ? () => setModal("photos") : undefined}>
           {photos.length === 0 ? (
             <EmptyLine>No profile pictures found.</EmptyLine>
           ) : (
@@ -959,7 +998,8 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
           )}
         </MatrixCard>
 
-        <MatrixCard icon="🌐" title="Platforms" count={platforms.length}>
+        <MatrixCard icon="🌐" title="Platforms" count={platforms.length}
+          onExpand={platforms.length ? () => setModal("platforms") : undefined}>
           {platforms.length === 0 ? (
             <EmptyLine>No platforms found.</EmptyLine>
           ) : (
@@ -976,7 +1016,8 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
           )}
         </MatrixCard>
 
-        <MatrixCard icon="👤" title="Names & aliases" count={nameRows.length}>
+        <MatrixCard icon="👤" title="Names & aliases" count={nameRows.length}
+          onExpand={nameRows.length ? () => setModal("names") : undefined}>
           {nameRows.length === 0 ? (
             <EmptyLine>No names found.</EmptyLine>
           ) : (
@@ -995,7 +1036,8 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
           )}
         </MatrixCard>
 
-        <MatrixCard icon="📍" title="Locations & context" count={locations.length}>
+        <MatrixCard icon="📍" title="Locations & context" count={locations.length}
+          onExpand={locations.length ? () => setModal("locations") : undefined}>
           {locations.length === 0 ? (
             <EmptyLine>No locations found.</EmptyLine>
           ) : (
@@ -1009,6 +1051,60 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
           )}
         </MatrixCard>
       </div>
+
+      {/* Full-view popups (click a card) */}
+      {modal === "photos" && (
+        <Modal icon="🖼️" title="All profile pictures" subtitle={`${photos.length} images across every platform`} onClose={() => setModal(null)}>
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+            {photos.map((p, i) => (
+              <a key={i} href={safeUrl(p.source_url) || p.url} target="_blank" rel="noreferrer noopener" className="group">
+                <div className="relative aspect-square rounded-md overflow-hidden border border-white/10">
+                  <img src={p.url} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                    onError={(ev) => { ev.currentTarget.parentElement.parentElement.style.display = "none"; }} />
+                  <span className="absolute bottom-0 left-0 text-[9px] font-mono px-1 rounded-tr rounded-bl-md bg-black/75 text-slate-200">
+                    {decodeEntities(p.platform || "")}
+                  </span>
+                </div>
+              </a>
+            ))}
+          </div>
+        </Modal>
+      )}
+      {modal === "platforms" && (
+        <Modal icon="🌐" title="All platforms" subtitle={`${platforms.length} distinct`} onClose={() => setModal(null)}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+            {platforms.map(([p, n]) => (
+              <div key={p} className="flex items-center justify-between text-[13px] border-b border-slate-800/60 py-1">
+                <span className="text-slate-200 truncate">{decodeEntities(p)}</span>
+                <span className="text-[11px] font-mono text-slate-500 border border-slate-700 rounded px-1.5 shrink-0">{n}</span>
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
+      {modal === "names" && (
+        <Modal icon="👤" title="Names & aliases" subtitle={`${nameRows.length} total`} onClose={() => setModal(null)}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+            {nameRows.map((r, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 text-[13px] border-b border-slate-800/60 py-1">
+                <span className="text-slate-200 truncate">{r.v}</span>
+                <span className={`text-[10px] font-mono uppercase shrink-0 ${r.alias ? "text-slate-500" : "text-cyan-400"}`}>
+                  {r.alias ? "Alias" : "Name"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
+      {modal === "locations" && (
+        <Modal icon="📍" title="Locations & context" subtitle={`${locations.length} total`} onClose={() => setModal(null)}>
+          <div className="flex flex-wrap gap-2">
+            {locations.map((l, i) => (
+              <span key={i} className="text-[12px] text-slate-300 bg-slate-800/70 border border-slate-700 rounded px-2.5 py-1">{l}</span>
+            ))}
+          </div>
+        </Modal>
+      )}
 
       {hasEvidence && (
         <GlassPanel className="p-4 mt-3 border border-cyan-400/20">
