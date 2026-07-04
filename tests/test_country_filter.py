@@ -14,8 +14,9 @@ def test_filter_profiles_by_country_all():
 
 
 def test_filter_profiles_by_country_india():
-    """INDIA scope keeps major global platforms + Indian sites, and drops foreign-regional
-    networks and identity-irrelevant gaming sites (e.g. League of Legends)."""
+    """INDIA scope keeps major global platforms + Indian sites and drops foreign-regional
+    networks. Gaming sites (League of Legends) are KEPT (visible) — they're scored low
+    separately, not filtered out."""
     profiles = [
         make_profile("social_account", "user1", "xing", "https://www.xing.com/profile/user1"),
         make_profile("social_account", "user1", "ixbt", "https://ixbt.com/user1"),
@@ -31,8 +32,18 @@ def test_filter_profiles_by_country_india():
     assert "instagram" in platforms
     assert "linkedin" in platforms
     assert "truecaller" in platforms
-    # Foreign-regional networks and gaming noise dropped
+    # Gaming kept (visible, scored low elsewhere)
+    assert "leagueoflegends" in platforms
+    # Foreign-regional networks still dropped
     assert "xing" not in platforms
     assert "ixbt" not in platforms
-    assert "leagueoflegends" not in platforms
-    assert len(filtered) == 3
+    assert len(filtered) == 4
+
+
+def test_is_low_value_platform():
+    from backend.ingestion.country_filter import is_low_value_platform
+    assert is_low_value_platform("leagueoflegends", "")
+    assert is_low_value_platform("", "https://op.gg/summoner/xyz")
+    assert is_low_value_platform("steam", "")
+    assert not is_low_value_platform("github", "https://github.com/x")
+    assert not is_low_value_platform("linkedin", "")

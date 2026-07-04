@@ -152,3 +152,22 @@ def test_compute_never_raises_on_garbage():
         pass
     res = confidence.compute(Bad(), [], set())
     assert res["tier"] == "LOW"
+
+
+# ---- gaming/low-value platforms are capped to LOW even on an exact match ----
+def test_gaming_exact_match_capped_low():
+    """A gaming handle is kept but never ranks high — even when it exactly matches the seed."""
+    p = make_profile("social_account", "ghost_rider99", "leagueoflegends",
+                     "https://leagueoflegends.com/ghost_rider99", {"username": "ghost_rider99"})
+    p.metadata["exact_seed_match"] = True
+    seed_vals = seed_value_set([{"type": "username", "value": "ghost_rider99"}])
+    res = compute(_Cl(member_indices=[0], relevance_score=100), [p], seed_vals)
+    assert res["tier"] == "LOW"
+
+
+def test_mixed_cluster_with_one_game_account_not_capped():
+    """A cluster of a real account + a game account keeps its real strength (not all low-value)."""
+    real = make_profile("social_account", "x", "github", "https://github.com/x", {})
+    game = make_profile("social_account", "x", "steam", "https://steamcommunity.com/id/x", {})
+    res = compute(_Cl(member_indices=[0, 1], confidence_score=80.0), [real, game], set())
+    assert res["tier"] == "HIGH"

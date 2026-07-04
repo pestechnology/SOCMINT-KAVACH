@@ -53,6 +53,13 @@ INDIA_ALLOWED_PLATFORMS = {
     "wynk", "hungama", "spotify", "applemusic", "amazonmusic", "steam", "bgmi",
     "freefire", "dream11", "mpl", "my11circle", "shaadi", "bharatmatrimony",
     "jeevansathi", "jeeves", "betterhalf",
+
+    # Global gaming / entertainment — kept (visible) but scored LOW & unlinked via
+    # LOW_VALUE_PLATFORMS below (a game handle is weak identity evidence, but hiding it
+    # entirely loses a lead an investigator may still want to see).
+    "leagueoflegends", "league-of-legends", "riotgames", "op.gg", "opgg",
+    "valorant", "fortnite", "epicgames", "minecraft", "battle.net", "xbox",
+    "playstation", "psn", "ubisoft", "ea.com", "origin.com", "roblox",
     
     # Indian Governance, EdTech & Health
     "digilocker", "parivahan", "uidai", "epfo", "incometax", "unacademy",
@@ -66,24 +73,35 @@ INDIA_ALLOWED_PLATFORMS = {
     "eyecon", "sync.me", "whoscall", "callerid",
 }
 
-# Explicit blacklist of noisy, foreign-only, or identity-irrelevant sites that commonly cause
-# false positives. Gaming/entertainment platforms (League of Legends, Fortnite, …) are here
-# because a game handle is rarely useful identity evidence and just adds noise to a case.
+# Explicit blacklist of noisy or foreign-only regional networks that commonly cause false positives
 INDIA_EXCLUDED_PLATFORMS = {
     "xing", "ixbt", "vk", "vkontakte", "odnoklassniki", "ok.ru", "habr", "rambler",
     "gmx", "web.de", "mail.ru", "yandex", "weibo", "qq", "wechat", "baidu",
     "douyin", "bilibili", "zhihu", "naver", "daum", "kakao", "niconico", "pixiv",
     "line", "cyworld", "fc2", "freelance.ru", "kwork", "fl.ru", "livejournal",
-    "pikabu", "drom", "auto.ru", "cian", "avito", "roblox", "virustotal",
+    "pikabu", "drom", "auto.ru", "cian", "avito", "virustotal",
     "kermit", "lobsters", "lobste.rs", "vbulletin", "forum", "photobucket",
     "patreon", "onlyfans", "buymeacoffee", "ko-fi", "bandcamp", "last.fm",
     "myspace", "soundcloud", "vimeo", "dailymotion", "flickr", "deviantart",
     "artstation", "wattpad", "gravatar", "disqus", "keybase",
-    # Gaming / entertainment noise (identity-irrelevant handles)
+}
+
+# Gaming / entertainment platforms that are kept (not filtered out) but treated as LOW-VALUE
+# identity evidence: scoring/confidence.py caps a cluster made up entirely of these to LOW
+# match confidence and never lets it read as a confirmed link (a game handle is not who a
+# person is). Matched as a substring against a profile's platform or source_url.
+LOW_VALUE_PLATFORMS = {
     "leagueoflegends", "league-of-legends", "riotgames", "op.gg", "opgg",
     "valorant", "fortnite", "epicgames", "minecraft", "battle.net", "xbox",
-    "playstation", "psn", "ubisoft", "ea.com", "origin.com",
+    "playstation", "psn", "ubisoft", "ea.com", "origin.com", "roblox",
+    "steam", "twitch", "bgmi", "freefire",
 }
+
+
+def is_low_value_platform(platform: str = "", url: str = "") -> bool:
+    """True if this account sits on a gaming/entertainment platform (weak identity evidence)."""
+    p, u = (platform or "").lower(), (url or "").lower()
+    return any(g in p or g in u for g in LOW_VALUE_PLATFORMS)
 
 def filter_profiles_by_country(profiles: list[RawProfile], country: str) -> list[RawProfile]:
     if not country or str(country).strip().upper() != "INDIA":

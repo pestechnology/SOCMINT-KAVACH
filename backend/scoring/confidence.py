@@ -102,9 +102,30 @@ def _is_exact_match(cluster, profiles: list, seed_vals: set[str]) -> bool:
     return False
 
 
+def _all_low_value(cluster, profiles: list) -> bool:
+    """True if EVERY member of the cluster is a gaming/entertainment account (weak identity
+    evidence). A mixed cluster (game + a real account) is NOT low-value — the real evidence
+    stands. Used to cap gaming-only results to LOW, even when the handle exactly matches."""
+    try:
+        from backend.ingestion.country_filter import is_low_value_platform
+    except Exception:
+        return False
+    idxs = [i for i in (getattr(cluster, "member_indices", []) or []) if 0 <= i < len(profiles)]
+    if not idxs:
+        return False
+    return all(is_low_value_platform(getattr(profiles[i], "platform", ""),
+                                     getattr(profiles[i], "source_url", "")) for i in idxs)
+
+
 def compute(cluster, profiles: list, seed_vals: set[str]) -> dict:
     """Return {"score": int, "tier": str, "reason": str} for one cluster. Never raises."""
     try:
+        # Gaming/entertainment-only accounts are kept but never rank high — a game handle is
+        # not who a person is. This overrides even an exact username match.
+        if _all_low_value(cluster, profiles):
+            return {"score": 20, "tier": "LOW",
+                    "reason": "Gaming/entertainment handle only — weak identity evidence, "
+                              "shown as an unlinked lead."}
         if _is_exact_match(cluster, profiles, seed_vals):
             return {"score": 100, "tier": "HIGH",
                     "reason": "Exact match for your search input."}
