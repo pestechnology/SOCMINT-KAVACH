@@ -58,10 +58,26 @@ def generate_report(case_id: str, output_path: str = None) -> str:
             ids = []
         for eid in ids:
             clustered_eids.add(eid)
-            
-        tier = (c.get("tier") or "").upper()
-        conf = float(c.get("confidence_score") or c.get("confidence") or 0)
-        
+
+        # MATCH confidence — how strong a result this is for the search (exact seed match =
+        # 100%). This is what should rank the briefing, NOT the linkage confidence_score: the
+        # account the officer literally searched for is a 100% match even with no cross-link,
+        # so it must lead the report, not sink to the bottom. Parse it from signals_json;
+        # fall back to the linkage score for older cases scored before match confidence.
+        try:
+            sig = json.loads(c.get("signals_json") or "{}")
+        except Exception:
+            sig = {}
+        linkage_conf = float(c.get("confidence_score") or c.get("confidence") or 0)
+        match_score = sig.get("_match_score")
+        match_tier = (sig.get("_match_tier") or "").upper()
+        if match_score is None:
+            match_score = linkage_conf
+            match_tier = "HIGH" if linkage_conf >= 80 else ("MEDIUM" if linkage_conf >= 40 else "LOW")
+        match_score = int(round(float(match_score)))
+        if match_tier not in ("HIGH", "MEDIUM", "LOW"):
+            match_tier = "HIGH" if match_score >= 70 else ("MEDIUM" if match_score >= 40 else "LOW")
+
         # Gather accounts
         acc_strs = []
         for eid in ids:
@@ -70,21 +86,28 @@ def generate_report(case_id: str, output_path: str = None) -> str:
                 p = e.get("platform", "account")
                 v = e.get("value", "")
                 acc_strs.append(f"{_esc(p)}: {_esc(v)}")
-                
+
         c_obj = {
-            "tier": tier if tier else ("HIGH" if conf >= 80 else ("MEDIUM" if conf >= 40 else "LOW")),
-            "conf": f"{int(conf)}%",
+            "tier": match_tier,
+            "conf": f"{match_score}%",
+            "_score": match_score,
             "accounts_str": "<br/>".join(acc_strs) if acc_strs else "(no accounts)",
             "reasoning": _esc(c.get("explanation") or c.get("reasoning") or "Identical username across accounts.")
         }
-        
-        if tier == "HIGH" or conf >= 80:
+
+        if match_tier == "HIGH":
             confirmed_clusters.append(c_obj)
-        elif tier == "REJECT" or conf < 20:
+        elif match_tier == "LOW":
             unrelated_clusters.append(c_obj)
         else:
             probable_clusters.append(c_obj)
-            
+
+    # Rank every bucket by match score so the strongest (100% exact matches) lead the section.
+    confirmed_clusters.sort(key=lambda x: x["_score"], reverse=True)
+    probable_clusters.sort(key=lambda x: x["_score"], reverse=True)
+    unrelated_clusters.sort(key=lambda x: x["_score"], reverse=True)
+
+
     # Unconfirmed leads are entities not in any cluster
     unconfirmed_leads = []
     for e in entities_db:

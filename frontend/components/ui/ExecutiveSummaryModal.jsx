@@ -132,8 +132,10 @@ export default function ExecutiveSummaryModal({
               <div className="space-y-4">
                 {allLinkages.map((cluster, idx) => {
                   const members = clusterMembers(cluster);
-                  const conf = Math.round(cluster.confidence_score || cluster.confidence || 100);
-                  const isHigh = cluster.tier === "HIGH" || conf >= 80;
+                  // Rank/display by MATCH confidence (exact search match = 100%), not the
+                  // linkage score — the searched-for account must lead, not sink.
+                  const conf = Math.round(cluster.match?.score ?? cluster.confidence_score ?? cluster.confidence ?? 100);
+                  const isHigh = (cluster.match?.tier || cluster.tier) === "HIGH" || conf >= 70;
 
                   return (
                     <div
@@ -153,7 +155,7 @@ export default function ExecutiveSummaryModal({
                             }`}
                           >
                             <span>{isHigh ? "★" : "◆"}</span>
-                            <span>{conf}% CONFIRMED LINKAGE</span>
+                            <span>{conf}% {members.length > 1 ? (isHigh ? "CONFIRMED LINKAGE" : "PROBABLE LINKAGE") : "MATCH"}</span>
                           </span>
                           <span className="text-xs font-mono text-slate-400 bg-slate-800 px-2.5 py-1 rounded-md border border-slate-700">
                             TIER: {cluster.tier || (isHigh ? "HIGH" : "MEDIUM")}
