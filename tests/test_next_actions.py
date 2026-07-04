@@ -4,7 +4,42 @@ The deterministic baseline must always produce useful, well-formed actions (so t
 survives the LLM being rate-limited), and the LLM path must never crash the pipeline.
 """
 from backend.analysis import next_actions as na
-from backend.analysis.next_actions import deterministic_actions, recommend, _norm_action
+from backend.analysis.next_actions import (
+    deterministic_actions, recommend, _norm_action, _dedupe, MAX_ACTIONS,
+)
+
+
+def test_dedupe_collapses_same_title_different_target():
+    """REGRESSION: the same recommendation carrying a handle target in one copy and a full
+    URL in another must collapse to ONE entry (was showing the same account 2-3 times)."""
+    acts = [
+        {"priority": "high", "action": "fetch_profile", "title": "Corroborate instagram/hsvismay",
+         "detail": "d", "target": "instagram/hsvismay"},
+        {"priority": "high", "action": "fetch_profile", "title": "Corroborate instagram/hsvismay",
+         "detail": "d", "target": "https://instagram.com/hsvismay"},
+    ]
+    out = _dedupe(acts)
+    assert len(out) == 1
+
+
+def test_recommend_capped_at_three(monkeypatch):
+    """The officer sees at most 3 focused steps, with no duplicate accounts."""
+    class _DupLLM:
+        def _chat_with_failover(self, model, messages, temperature=0.0, max_tokens=0):
+            # LLM echoes the same corroborate title the deterministic path produces, but with
+            # a handle target instead of the URL — the exact duplication seen in the UI.
+            return ('[{"priority":"high","action":"fetch_profile",'
+                    '"title":"Corroborate instagram/gr99","detail":"x","target":"instagram/gr99"}]')
+    ents = [_ent("e1", "gr99", "instagram", url="https://instagram.com/gr99"),
+            _ent("e2", "a@b.com", "email", etype="email", meta={"email": "a@b.com"}),
+            _ent("e3", "gr99", "github", meta={"photo_url": "https://x/y.jpg"})]
+    clusters = [_cluster(["e1"], match_tier="MEDIUM"),
+                _cluster(["e2", "e3"], match_tier="HIGH", tier="HIGH")]
+    na._CACHE.clear()
+    out = recommend(_case(), ents, clusters, llm=_DupLLM(), use_cache=False)
+    assert len(out) <= MAX_ACTIONS == 3
+    titles = [a["title"] for a in out]
+    assert len(titles) == len(set(titles)), "no duplicate recommendations"
 
 
 def _case(seeds=None, country="ALL", status="complete"):

@@ -72,10 +72,17 @@ def _norm_action(a: dict) -> dict | None:
     }
 
 
-def _dedupe(actions: list[dict], limit: int = 5) -> list[dict]:
+MAX_ACTIONS = 3   # cap shown to the officer — 3 focused steps beats a noisy wall of leads
+
+
+def _dedupe(actions: list[dict], limit: int = MAX_ACTIONS) -> list[dict]:
+    # Key on (action, title) — NOT target. The title already names the specific account/
+    # identifier ("Corroborate instagram/hsvismay"), so the same recommendation carrying a
+    # handle target in one copy and a full URL in another ("instagram/hsvismay" vs
+    # "https://instagram.com/hsvismay") collapses to ONE entry instead of showing twice.
     seen, out = set(), []
     for a in actions:
-        key = (a["action"], a["target"].lower(), a["title"].lower())
+        key = (a["action"], a["title"].strip().lower())
         if key in seen:
             continue
         seen.add(key)
@@ -326,11 +333,11 @@ def recommend(case: dict, entities: list[dict], clusters: list[dict],
             if llm_actions:
                 # Merge: LLM's ranking leads, but keep any deterministic action it dropped as
                 # a safety net so we never lose a concrete, verified lead.
-                result = _dedupe(llm_actions + det, 5)
+                result = _dedupe(llm_actions + det, MAX_ACTIONS)
     except Exception:  # noqa: BLE001 — LLM optional; deterministic baseline stands.
-        result = _dedupe(det, 5)
+        result = _dedupe(det, MAX_ACTIONS)
 
-    result = _dedupe(result, 5)
+    result = _dedupe(result, MAX_ACTIONS)
     if case_id:
         _CACHE[case_id] = (state_key, result)
     return result
