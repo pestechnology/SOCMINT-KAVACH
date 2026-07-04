@@ -22,6 +22,7 @@ Constraints (fail-safe by design):
 from __future__ import annotations
 
 import asyncio
+import html as _htmllib
 import re
 from typing import TYPE_CHECKING
 
@@ -122,10 +123,18 @@ def _clean_name(title: str, handle: str) -> str | None:
     if not name:
         return None
     name = name.strip().strip("·•|/–-@").strip()
-    # Reject handle-echoes and boilerplate.
-    if not name or name.lower() == h or name.lower().replace(" ", "") == h.replace("_", "").replace(".", ""):
+    if not name:
         return None
-    if len(name) > 60 or name.lower() in ("profile", "home", "login", "sign in"):
+    low = name.lower()
+    h_norm = h.replace("_", "").replace(".", "").replace("-", "")
+    # Reject handle-echoes: a SINGLE-token "name" that is really just the username
+    # (e.g. title "ash29_03 (@ash29_03)"). A multi-token display name is KEPT even when
+    # its letters collapse to the handle — handles are commonly derived from the real
+    # name ("vismay_hs" ⇐ "Vismay H S", "ashwinharish" ⇐ "Ashwin Harish"), so collapsing
+    # a real name against its own handle would throw the name away.
+    if low == h or (" " not in name and low.replace(" ", "") == h_norm):
+        return None
+    if len(name) > 60 or low in ("profile", "home", "login", "sign in"):
         return None
     return name
 
@@ -168,18 +177,20 @@ def _extract(html: str, handle: str = "") -> dict:
     for pat in (_OG_DESCR, _OG_DESCR2):
         m = pat.search(html)
         if m:
-            raw = m.group(1).strip()
-            # Basic HTML entity decode for the most common ones
-            for ent, ch in (("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
-                            ("&quot;", '"'), ("&#39;", "'")):
-                raw = raw.replace(ent, ch)
+            # Meta content arrives HTML-entity-encoded (e.g. "&#x2022;", "&amp;").
+            # Fully decode it — a partial named-entity replace leaves numeric entities
+            # like "&#064;" (@) and "&#x2022;" (•) intact, which breaks downstream parsing.
+            raw = _htmllib.unescape(m.group(1).strip())
             descr = raw[:200] if raw else None
             break
-    # name: prefer og:title, fall back to <title>
+    # name: prefer og:title, fall back to <title>. CRITICAL: decode HTML entities BEFORE
+    # name extraction — Instagram/Threads encode the title as
+    # "Ashwin Harish (&#064;handle) &#x2022; Instagram photos and videos", and the
+    # name-shape regexes match on a literal "@"/"•", so the raw encoded title never matches.
     title = None
     tm = _OG_TITLE.search(html) or _TITLE_TAG.search(html)
     if tm:
-        title = tm.group(1).strip()
+        title = _htmllib.unescape(tm.group(1)).strip()
     name = _clean_name(title, handle) if title else None
     location = _extract_location(html, descr)
     return {"photo": photo, "bio": descr, "name": name, "location": location}
