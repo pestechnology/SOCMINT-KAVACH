@@ -18,6 +18,7 @@ import StatusPill from "@/components/ui/StatusPill";
 import EmptyState from "@/components/ui/EmptyState";
 import PivotPill from "@/components/ui/PivotPill";
 import Tooltip from "@/components/ui/Tooltip";
+import ThemeToggle from "@/components/ui/ThemeToggle";
 
 // §4.3 identifier types — Name, Email, Phone, Username, UPI, Face URL (spec order).
 const SEED_TYPES = [
@@ -97,6 +98,7 @@ export default function Cases() {
           VERTEX<span className="text-cyan-400">.</span>
         </button>
         <div className="flex items-center gap-4">
+          <ThemeToggle />
           <span className="rounded-md border border-slate-700 bg-slate-900/60 px-2.5 py-1 text-[11px] font-mono text-slate-300">
             {username}
           </span>

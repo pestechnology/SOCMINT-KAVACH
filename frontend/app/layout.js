@@ -37,8 +37,16 @@ export default function RootLayout({ children }) {
           href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap"
           rel="stylesheet"
         />
+        {/* Apply the saved theme before paint to avoid a light/dark flash on load.
+            Dark is the default (:root), so we only need to stamp 'light' explicitly. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{if(localStorage.getItem('vertex-theme')==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})();",
+          }}
+        />
       </head>
-      <body className="min-h-screen bg-ink text-body font-display antialiased">
+      <body className="min-h-screen font-display antialiased">
         {/* Ambient background layers (§2.3) — fixed, behind content */}
         <div className="glow-bg" />
         <div className="grid-overlay" />

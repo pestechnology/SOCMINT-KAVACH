@@ -10,6 +10,20 @@
 :root {
   color-scheme: dark;
 
+  /* Theme-aware slate scale (raw RGB channels; consumed by tailwind.config.js).
+     DARK = Tailwind's exact stock slate values, so dark mode is pixel-identical. */
+  --slate-50: 248 250 252;
+  --slate-100: 241 245 249;
+  --slate-200: 226 232 240;
+  --slate-300: 203 213 225;
+  --slate-400: 148 163 184;
+  --slate-500: 100 116 139;
+  --slate-600: 71 85 105;
+  --slate-700: 51 65 85;
+  --slate-800: 30 41 59;
+  --slate-900: 15 23 42;
+  --slate-950: 2 6 23;
+
   /* --- Redesign design system (§2.1) --- */
   --bg-primary: #070a12;
   --bg-secondary: #0f172a;
@@ -27,20 +41,81 @@
   --text-main: #f8fafc;
   --text-muted: #94a3b8;
   --text-dim: #64748b;
+
+  --scrollbar-track: #0E1117;
+  --scrollbar-thumb: #2A3148;
+  --scrollbar-thumb-hover: #4A5568;
 }
+
+/* ============================ LIGHT THEME ============================
+   Invert the slate scale (100<->900, 200<->800, ...; 500 stays) so primary text goes
+   dark, backgrounds go light, muted greys stay mid-tone — a coherent light theme with
+   ZERO per-component changes. Accents (cyan/emerald/amber/crimson) are separate colors
+   and stay vibrant. Dark mode is completely untouched. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --slate-50: 15 23 42;
+  --slate-100: 15 23 42;
+  --slate-200: 30 41 59;
+  --slate-300: 51 65 85;
+  --slate-400: 71 85 105;
+  --slate-500: 100 116 139;
+  --slate-600: 100 116 139;
+  --slate-700: 203 213 225;
+  --slate-800: 214 222 232;
+  --slate-900: 236 240 246;
+  --slate-950: 248 250 252;
+
+  --bg-primary: #eef2f7;
+  --bg-secondary: #ffffff;
+  --bg-glass: rgba(255, 255, 255, 0.82);
+  --bg-glass-hover: rgba(241, 245, 249, 0.92);
+  --border-glass: rgba(15, 23, 42, 0.12);
+  --border-glow: rgba(0, 160, 200, 0.5);
+
+  --text-main: #0f172a;
+  --text-muted: #475569;
+  --text-dim: #64748b;
+
+  --scrollbar-track: #e2e8f0;
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-thumb-hover: #94a3b8;
+}
+
+/* Subtle white/low-opacity borders read as invisible on a light bg — flip them to a
+   faint dark ink so card edges stay defined in light mode. (No effect in dark.) */
+:root[data-theme="light"] .border-white\/\[0\.08\],
+:root[data-theme="light"] .border-white\/\[0\.06\],
+:root[data-theme="light"] .border-white\/10 { border-color: rgba(15, 23, 42, 0.12); }
+:root[data-theme="light"] .bg-white\/\[0\.04\] { background-color: rgba(15, 23, 42, 0.03); }
+
+/* Dialog/modal surfaces use a fixed deep-navy (bg-[#0b1220]); flip to white in light. */
+:root[data-theme="light"] .bg-\[\#0b1220\] { background-color: #ffffff; }
+
+/* vis-timeline is styled with dark !important rules above — mirror them for light. */
+:root[data-theme="light"] .vis-panel,
+:root[data-theme="light"] .vis-background { background: #ffffff !important; }
+:root[data-theme="light"] .vis-timeline,
+:root[data-theme="light"] .vis-panel.vis-center, :root[data-theme="light"] .vis-panel.vis-left,
+:root[data-theme="light"] .vis-panel.vis-right, :root[data-theme="light"] .vis-panel.vis-top,
+:root[data-theme="light"] .vis-panel.vis-bottom { border-color: #cbd5e1 !important; }
+:root[data-theme="light"] .vis-time-axis .vis-text { color: #64748b !important; }
+:root[data-theme="light"] .vis-item { background: #f1f5f9 !important; color: #0f172a !important; border-color: #cbd5e1 !important; }
+:root[data-theme="light"] .vis-labelset .vis-label { background: #f8fafc !important; color: #475569 !important; border-color: #cbd5e1 !important; }
 
 html, body {
   background: var(--bg-primary);
   color: var(--text-main);
   font-family: "Outfit", var(--font-display), system-ui, sans-serif;
   font-size: 14px;
-  color-scheme: dark;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-track { background: #0E1117; }
-::-webkit-scrollbar-thumb { background: #2A3148; }
-::-webkit-scrollbar-thumb:hover { background: #4A5568; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
 
 .mono, .font-mono { font-family: "JetBrains Mono", var(--font-mono), ui-monospace, monospace; }
 .display { font-family: "Outfit", var(--font-display), "Space Grotesk", sans-serif; }

@@ -19,6 +19,7 @@ import EmptyState from "@/components/ui/EmptyState";
 import PivotPill from "@/components/ui/PivotPill";
 import ReiterateBar from "@/components/ui/ReiterateBar";
 import ExecutiveSummaryModal from "@/components/ui/ExecutiveSummaryModal";
+import ThemeToggle from "@/components/ui/ThemeToggle";
 import { labelFor, iconFor, tierFor } from "@/lib/signalLabels";
 
 const NetworkGraph = dynamic(() => import("@/components/Graph"), { ssr: false });
@@ -299,6 +300,7 @@ export default function CaseView() {
               </span>
             </div>
             <div className="flex items-center gap-3 shrink-0">
+              <ThemeToggle />
               <StatusPill status={status} />
               <button
                 onClick={() => setShowSummaryModal(true)}
@@ -446,7 +448,7 @@ export default function CaseView() {
         </div>
 
         {/* CENTER — TABBED MAIN VIEW (§4.4.4) */}
-        <div className="lg:col-span-6">
+        <div className="lg:col-span-6 space-y-4">
           <GlassPanel className="p-4">
             <div className="flex gap-5 border-b border-slate-800 mb-4 overflow-x-auto">
               {centerTabs.map((t) => (
@@ -593,10 +595,9 @@ export default function CaseView() {
               </div>
             )}
           </GlassPanel>
-        </div>
 
-        {/* RIGHT — NEXT ACTIONS + SAME-PERSON ANALYSIS (§4.4.5) */}
-        <div className="lg:col-span-3 space-y-4 lg:sticky lg:top-4">
+          {/* Recommended next steps — moved BELOW the middle tabs panel, shown as a
+              horizontal row of cards for a cleaner, more scannable layout. */}
           {status === "complete" && (data.next_actions || []).length > 0 && (
             <GlassPanel className="p-4">
               <div className="flex items-center gap-2 mb-3">
@@ -604,9 +605,13 @@ export default function CaseView() {
                   ◆ Recommended next steps
                 </span>
               </div>
-              <NextActions actions={data.next_actions} />
+              <NextActions actions={data.next_actions} horizontal />
             </GlassPanel>
           )}
+        </div>
+
+        {/* RIGHT — SAME-PERSON ANALYSIS (§4.4.5) */}
+        <div className="lg:col-span-3 lg:sticky lg:top-4">
           <GlassPanel className="p-4 max-h-[720px] overflow-y-auto">
             <div className="text-[11px] font-mono uppercase tracking-wide text-slate-400 mb-3">
               Same-person analysis
@@ -936,13 +941,18 @@ const PRIORITY_STYLE = {
   low: { color: "#8fd6ff", bg: "rgba(0,242,254,0.08)", border: "rgba(0,242,254,0.25)", label: "LOW" },
 };
 
-function NextActions({ actions = [] }) {
+function NextActions({ actions = [], horizontal = false }) {
+  // horizontal = a responsive row of equal-height cards (used below the middle panel);
+  // otherwise a vertical stack (used in a narrow side column).
+  const container = horizontal
+    ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 items-stretch"
+    : "space-y-2";
   return (
-    <div className="space-y-2">
+    <div className={container}>
       {actions.map((a, i) => {
         const p = PRIORITY_STYLE[a.priority] || PRIORITY_STYLE.medium;
         return (
-          <div key={i} className="rounded-lg border p-2.5" style={{ borderColor: p.border, background: p.bg }}>
+          <div key={i} className="rounded-lg border p-2.5 flex flex-col" style={{ borderColor: p.border, background: p.bg }}>
             <div className="flex items-start gap-2">
               <span className="text-[13px] leading-tight shrink-0" aria-hidden>{ACTION_ICON[a.action] || "•"}</span>
               <div className="min-w-0 flex-1">
