@@ -103,6 +103,11 @@ the backend to load new modules) to see them.
 
 ## 3. NEXT UP — Agentic browsing option in "add investigation" (agreed, NOT started)
 
+> **Full corrected architecture: see `agentic_browser_design.md`** (fixes anti-bot realism,
+> pipeline integration, model keys = Gemini Flash for navigation + Groq for extraction /
+> never NVIDIA, drops WhatsMyName, adds determinism caching + timeouts + failure UX). The
+> summary below is the short version.
+
 **Goal (user's words):** in the add-investigation form, add **one more option** = agentic
 browsing. User gives a query + a target site (e.g. `ash29_03` on inflact); an AI agent opens
 a real browser, navigates to the site, runs the query, scrapes the result, streams it back
