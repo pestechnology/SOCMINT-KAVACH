@@ -8,9 +8,6 @@ re-running an investigation appeared to change nothing. Every claim in this docu
 grounded in the actual code and was verified — either by a passing test or a live run
 against the running backend — not asserted from memory. File/function names are exact.
 
-For the terse, dated changelog-style summary, see `context.md` §21 and
-`VERTEX_status_and_plan.md`'s entry for 2026-07-04/05.
-
 ---
 
 ## 1. The problem this solves

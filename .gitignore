@@ -77,3 +77,6 @@ logs/
 .claude/
 .serena/
 scratchpad/
+
+# ---- local pitch working files ----
+VERTEX-pitch/

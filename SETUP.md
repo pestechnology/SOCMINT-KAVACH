@@ -150,7 +150,7 @@ shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
 **Built and tested (189 pytest tests passing):**
 
 - Config, DB, auth, cases, data-source interface, mock scraper, correlation (20
-  signals — 7 hard-anchor, 7 context-tier, see context.md §17.12), scoring
+  signals — 7 hard-anchor, 7 context-tier, see backend/correlation/), scoring
   (red-herring rule + hard-anchor gating), LLM client (with fallbacks), orchestrator,
   audit ledger (hash chain), BSA-63 PDF.
 - Live scrapers: GitHub (incl. followers sample for mutual-connections), Serper
@@ -172,7 +172,7 @@ shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
   anything already in a case; the frontend lets you multi-select discovered accounts,
   suggested candidates, and profile pictures (drag-and-drop) into one staging tray and
   run a single combined follow-up search, merged back into the same case. See
-  [`REITERATION_AND_SEARCH_SYSTEM.md`](REITERATION_AND_SEARCH_SYSTEM.md) for the full
+  [`docs/REITERATION_AND_SEARCH_SYSTEM.md`](docs/REITERATION_AND_SEARCH_SYSTEM.md) for the full
   design.
 - An email seed automatically also runs its local part as a username search (finds
   Instagram/GitHub/etc., not just breach records), and re-scraping an account you
