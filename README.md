@@ -61,6 +61,32 @@ rather refuse a link than over-claim one that couldn't survive in court.
   accounts), EmailRep (registered-service/reputation lookup), and socid_extractor
   (structured name/location/DOB from known-platform pages) all fold into the same
   fail-safe, no-key-required-by-default pipeline.
+- **Agentic browser** — a real, AI-driven browser (browser-use + Playwright) reaches
+  login-gated and JavaScript-heavy pages a plain scraper can't, and extracts ONLY what is
+  literally on the page — a hard anti-fabrication guardrail returns empty + an honest
+  `blocked` flag rather than invent a value. Extracted profiles are re-correlated and
+  re-scored like any other source, never inserted as islands.
+- **Court-grade evidence capture (Hunchly-style)** — the moment a page is viewed it is
+  sealed as a self-contained bundle (full-page screenshot + MHTML + post-JS DOM + a
+  metadata certificate), each file SHA-256-hashed into the tamper-evident ledger AND
+  anchored to a trusted external RFC-3161 timestamp (FreeTSA) — so "when + unaltered"
+  lives outside the system VERTEX controls. A dedicated **Evidence Exhibit Report**
+  presents every bundle as a numbered exhibit, structured to BSA §63.
+- **NewLeaks breach source + "Additional Data" tab** — an optional Telegram-bot breach/PII
+  source folds leaked identity fields (name/location/phone/email/employer/…) into the case;
+  they surface in a dedicated Additional Data panel and are grounded into the Kavach assistant.
+  Fully inert unless enabled AND a user session exists — never fabricates.
+- **Kavach case assistant (RAG)** — grounded, plain-language Q&A over a single case's data,
+  hard-constrained to the evidence (never outside knowledge, never invented, cites the
+  signal it drew from), with a deterministic retrieval fallback.
+- **Investigative copilot** — an adjudicator + reranker extend the deterministic engine
+  (AI-assessed links are tagged distinctly from forensically-anchored ones), a next-actions
+  recommender ranks concrete next steps, and an **LE data-request directory** maps found
+  accounts to the right platform portal + a **BNSS §94** preservation-letter target.
+- **Multilingual (Indic) normalization** — Kannada / Tamil / Telugu / Malayalam script
+  detection, ISO-15919 transliteration, and phonetic keys (low-weight, never sufficient
+  alone; the original string is always preserved as the evidentiary field).
+- **Activity timeline** — a per-account posting/activity timeline view of the subject.
 
 ---
 
@@ -73,7 +99,9 @@ rather refuse a link than over-claim one that couldn't survive in court.
 | Correlation | thefuzz, scikit-learn, imagehash (all optional; degrade gracefully) |
 | Report | ReportLab (BSA-63 PDF) |
 | LLM | NVIDIA Cloud (`llama-3.3-70b`, `deepseek-v4-pro`) — enhancement-only |
-| Scrapers | Maigret, Sherlock, Blackbird, Socialscan, GitHub API, Serper, HIBP, XposedOrNot, Holehe, ignorant, PhoneInfoga, NumVerify, Wayback, Reddit, Telethon, UPI parser, Gravatar, EmailRep, socid_extractor |
+| Scrapers | Maigret, Sherlock, Blackbird, Socialscan, GitHub API, Serper, HIBP, XposedOrNot, Holehe, ignorant, PhoneInfoga, NumVerify, Wayback, Reddit, Telethon, UPI parser, Gravatar, EmailRep, socid_extractor, agentic browser (browser-use + Playwright), NewLeaks (Telegram) |
+| Agents / RAG | Agentic browser (Gemini nav), identity-resolution, adjudicator, semantic reranker, Kavach case assistant (NVIDIA/Groq, grounded RAG) — all with deterministic fallbacks |
+| Multilingual | aksharamukha (Indic → ISO-15919 transliteration) + phonetic keys for Kannada/Tamil/Telugu/Malayalam |
 | Frontend | Next.js 14 (App Router), Tailwind CSS, sigma.js, vis-timeline |
 
 ---
