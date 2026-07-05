@@ -1040,6 +1040,25 @@ async def run_investigation(case_id: str) -> dict:
     finally:
         conn.close()
 
+    # Court-grade evidence capture (Arm A) — gated by the per-case `capture_evidence` toggle.
+    # Runs AFTER analysis is persisted (so results aren't delayed) but BEFORE 'complete', so
+    # once the officer sees the case done, the exhibits are already sealed. Freezes each
+    # source page into a hashed, ledgered, externally-timestamped bundle
+    # (backend/evidence/capturer.py). Fully defensive: a capture failure never fails the
+    # investigation, and each page that can't be captured fails LOUD into the ledger.
+    try:
+        if int(dict(row).get("capture_evidence") or 0):
+            from backend.evidence.capturer import capture_case_entities
+            pairs = [(idx_to_eid[i], p.source_url) for i, p in enumerate(profiles)
+                     if p.source_url]
+            log_action(case_id, "evidence_capture_started",
+                       {"candidates": len(pairs)}, None, "system")
+            # capture_bundle drives Playwright's SYNC api, which cannot run inside this
+            # asyncio loop — offload to a worker thread (same pattern as the LLM calls above).
+            await asyncio.to_thread(capture_case_entities, case_id, pairs)
+    except Exception:  # noqa: BLE001 — capture is best-effort; never fail the investigation
+        pass
+
     set_status(case_id, "complete")
     log_action(case_id, "investigation_complete", None,
                {"accounts": len(profiles), "clusters": len(clusters)}, "system")

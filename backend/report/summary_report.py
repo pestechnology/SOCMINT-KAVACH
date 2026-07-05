@@ -497,10 +497,31 @@ def generate_summary_report(case_id: str, output_path: str | None = None) -> str
                          Paragraph((r["timestamp"] or "")[:19], ss["CellWrap"])])
         el += [base._table(rows, [8 * mm, 34 * mm, 44 * mm, 44 * mm, 30 * mm])]
     artifacts = get_artifacts(case_id)
-    if artifacts:
+    # Split court-grade evidence exhibits (captured source pages) from routine artifacts so the
+    # exhibit annexure reads like an evidence log: source URL + capture method + external
+    # timestamp, not just a filename. Grounded in the provenance columns on the artifacts row.
+    evidence = [a for a in artifacts if str(a.get("artifact_type") or "").startswith("evidence_")]
+    routine = [a for a in artifacts if not str(a.get("artifact_type") or "").startswith("evidence_")]
+    _ETYPE = {"evidence_mhtml": "MHTML page snapshot", "evidence_screenshot": "Full-page screenshot",
+              "evidence_dom": "Post-JS DOM", "evidence_metadata": "Provenance metadata",
+              "evidence_tsr": "RFC-3161 timestamp token"}
+    if evidence:
+        anchored = any(a.get("artifact_type") == "evidence_tsr" for a in evidence)
+        el += [Spacer(1, 3 * mm),
+               Paragraph(f"<b>Evidence exhibits (captured source pages, SHA-256):</b> "
+                         f"{'externally timestamped (RFC-3161)' if anchored else 'internally sealed'}",
+                         ss["Small"])]
+        rows = [["#", "Exhibit", "Source", "SHA-256"]]
+        for i, a in enumerate(evidence, 1):
+            label = _ETYPE.get(a.get("artifact_type"), a.get("artifact_type") or "")
+            rows.append([str(i), Paragraph(base._esc(label), ss["CellWrap"]),
+                         Paragraph(base._esc((a.get("source_url") or "")[:80]), ss["Mono"]),
+                         Paragraph((a.get("sha256") or "")[:32] + "…", ss["Mono"])])
+        el += [base._table(rows, [8 * mm, 36 * mm, 66 * mm, 56 * mm])]
+    if routine:
         el += [Spacer(1, 3 * mm), Paragraph("<b>Captured artifacts (SHA-256):</b>", ss["Small"])]
         rows = [["#", "File", "SHA-256"]]
-        for i, a in enumerate(artifacts, 1):
+        for i, a in enumerate(routine, 1):
             rows.append([str(i), Paragraph(base._esc(os.path.basename(a["file_path"] or "")), ss["Mono"]),
                          Paragraph((a["sha256"] or ""), ss["Mono"])])
         el += [base._table(rows, [8 * mm, 56 * mm, 110 * mm])]

@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS cases (
     status TEXT DEFAULT 'pending',
     country_filter TEXT DEFAULT 'ALL',
     case_context TEXT DEFAULT '',
+    capture_evidence INTEGER DEFAULT 0,
     created_at TEXT,
     updated_at TEXT,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -85,7 +86,13 @@ CREATE TABLE IF NOT EXISTS artifacts (
     artifact_type TEXT,
     file_path TEXT,
     sha256 TEXT,
-    captured_at TEXT
+    captured_at TEXT,
+    source_url TEXT,
+    mime TEXT,
+    capture_method TEXT,
+    page_title TEXT,
+    manifest_id TEXT,
+    tsr_path TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_entities_case ON entities(case_id);
@@ -128,6 +135,20 @@ def init_db() -> None:
             conn.execute("ALTER TABLE cases ADD COLUMN country_filter TEXT DEFAULT 'ALL'")
         if "case_context" not in cols_cases:
             conn.execute("ALTER TABLE cases ADD COLUMN case_context TEXT DEFAULT ''")
+        if "capture_evidence" not in cols_cases:
+            conn.execute("ALTER TABLE cases ADD COLUMN capture_evidence INTEGER DEFAULT 0")
+        # Evidence-capture provenance columns on artifacts (court-grade exhibit metadata).
+        cols_art = [r[1] for r in conn.execute("PRAGMA table_info(artifacts)").fetchall()]
+        for col, ddl in (
+            ("source_url", "ALTER TABLE artifacts ADD COLUMN source_url TEXT"),
+            ("mime", "ALTER TABLE artifacts ADD COLUMN mime TEXT"),
+            ("capture_method", "ALTER TABLE artifacts ADD COLUMN capture_method TEXT"),
+            ("page_title", "ALTER TABLE artifacts ADD COLUMN page_title TEXT"),
+            ("manifest_id", "ALTER TABLE artifacts ADD COLUMN manifest_id TEXT"),
+            ("tsr_path", "ALTER TABLE artifacts ADD COLUMN tsr_path TEXT"),
+        ):
+            if col not in cols_art:
+                conn.execute(ddl)
         conn.commit()
     finally:
         conn.close()

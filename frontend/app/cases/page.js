@@ -244,6 +244,7 @@ function NewInvestigation({ onClose, onCreated }) {
   const [draftType, setDraftType] = useState("username");
   const [draftValue, setDraftValue] = useState("");
   const [minor, setMinor] = useState(false);
+  const [captureEvidence, setCaptureEvidence] = useState(false); // court-grade evidence capture
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -275,7 +276,7 @@ function NewInvestigation({ onClose, onCreated }) {
     try {
       if (!seeds.length) throw new Error("Add at least one identifier to continue.");
       const res = await api.createCase(title || "Untitled investigation", seeds, minor, region,
-                                       caseContext.trim());
+                                       caseContext.trim(), captureEvidence);
       onCreated(res.case_id);
     } catch (e) { setError(e.message); setBusy(false); }
   }
@@ -435,6 +436,19 @@ function NewInvestigation({ onClose, onCreated }) {
                 />
                 <span className="text-sm text-slate-200">Subject is a minor</span>
                 <Tooltip content="Enables POCSO Act protections. Identifying details will be redacted in the evidence report." />
+              </label>
+            </div>
+
+            <div className="mt-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={captureEvidence}
+                  onChange={(e) => setCaptureEvidence(e.target.checked)}
+                  style={{ accentColor: "#00f2fe" }}
+                />
+                <span className="text-sm text-slate-200">Capture court-grade evidence</span>
+                <Tooltip content="Captures each source page at the moment of viewing — screenshot + MHTML + DOM — SHA-256 hashed, written to the tamper-evident ledger and externally timestamped (RFC-3161). Exhibits appear in the downloadable report. Sources are dynamic; this preserves what was seen." />
               </label>
             </div>
           </>

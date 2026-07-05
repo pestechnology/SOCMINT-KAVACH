@@ -306,6 +306,15 @@ export default function CaseView() {
                   {kase.case_context}
                 </span>
               )}
+              {!!(kase.capture_evidence || (data.evidence && data.evidence.enabled)) && (
+                <span
+                  className="hidden md:inline-flex items-center gap-1 text-[11px] rounded-full border px-2.5 py-0.5 shrink-0"
+                  style={{ color: "var(--tone-emerald)", borderColor: "rgba(16,185,129,0.35)", background: "rgba(16,185,129,0.08)" }}
+                  title={`Court-grade evidence capture is ON. ${(data.evidence?.exhibits ?? 0)} exhibits across ${(data.evidence?.bundles ?? 0)} pages${data.evidence?.anchored ? `, ${data.evidence.anchored} externally timestamped` : ""}. Exhibits are included in the downloadable report.`}
+                >
+                  🛡️ Evidence {data.evidence?.exhibits ? `· ${data.evidence.exhibits}` : "ON"}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <ThemeToggle />

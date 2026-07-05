@@ -97,8 +97,16 @@ def log_action(case_id: str, action: str, input_data=None, output_data=None,
 
 
 def save_artifact(case_id: str, entity_id: str | None, artifact_type: str,
-                  content, suffix: str = ".bin") -> dict:
-    """Persist an artifact to disk, hash it (SHA-256), record it. Returns the row dict."""
+                  content, suffix: str = ".bin", *,
+                  source_url: str | None = None, mime: str | None = None,
+                  capture_method: str | None = None, page_title: str | None = None,
+                  manifest_id: str | None = None, tsr_path: str | None = None) -> dict:
+    """Persist an artifact to disk, hash it (SHA-256), record it. Returns the row dict.
+
+    The keyword-only provenance fields (source_url, mime, capture_method, page_title,
+    manifest_id, tsr_path) are for court-grade evidence bundles (see backend/evidence/
+    capturer.py). Legacy callers omit them and store NULLs — fully backward-compatible.
+    """
     os.makedirs(config.REPORT_OUTPUT_DIR, exist_ok=True)
     artifacts_dir = os.path.join(config.REPORT_OUTPUT_DIR, "artifacts", case_id)
     os.makedirs(artifacts_dir, exist_ok=True)
@@ -117,16 +125,20 @@ def save_artifact(case_id: str, entity_id: str | None, artifact_type: str,
     try:
         conn.execute(
             """INSERT INTO artifacts
-               (artifact_id, case_id, entity_id, artifact_type, file_path, sha256, captured_at)
-               VALUES (?,?,?,?,?,?,?)""",
-            (artifact_id, case_id, entity_id, artifact_type, file_path, sha256, captured_at),
+               (artifact_id, case_id, entity_id, artifact_type, file_path, sha256, captured_at,
+                source_url, mime, capture_method, page_title, manifest_id, tsr_path)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (artifact_id, case_id, entity_id, artifact_type, file_path, sha256, captured_at,
+             source_url, mime, capture_method, page_title, manifest_id, tsr_path),
         )
         conn.commit()
     finally:
         conn.close()
 
     return {"artifact_id": artifact_id, "file_path": file_path, "sha256": sha256,
-            "artifact_type": artifact_type, "captured_at": captured_at}
+            "artifact_type": artifact_type, "captured_at": captured_at,
+            "source_url": source_url, "mime": mime, "capture_method": capture_method,
+            "page_title": page_title, "manifest_id": manifest_id, "tsr_path": tsr_path}
 
 
 def verify_chain(case_id: str) -> tuple[bool, str]:

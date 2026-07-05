@@ -27,7 +27,7 @@ def _now() -> str:
 
 def create_case(user_id: str, title: str, seeds: list[dict],
                 minor_involved: bool = False, country_filter: str = "ALL",
-                case_context: str = "") -> str:
+                case_context: str = "", capture_evidence: bool = False) -> str:
     for s in seeds:
         if s.get("type") not in VALID_SEED_TYPES:
             raise ValueError(f"invalid seed type: {s.get('type')!r}")
@@ -38,11 +38,11 @@ def create_case(user_id: str, title: str, seeds: list[dict],
     try:
         conn.execute(
             """INSERT INTO cases (case_id, user_id, title, seeds_json, minor_involved,
-               status, country_filter, case_context, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+               status, country_filter, case_context, capture_evidence, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (case_id, user_id, title, json.dumps(seeds), int(minor_involved),
              "pending", country_filter or "ALL",
-             (case_context or "").strip()[:500], _now(), _now()),
+             (case_context or "").strip()[:500], int(bool(capture_evidence)), _now(), _now()),
         )
         conn.commit()
     finally:
@@ -219,7 +219,20 @@ def get_results(case_id: str, user_id: str) -> dict | None:
             legal_requests = data_request_contacts(entities, clusters)
         except Exception:
             legal_requests = []
+    # Evidence-capture summary (court-grade exhibits) for the case dashboard chip.
+    evidence = {"enabled": bool(case.get("capture_evidence")),
+                "exhibits": 0, "bundles": 0, "anchored": 0}
+    try:
+        from backend.ledger.audit_ledger import get_artifacts
+        ev = [a for a in get_artifacts(case_id)
+              if str(a.get("artifact_type") or "").startswith("evidence_")]
+        evidence["exhibits"] = len([a for a in ev if a.get("artifact_type") != "evidence_tsr"])
+        evidence["bundles"] = len({a.get("manifest_id") for a in ev if a.get("manifest_id")})
+        evidence["anchored"] = len([a for a in ev if a.get("artifact_type") == "evidence_tsr"])
+    except Exception:
+        pass
     return {"case": case, "entities": entities, "clusters": clusters,
             "forensics": forensics, "next_actions": next_actions,
             "chat_suggestions": chat_suggestions, "legal_requests": legal_requests,
+            "evidence": evidence,
             "status": case.get("status"), "reiteration_count": reiteration_count}

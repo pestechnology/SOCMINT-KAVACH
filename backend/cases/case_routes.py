@@ -41,6 +41,10 @@ class NewCase(BaseModel):
     # Telegram"). Never used to filter/steer the SEARCH itself — only to sharpen the
     # LLM-generated guidance layers (next steps, briefing, case chat).
     case_context: str = ""
+    # When ON, every source page the pipeline loads is captured as a court-grade evidence
+    # bundle (MHTML + screenshot + DOM + provenance), hashed, ledgered and externally
+    # timestamped (backend/evidence/capturer.py). Off by default — opt-in per case.
+    capture_evidence: bool = False
 
 
 class ChatTurn(BaseModel):
@@ -58,7 +62,7 @@ def create(body: NewCase, background: BackgroundTasks, user_id: str = Depends(ge
     try:
         case_id = create_case(user_id, body.title,
                               [s.model_dump() for s in body.seeds], body.minor_involved,
-                              body.country_filter, body.case_context)
+                              body.country_filter, body.case_context, body.capture_evidence)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
