@@ -262,6 +262,62 @@ class LLMClient:
         except Exception:  # noqa: BLE001 - any LLM failure -> no facts, never a crash
             return empty
 
+    def classify_leak_data(self, text: str) -> dict:
+        """Classify a raw leaked-data dump (e.g. @NewleaksOsintBot output) into the case's
+        canonical identity fields, with everything unmapped kept separately.
+
+        DISPLAY-ONLY: the result is surfaced in the UI's "Leak Data" tab and never fed to
+        correlation/scoring, so — unlike extract_facts — there is no deterministic
+        fallback: if the LLM is unavailable this simply returns {} (no classification),
+        which the caller treats as "leave the raw records as-is". Never raises.
+
+        Returns {"fields": {...canonical...}, "leftover": {...other...}} or {}.
+        `fields` keys are drawn from: full_name, first_name, last_name, location, city,
+        country, address, employer, school, date_of_birth, phone, email, username,
+        password, ip. `leftover` is a free-form label->value map for anything else.
+        """
+        if not text or not text.strip():
+            return {}
+        try:
+            content = self._chat_with_failover(
+                config.LLM_EXTRACT_MODEL,
+                [
+                    {"role": "system", "content":
+                     "You are an OSINT analyst normalizing raw leaked-data search results. "
+                     "Return ONLY a JSON object with exactly two keys: 'fields' and 'leftover'. "
+                     "'fields' maps ONLY these canonical keys, and ONLY when explicitly present "
+                     "(omit any that are absent — never guess): full_name, first_name, "
+                     "last_name, location, city, region, country, address, employer, "
+                     "school, date_of_birth, phone, email, username, password, ip. Each value is a "
+                     "string, or an array of strings when multiple distinct values appear "
+                     "(deduplicated). 'leftover' is an object holding any OTHER meaningful data "
+                     "that does NOT fit a canonical key (e.g. source database/app names, site "
+                     "links, balances, vehicle/VIN, social IDs), keyed by a short human label. "
+                     "Do not invent data. Output ONLY the JSON object, no prose, no code fences."},
+                    {"role": "user", "content": text[:4000]},
+                ],
+                temperature=0.0, max_tokens=1024,
+            )
+            content = content.strip()
+            if content.startswith("```"):
+                content = content.strip("`")
+                if content.startswith("json"):
+                    content = content[4:]
+            start, end = content.find("{"), content.rfind("}")
+            if start < 0 or end <= start:
+                return {}
+            data = json.loads(content[start:end + 1])
+            if not isinstance(data, dict):
+                return {}
+            fields = data.get("fields") if isinstance(data.get("fields"), dict) else {}
+            leftover = data.get("leftover") if isinstance(data.get("leftover"), dict) else {}
+            # Drop empty values so the UI only shows populated rows.
+            fields = {k: v for k, v in fields.items() if v not in (None, "", [], {})}
+            leftover = {k: v for k, v in leftover.items() if v not in (None, "", [], {})}
+            return {"fields": fields, "leftover": leftover}
+        except Exception:  # noqa: BLE001 - any LLM failure -> no classification, never a crash
+            return {}
+
     def extract_keywords(self, text: str, entities: list[dict] = None) -> list[str]:
         """Use LLM to extract top identifying keywords and personal names from case entities."""
         if not text and not entities:

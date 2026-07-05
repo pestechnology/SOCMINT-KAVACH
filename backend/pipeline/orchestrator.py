@@ -45,6 +45,7 @@ from backend.ingestion.socialscan_scraper import SocialscanScraper
 from backend.ingestion.wayback_scraper import WaybackScraper
 from backend.ingestion.reddit_scraper import RedditScraper
 from backend.ingestion.telethon_scraper import TelethonScraper
+from backend.ingestion.newleaks_scraper import NewLeaksScraper
 from backend.ingestion.xposedornot_scraper import XposedOrNotScraper
 from backend.ingestion.holehe_scraper import HoleheScraper
 from backend.ingestion.sherlock_scraper import SherlockScraper
@@ -52,11 +53,13 @@ from backend.ingestion.variants import username_variants
 from backend.ingestion.photo_enrich import enrich_photos, build_face_seed_profile
 from backend.ingestion.profile_page_fetcher import enrich_profiles_from_page, enrich_anchors
 from backend.ingestion.fact_enrich import enrich_facts
+from backend.ingestion.leak_classify import enrich_leak_classification
 from backend.ingestion.dehashed_scraper import DehashedScraper
 from backend.ingestion.leakcheck_scraper import LeakcheckScraper
 from backend.ingestion.gravatar_scraper import GravatarScraper
 from backend.ingestion.emailrep_scraper import EmailRepScraper
 from backend.ingestion.socid_enrich import enrich_via_socid
+from backend.ingestion import browser_fetch
 from backend.ingestion.derive import derive_seeds, names_from_handle
 from backend.correlation.correlation_engine import extract_bio_urls
 from backend.ingestion.url_scraper import extract_handle
@@ -80,7 +83,7 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         # added to .env, deeper breach coverage activates with zero other changes.
         "email":    [HIBPScraper(), XposedOrNotScraper(), DehashedScraper(), LeakcheckScraper(),
                      HoleheScraper(), BlackbirdEmailScraper(), GitHubScraper(), GravatarScraper(),
-                     EmailRepScraper(), SerperScraper('"{q}"')],
+                     EmailRepScraper(), NewLeaksScraper(), SerperScraper('"{q}"')],
         # NumVerify (carrier/line-type/country) works with the configured key; a PLAIN
         # Serper search returns real web mentions, whereas the old site:truecaller.com
         # dork returned nothing (Truecaller blocks indexing). PhoneInfoga/ignorant stay
@@ -88,14 +91,14 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         # it's dropped from the phone path. DehashedScraper/LeakcheckScraper also cover
         # phone-indexed breach records where the provider supports it.
         "phone":    [NumVerifyScraper(), PhoneInfogaScraper(), IgnorantScraper(),
-                     DehashedScraper(), LeakcheckScraper(), SerperScraper('"{q}"')],
+                     DehashedScraper(), LeakcheckScraper(), NewLeaksScraper(), SerperScraper('"{q}"')],
         # LinkedIn blocks the WhatsMyName-style enumeration Maigret/Sherlock/Blackbird use
         # (verified: maigret's own site database has zero linkedin.com entries). LinkedIn
         # coverage for username/name seeds comes from the dedicated linkedin_search() step
         # below instead of a single raw-value dork here — a bare handle rarely matches a
         # LinkedIn vanity URL (those are name-based), so it needs the recovered-name/
         # discovered-name candidates linkedin_search() tries, not just the raw value.
-        "username": [_maigret, _sherlock, _blackbird, SocialscanScraper(), RedditScraper(), TelethonScraper(), GitHubScraper(),
+        "username": [_maigret, _sherlock, _blackbird, SocialscanScraper(), RedditScraper(), TelethonScraper(), NewLeaksScraper(), GitHubScraper(),
                      SerperScraper('"{q}"')],
         "upi":      [UPIScraper(), SerperScraper('"{q}"')],
         # LinkedIn coverage for a name seed also comes from the dedicated linkedin_search()
@@ -124,6 +127,8 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
                      # report/UI to flag distinctly rather than presenting it like a
                      # verified profile.
                      SerperScraper('site:pastebin.com "{q}"', sensitive=True),
+                     # NewLeaks OSINT bot — name/nick is one of its strongest query modes.
+                     NewLeaksScraper(),
                      SerperScraper('"{q}"')],
         "face":     [],   # handled separately — see build_face_seed_profile() below
         "url":      [URLScraper(), WaybackScraper()],
@@ -149,8 +154,16 @@ def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-async def _scrape_seed(seed_type: str, value: str, tool_map: dict) -> list[RawProfile]:
+async def _scrape_seed(seed_type: str, value: str, tool_map: dict,
+                       allow_newleaks: bool = False) -> list[RawProfile]:
     tools = tool_map.get(seed_type, [SerperScraper('"{q}"')])
+    # The NewLeaks Telegram bot must be queried with EXACTLY the identifier the user
+    # typed — never an auto-generated username permutation, email-derived handle, or
+    # cascade/pivot value. So it fires only when the caller marks this value as an
+    # original seed (allow_newleaks=True); every other path drops it here. (Also keeps
+    # the bot's limited free-tier query budget spent only on real, user-entered seeds.)
+    if not allow_newleaks:
+        tools = [t for t in tools if type(t).__name__ != "NewLeaksScraper"]
     tasks = [t.resolve(value, config.DATA_MODE) for t in tools]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     profiles: list[RawProfile] = []
@@ -298,6 +311,23 @@ def _canonical_platform(platform: str) -> str:
     return _PLATFORM_ALIASES.get(p, p)
 
 
+# Platforms permanently excluded as pure noise. op.gg (League of Legends stats) is the
+# clearest offender: Maigret's site definition points at op.gg's *search* endpoint
+# (op.gg/summoners/search?q={u}), which returns HTTP 200 for ANY string — so every
+# username "matches" across ~15 regional variants, flooding a case with a dozen junk
+# "accounts" that are just a search URL, never a confirmed profile. Matched against both
+# the platform label and the source URL so it's caught no matter which enumerator emits it.
+_NOISE_PLATFORM_SUBSTR = (
+    "op.gg", "leagueoflegends", "league of legends",
+)
+
+
+def _is_noise_platform(p: RawProfile) -> bool:
+    plat = str(getattr(p, "platform", "") or "").lower()
+    url = str(getattr(p, "source_url", "") or "").lower()
+    return any(n in plat or n in url for n in _NOISE_PLATFORM_SUBSTR)
+
+
 def _dedup(profiles: list[RawProfile]) -> list[RawProfile]:
     out: list[RawProfile] = []
     seen_social: dict[tuple[str, str], RawProfile] = {}
@@ -305,6 +335,8 @@ def _dedup(profiles: list[RawProfile]) -> list[RawProfile]:
 
     for p in profiles:
         if not _is_legitimate_and_target_country(p):
+            continue
+        if _is_noise_platform(p):
             continue
         plat = _canonical_platform(p.platform)
         val = (p.value or "").lower()
@@ -548,6 +580,155 @@ async def linkedin_search(candidates: list[str]) -> list[RawProfile]:
     return out
 
 
+# Identity platforms whose profile/vanity URL is commonly a person's REAL NAME rather
+# than the handle a username seed started from (e.g. facebook.com/kiki.astor, not the
+# Instagram handle "kikiastor"). A username-seeded case only reaches these once a real
+# name has been recovered from an enriched profile page — the handle enumerators
+# (Maigret/Sherlock/Blackbird) only ever try the seed handle and its permutations, so a
+# same-person account registered under a real name is invisible to them. Kept SMALL and
+# bounded: every name costs one Serper call per template, and Serper's free tier caps
+# site: queries (see serper_scraper.py's num-cap note).
+_NAME_XPLATFORM_DORKS = [
+    'site:facebook.com "{q}"',
+    'site:twitter.com "{q}"',
+    'site:instagram.com "{q}"',
+]
+
+# First path segments that are NOT a person's handle — a URL whose first segment is one of
+# these names no profile (facebook.com/watch, instagram.com/p/{code}, twitter.com/i/...).
+_NON_HANDLE_FIRST_SEG = {
+    "p", "reel", "reels", "explore", "watch", "groups", "marketplace", "events",
+    "hashtag", "story", "stories", "pages", "story.php", "media", "search", "i",
+    "home", "about", "public", "help", "login", "sharer", "dialog", "l.php", "tr",
+}
+
+
+def _canonical_profile_url(url: str) -> str | None:
+    """Reduce a social URL to the ACCOUNT root it belongs to, or None if it names no
+    account. Everything after the handle segment is stripped, so a post/video/about-tab
+    all collapse to the SAME account (host/{handle}/) — this both recovers the account
+    from a post URL (Serper often returns a Facebook video, not the profile page: the
+    fix for Facebook flakiness) and dedups sub-tabs of one profile to a single entity.
+
+      facebook.com/authorkikiastor/videos/123  → facebook.com/authorkikiastor/
+      facebook.com/authorkikiastor/about/      → facebook.com/authorkikiastor/
+      facebook.com/profile.php?id=123          → facebook.com/profile.php?id=123 (kept)
+      instagram.com/p/ABC   /  facebook.com/watch  → None (no recoverable handle)
+    """
+    from urllib.parse import urlsplit
+    u = str(url or "").strip()
+    if not u.lower().startswith("http"):
+        return None
+    try:
+        sp = urlsplit(u)
+    except Exception:
+        return None
+    host = sp.netloc.lower()
+    segs = [s for s in sp.path.split("/") if s]
+    if not host or not segs:
+        return None
+    seg0 = segs[0]
+    # id-based Facebook profile — the numeric id IS the account; keep it (with the id).
+    if seg0.lower() == "profile.php":
+        m = re.search(r"id=(\d+)", sp.query or "")
+        return f"{sp.scheme}://{host}/profile.php?id={m.group(1)}" if m else None
+    if seg0.lower() in _NON_HANDLE_FIRST_SEG:
+        return None
+    return f"{sp.scheme}://{host}/{seg0}/"
+
+
+async def name_cross_platform_search(names, already_urls=None,
+                                     cap_names: int = 3, cap_per_name: int = 4) -> list[RawProfile]:
+    """Search the major identity platforms (Facebook/Twitter/Instagram) BY a real human
+    NAME recovered from an enriched profile — the "a normal Google search would have found
+    their Facebook" path. Reaches accounts under a real-name vanity URL that the
+    handle-based enumerators can never find, precisely the gap that made a famous
+    Instagram handle's separate Facebook (registered under the owner's real name) go
+    undiscovered.
+
+    Deliberately does NOT stamp metadata['name']/['seed_name'] on the results: a common
+    name returns many namesakes, and stamping the searched name on all of them would make
+    exact_name_match fire between unrelated people (the same reason _scrape_seed uses
+    'seed_name', never 'name', for name seeds). Provenance is recorded as
+    metadata['found_via_name_search']; the correlation engine then links only the genuine
+    match via handle/photo/bio/location and the >=2-signal red-herring rule keeps the
+    namesakes as unlinked singletons. Deduped by URL, bounded, fully fail-safe.
+    """
+    if not names:
+        return []
+    # Seed the dedup set with the CANONICAL form of every URL already in the case, so a
+    # name-search hit that canonicalizes to an account we already have (e.g. the
+    # enumerator's facebook.com/{handle} vs a name-search facebook.com/{handle}/videos/..)
+    # is recognized as a duplicate and skipped.
+    seen: set[str] = set()
+    for u in (already_urls or []):
+        seen.add(_canonical_profile_url(u) or u)
+    out: list[RawProfile] = []
+    for name in sorted(names)[:cap_names]:
+        scrapers = [SerperScraper(tmpl) for tmpl in _NAME_XPLATFORM_DORKS]
+        results = await asyncio.gather(
+            *[s.resolve(name, "live") for s in scrapers], return_exceptions=True)
+        per_name = 0
+        for r in results:
+            if not isinstance(r, list):
+                continue
+            for p in r:
+                if per_name >= cap_per_name:
+                    break
+                # Canonicalize to the account root: a result that only surfaced a
+                # specific post/video (common for Facebook) still recovers the ACCOUNT,
+                # instead of being discarded — the fix for Facebook flakiness. None means
+                # the URL names no account (e.g. instagram.com/p/{code}) → skip.
+                canon = _canonical_profile_url(p.source_url)
+                if not canon or canon in seen:
+                    continue
+                seen.add(canon)
+                p.source_url = canon
+                p.metadata.setdefault("found_via_name_search", name)
+                out.append(p)
+                per_name += 1
+    return out
+
+
+async def enrich_via_browser(profiles: list[RawProfile], cap: int = 3) -> int:
+    """Last-resort enrichment for accounts on hosts that block httpx but render public
+    contact info in a real browser (Facebook is the case this was built for: its profile
+    page shows a public "Intro" box with the account's contact email, but a plain fetch
+    gets only a login stub — so profile_page_fetcher recovers nothing from it).
+
+    For up to `cap` such profiles that don't already have an email, renders the profile
+    page in a stealth headless browser (browser_fetch) and writes any discovered contact
+    email into metadata['email'] — which then (a) shows on the account, (b) fires the
+    exact_email_match correlation signal against any other account carrying that email,
+    and (c) becomes a one-click re-iteration seed in the UI (pivotSeedFor reads
+    metadata.email). Bounded and fully fail-safe: a no-op (returns 0) whenever the browser
+    runtime is absent or nothing renders, so a normal run is unaffected.
+    """
+    ok, _reason = browser_fetch.browser_available()
+    if not ok:
+        return 0
+    targets = [
+        p for p in profiles
+        if browser_fetch.is_hard_blocked_url(getattr(p, "source_url", ""))
+        and isinstance(getattr(p, "metadata", None), dict)
+        and not p.metadata.get("email")
+    ][:cap]
+    if not targets:
+        return 0
+    texts = await browser_fetch.fetch_texts([p.source_url for p in targets])
+    enriched = 0
+    for p in targets:
+        emails = browser_fetch.extract_emails(texts.get(p.source_url, ""))
+        if not emails:
+            continue
+        p.metadata["email"] = emails[0]
+        if len(emails) > 1:
+            p.metadata["emails_found"] = emails
+        p.metadata["browser_enriched"] = True
+        enriched += 1
+    return enriched
+
+
 async def run_investigation(case_id: str) -> dict:
     conn = get_db()
     try:
@@ -645,7 +826,11 @@ async def run_investigation(case_id: str) -> dict:
 
     # 1+2: primary fan-out per seed
     for seed in seeds:
-        ps = await _scrape_seed(seed.get("type"), seed.get("value"), tool_map)
+        # NewLeaks fires ONLY on the exact identifiers the user typed (original seeds),
+        # not on the permutation/derived seeds that share this expanded list.
+        _is_original = str(seed.get("value") or "").strip().lower() in original_seed_values
+        ps = await _scrape_seed(seed.get("type"), seed.get("value"), tool_map,
+                                allow_newleaks=_is_original)
         log_action(case_id, f"scrape:{seed.get('type')}",
                    {"value": seed.get("value")}, {"found": len(ps)}, "system")
         if seed.get("_derived_via"):
@@ -728,12 +913,19 @@ async def run_investigation(case_id: str) -> dict:
         log_action(case_id, f"cascade:{d.type}", {"value": d.value}, {"found": len(ps)}, "system")
         all_profiles.extend(ps)
 
+    # Names already searched (LinkedIn + cross-platform) in the PRE-enrichment step 3.5
+    # below, so the POST-enrichment pass (step 5b) doesn't re-issue the same Serper
+    # queries. Defined here so it's in scope for both live blocks (and stays empty in
+    # mock mode, where neither block runs a search).
+    pre_enrich_searched_names: set[str] = set()
+
     # 3.5: Gated 2-Hop Name Pivot (live only). When initial scraping discovers a real human name
     # on a major legitimate platform (e.g., GitHub or Instagram), pivot on that name by generating
     # targeted username variants (e.g. "Ashwin Harish" -> ashwinharish, ashwin.harish) and querying fast scrapers.
     if config.DATA_MODE == "live":
         searched_vals = {p.value.lower() for p in all_profiles if p.value}
         discovered_names = discover_real_names(all_profiles)
+        pre_enrich_searched_names = {n.lower() for n in discovered_names}
 
         # LinkedIn search — UNCONDITIONAL, not gated behind discovered_names: per-request,
         # starting from JUST a plain username with nothing else discovered yet must still
@@ -965,10 +1157,73 @@ async def run_investigation(case_id: str) -> dict:
         except Exception:  # fail-safe: fact extraction must never stop a run
             pass
         try:
+            # DISPLAY-ONLY: sorts NewLeaks bot dumps into canonical + leftover fields for
+            # the "Leak Data" tab. No-op unless NewLeaks entities are present; never feeds
+            # correlation/scoring.
+            classified = await enrich_leak_classification(profiles)
+            log_action(case_id, "leak_classification", {"candidates": len(profiles)},
+                       {"profiles_classified": classified}, "system")
+        except Exception:  # fail-safe: leak classification must never stop a run
+            pass
+        try:
             socid = await enrich_via_socid(profiles)
             log_action(case_id, "socid_enrichment", {"candidates": len(profiles)},
                        {"profiles_enriched": socid}, "system")
         except Exception:  # fail-safe: socid_extractor is optional
+            pass
+
+        # 5b: POST-ENRICHMENT name-based cross-platform search. The step-3.5 name pivot,
+        # LinkedIn search and bare name search all ran BEFORE the enrichment passes above,
+        # so for a USERNAME seed — whose owner's real name only appears once the seed
+        # profile's page is fetched (e.g. Instagram/Twitter display name "Kiki Astor" from
+        # handle "kikiastor") — that name was not yet known and never drove a search. Now
+        # that names are recovered, search the major identity platforms by name so an
+        # account under a real-name vanity URL (the separate Facebook the handle
+        # enumerators can't reach) is finally found, plus a LinkedIn pass on the same
+        # freshly-recovered names. New hits are enriched (so a discovered page's
+        # name/bio/email surfaces) and merged in before correlation runs below.
+        try:
+            enriched_names = discover_real_names(profiles)
+            fresh_names = {n for n in enriched_names
+                           if n.lower() not in pre_enrich_searched_names}
+            if fresh_names:
+                have_urls = {p.source_url for p in profiles if p.source_url}
+                xp_hits = await name_cross_platform_search(fresh_names, have_urls)
+                li_hits = await linkedin_search(sorted(fresh_names)[:3])
+                new_hits = xp_hits + [p for p in li_hits
+                                      if p.source_url and p.source_url not in have_urls]
+                if new_hits:
+                    # enrich the newly found accounts (og:title/bio/photo), then let
+                    # fact/socid extraction pull any email/handle out of the new bios —
+                    # same fail-safe-per-pass pattern the block above uses.
+                    for fn in (enrich_profiles_from_page, enrich_facts):
+                        try:
+                            await fn(new_hits)
+                        except Exception:
+                            pass
+                    try:
+                        await enrich_via_socid(new_hits)
+                    except Exception:
+                        pass
+                    profiles = _dedup(profiles + new_hits)
+                log_action(case_id, "name_cross_platform_search",
+                           {"names": sorted(fresh_names)[:3]},
+                           {"found": len(new_hits)}, "system")
+        except Exception:
+            pass
+
+        # 5b-ii: browser fallback — render bot-blocked profiles (Facebook) in a stealth
+        # headless browser to pull the PUBLIC contact email their login-stub HTTP response
+        # hides. Runs after the cross-platform search above has surfaced the Facebook
+        # account, so a famous handle's separate real-name Facebook — now discovered — can
+        # finally yield the Gmail in its Intro box. No-op if the browser runtime is absent.
+        try:
+            b_enriched = await enrich_via_browser(profiles)
+            if b_enriched:
+                log_action(case_id, "browser_enrichment",
+                           {"candidates": "hard_blocked"},
+                           {"emails_recovered": b_enriched}, "system")
+        except Exception:
             pass
 
         # 5c: face seed (investigator-supplied reference photo). Added as its own
@@ -1615,6 +1870,43 @@ async def run_pivot_seeds(case_id: str, seeds: list[dict]) -> dict:
                 all_profiles = _dedup(all_profiles)
             log_action(case_id, "pivot_linkedin_search", {"candidates": li_candidates},
                        {"found": len(li_results)}, "system")
+        except Exception:
+            pass
+
+        # Cross-platform NAME search on re-iteration too — same mechanism as
+        # run_investigation's step 5b, so a real name recovered during THIS pivot reaches
+        # Facebook/Twitter/Instagram accounts registered under that name, not just the
+        # seed handle. New hits are enriched, then merged/deduped so
+        # ingest_external_profiles picks up any account (and its email/bio) it adds.
+        try:
+            have_urls = {p.source_url for p in all_profiles if p.source_url}
+            xp_hits = await name_cross_platform_search(
+                discover_real_names(all_profiles), have_urls)
+            if xp_hits:
+                for fn in (enrich_profiles_from_page, enrich_facts):
+                    try:
+                        await fn(xp_hits)
+                    except Exception:
+                        pass
+                try:
+                    await enrich_via_socid(xp_hits)
+                except Exception:
+                    pass
+                all_profiles = _dedup(all_profiles + xp_hits)
+            log_action(case_id, "pivot_name_cross_platform_search",
+                       {"names": sorted(discover_real_names(all_profiles))[:3]},
+                       {"found": len(xp_hits)}, "system")
+        except Exception:
+            pass
+
+        # browser fallback on re-iteration too — pull the public contact email off any
+        # bot-blocked (Facebook) account this pivot surfaced. Same fail-safe no-op.
+        try:
+            b_enriched = await enrich_via_browser(all_profiles)
+            if b_enriched:
+                log_action(case_id, "pivot_browser_enrichment",
+                           {"candidates": "hard_blocked"},
+                           {"emails_recovered": b_enriched}, "system")
         except Exception:
             pass
 

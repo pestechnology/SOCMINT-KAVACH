@@ -19,6 +19,8 @@ import EmptyState from "@/components/ui/EmptyState";
 import PivotPill from "@/components/ui/PivotPill";
 import ReiterateBar from "@/components/ui/ReiterateBar";
 import ExecutiveSummaryModal from "@/components/ui/ExecutiveSummaryModal";
+import TimelineModal from "@/components/ui/TimelineModal";
+import LeakDataPanel from "@/components/ui/LeakDataPanel";
 import ThemeToggle from "@/components/ui/ThemeToggle";
 import { labelFor, iconFor, tierFor } from "@/lib/signalLabels";
 
@@ -46,6 +48,7 @@ export default function CaseView() {
   const [tierFilter, setTierFilter] = useState("all");   // all | HIGH | MEDIUM
   const [platformFilter, setPlatformFilter] = useState("all");
   const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [showTimelineModal, setShowTimelineModal] = useState(false);
   // Re-iterate staging: ANYTHING can be added here — a checked account, a name/alias
   // or profile picture dragged (or clicked) from the Summary tab — and it all lands in
   // ONE tray above the floating Re-iterate button, combined into a single pivot, not a
@@ -260,11 +263,14 @@ export default function CaseView() {
     (Array.isArray(fx.activity?.active_hours_utc) && fx.activity.active_hours_utc.length) ||
     fx.footprint?.breach_exposures || fx.footprint?.registered_services
   ));
+  // Leak Data tab — shown only when the NewLeaks bot returned results for this case.
+  const hasLeakData = entities.some((e) => (e.metadata || {}).source === "newleaks_bot");
   const centerTabs = [
     { id: "summary", label: "Summary" },
     { id: "network", label: "Network" },
     ...(hasPostingHours ? [{ id: "timeline", label: "Timeline" }] : []),
     ...(hasForensics ? [{ id: "writing", label: "Writing & Activity" }] : []),
+    ...(hasLeakData ? [{ id: "leaks", label: "Additional Data", bold: true }] : []),
     { id: "kavach", label: "⚡ KAVACH CHAT", isHighlight: true },
   ];
   const activeTabId = centerTabs.some((t) => t.id === tab) ? tab : "summary";
@@ -308,6 +314,13 @@ export default function CaseView() {
               >
                 <span>✨</span>
                 <span>Briefing</span>
+              </button>
+              <button
+                onClick={() => setShowTimelineModal(true)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700 shadow-sm transition-all duration-200 hover:scale-105 active:scale-95"
+              >
+                <span>🕒</span>
+                <span>Timeline</span>
               </button>
               <ReportButton id={id} disabled={status !== "complete"} />
             </div>
@@ -454,7 +467,7 @@ export default function CaseView() {
                 <button
                   key={t.id}
                   onClick={() => setTab(t.id)}
-                  className={`pb-2 -mb-px text-[11px] font-mono uppercase tracking-wider transition-all whitespace-nowrap ${
+                  className={`pb-2 -mb-px text-[11px] font-mono uppercase tracking-wider transition-all whitespace-nowrap ${t.bold ? "font-bold" : ""} ${
                     activeTabId === t.id
                       ? t.isHighlight
                         ? "text-amber-300 border-b-2 border-amber-400 font-bold drop-shadow-[0_0_10px_rgba(251,191,36,0.6)]"
@@ -588,6 +601,12 @@ export default function CaseView() {
               </div>
             )}
 
+            {activeTabId === "leaks" && (
+              <div className="pt-1">
+                <LeakDataPanel entities={entities} />
+              </div>
+            )}
+
             {activeTabId === "kavach" && (
               <div className="pt-1">
                 <CaseChat caseId={id} suggestions={data.chat_suggestions || []} disabled={status !== "complete"} />
@@ -635,6 +654,13 @@ export default function CaseView() {
         possibleClusters={possibleClusters}
         notLinkedEntities={notLinkedEntities}
         clusterMembers={clusterMembers}
+      />
+
+      <TimelineModal
+        isOpen={showTimelineModal}
+        onClose={() => setShowTimelineModal(false)}
+        entities={entities}
+        clusters={clusters}
       />
 
       <ReiterateBar
@@ -973,7 +999,12 @@ function BioFacts({ meta = {} }) {
   const employers = meta.employer_candidates || [];
   const city = meta.location || (meta.location_candidates || [])[0];
   const links = bioLinks(meta);
-  const has = name || employers.length || city || links.length;
+  // Contact email pulled from the bio/Intro (GitHub/Gravatar, or the stealth-browser
+  // fallback reading a Facebook profile's public Intro box). Multiple may be present.
+  const emails = Array.isArray(meta.emails_found) && meta.emails_found.length
+    ? meta.emails_found
+    : (typeof meta.email === "string" && meta.email.includes("@") ? [meta.email] : []);
+  const has = name || employers.length || city || links.length || emails.length;
   if (!has) return null;
   return (
     <div className="mt-4 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.04] p-3">
@@ -981,6 +1012,18 @@ function BioFacts({ meta = {} }) {
       <div className="space-y-1.5 text-xs">
         {name && (
           <div className="flex gap-2"><span className="text-slate-500 w-16 shrink-0">Name</span><span className="text-slate-200">{name}</span></div>
+        )}
+        {emails.length > 0 && (
+          <div className="flex gap-2">
+            <span className="text-slate-500 w-16 shrink-0">Email</span>
+            <span className="min-w-0 space-y-0.5">
+              {emails.map((em, i) => (
+                <a key={i} href={`mailto:${em}`} className="block font-mono text-amber-300 hover:text-amber-200 hover:underline truncate">
+                  {em}{meta.browser_enriched ? " 🌐" : ""}
+                </a>
+              ))}
+            </span>
+          </div>
         )}
         {employers.length > 0 && (
           <div className="flex gap-2"><span className="text-slate-500 w-16 shrink-0">Employer / school</span><span className="text-slate-200">{employers.join(", ")}</span></div>
@@ -1045,12 +1088,19 @@ function AnalysisPanel({ cluster, letter, members, entity }) {
           <p className="mt-3 text-sm text-slate-200 leading-relaxed">{cluster.explanation}</p>
         )}
 
-        {/* Facts extracted from the richest member's bio (name / employer / city / links). */}
-        <BioFacts meta={(members || [])
-          .map((e) => e.metadata || {})
-          .sort((a, b) =>
+        {/* Facts extracted from the richest member's bio (name / employer / city / links).
+            Email is pulled from WHICHEVER member has one (often the Facebook account the
+            browser-fetch enriched, which isn't necessarily the richest bio member). */}
+        <BioFacts meta={(() => {
+          const metas = (members || []).map((e) => e.metadata || {});
+          const richest = metas.slice().sort((a, b) =>
             ((b.employer_candidates?.length || 0) + (b.fullname || b.name ? 1 : 0) + (b.bio ? 1 : 0)) -
-            ((a.employer_candidates?.length || 0) + (a.fullname || a.name ? 1 : 0) + (a.bio ? 1 : 0)))[0] || {}} />
+            ((a.employer_candidates?.length || 0) + (a.fullname || a.name ? 1 : 0) + (a.bio ? 1 : 0)))[0] || {};
+          const withEmail = metas.find((m) => typeof m.email === "string" && m.email.includes("@"));
+          return withEmail && !richest.email
+            ? { ...richest, email: withEmail.email, emails_found: withEmail.emails_found, browser_enriched: withEmail.browser_enriched }
+            : richest;
+        })()} />
 
         <div className="mt-4 text-[11px] font-mono uppercase tracking-wide text-slate-400">Matching evidence</div>
         <div className="mt-2 space-y-1.5">
@@ -1334,6 +1384,19 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
                     ...aliases.filter((a) => !names.some((n) => n.toLowerCase() === a.toLowerCase()))
                               .map((a) => ({ v: a, alias: true }))];
 
+  // Contact emails discovered anywhere in the case (GitHub/Gravatar metadata, and the
+  // stealth-browser fallback that reads a Facebook profile's public Intro box). This is
+  // the case-level "fetched data" view of every email VERTEX pulled.
+  const emails = dedupeCI((() => {
+    const out = [];
+    entities.forEach((e) => {
+      const m = e.metadata || {};
+      if (Array.isArray(m.emails_found)) out.push(...m.emails_found);
+      if (typeof m.email === "string" && m.email.includes("@")) out.push(m.email);
+    });
+    return out;
+  })());
+
   // Evidence quick-links (§4.4.4.1) — the moat. Count, for every REAL corroborating
   // signal, how many identity groups it links and how many accounts those groups hold.
   // `_`-prefixed keys are internal ranking metadata (relevance), NOT evidence — excluded.
@@ -1434,6 +1497,22 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
             />
           )}
         </MatrixCard>
+
+        <MatrixCard icon="✉️" title="Contact emails" count={emails.length}
+          onExpand={emails.length ? () => setModal("emails") : undefined}>
+          {emails.length === 0 ? (
+            <EmptyLine>No emails found.</EmptyLine>
+          ) : (
+            <ExpandableList
+              items={emails}
+              initial={6}
+              render={(em, i) => (
+                <a key={i} href={`mailto:${em}`}
+                  className="inline-block mr-1.5 mb-1 font-mono text-[11px] text-amber-300 hover:text-amber-200 hover:underline bg-amber-400/[0.06] border border-amber-400/25 rounded px-2 py-0.5 truncate max-w-full">{em}</a>
+              )}
+            />
+          )}
+        </MatrixCard>
       </div>
 
       {/* Full-view popups (click a card) */}
@@ -1493,6 +1572,27 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
             {locations.map((l, i) => (
               <span key={i} className="text-[12px] text-slate-300 bg-slate-800/70 border border-slate-700 rounded px-2.5 py-1">{l}</span>
             ))}
+          </div>
+        </Modal>
+      )}
+      {modal === "emails" && (
+        <Modal icon="✉️" title="Contact emails" subtitle={`${emails.length} discovered — click to compose, or stage as a re-iteration seed`} onClose={() => setModal(null)}>
+          <div className="flex flex-col gap-1.5">
+            {emails.map((em, i) => {
+              const seed = { type: "email", value: em, strategy: "summary_pick", label: em };
+              const staged = isStaged ? isStaged("email", em) : false;
+              return (
+                <div key={i}
+                  className={`flex items-center justify-between gap-2 text-[13px] border-b border-slate-800/60 py-1.5 cursor-grab active:cursor-grabbing ${staged ? "bg-cyan-400/10" : ""}`}
+                  draggable
+                  onDragStart={(e) => { e.dataTransfer.setData("application/json", JSON.stringify(seed)); e.dataTransfer.effectAllowed = "copy"; }}
+                  title="Drag into Re-iterate, or click to stage a search on this email"
+                >
+                  <a href={`mailto:${em}`} onClick={(e) => e.stopPropagation()} className="font-mono text-amber-300 hover:text-amber-200 hover:underline truncate">{staged && "✓ "}{em}</a>
+                  <button onClick={() => onAddSeed?.(seed)} className="text-[10px] font-mono uppercase text-cyan-400 hover:text-cyan-200 border border-cyan-400/40 rounded px-1.5 py-0.5 shrink-0">Re-iterate</button>
+                </div>
+              );
+            })}
           </div>
         </Modal>
       )}
