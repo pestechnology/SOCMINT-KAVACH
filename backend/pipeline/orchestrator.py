@@ -1040,25 +1040,6 @@ async def run_investigation(case_id: str) -> dict:
     finally:
         conn.close()
 
-    # Court-grade evidence capture (Arm A) — gated by the per-case `capture_evidence` toggle.
-    # Runs AFTER analysis is persisted (so results aren't delayed) but BEFORE 'complete', so
-    # once the officer sees the case done, the exhibits are already sealed. Freezes each
-    # source page into a hashed, ledgered, externally-timestamped bundle
-    # (backend/evidence/capturer.py). Fully defensive: a capture failure never fails the
-    # investigation, and each page that can't be captured fails LOUD into the ledger.
-    try:
-        if int(dict(row).get("capture_evidence") or 0):
-            from backend.evidence.capturer import capture_case_entities
-            pairs = [(idx_to_eid[i], p.source_url) for i, p in enumerate(profiles)
-                     if p.source_url]
-            log_action(case_id, "evidence_capture_started",
-                       {"candidates": len(pairs)}, None, "system")
-            # capture_bundle drives Playwright's SYNC api, which cannot run inside this
-            # asyncio loop — offload to a worker thread (same pattern as the LLM calls above).
-            await asyncio.to_thread(capture_case_entities, case_id, pairs)
-    except Exception:  # noqa: BLE001 — capture is best-effort; never fail the investigation
-        pass
-
     set_status(case_id, "complete")
     log_action(case_id, "investigation_complete", None,
                {"accounts": len(profiles), "clusters": len(clusters)}, "system")
@@ -1221,6 +1202,35 @@ def ingest_external_profiles(case_id: str, new_profiles: list[RawProfile]) -> di
         conn.close()
 
 
+def _maybe_capture_evidence(case_id: str) -> None:
+    """Court-grade evidence capture (Arm A), run AFTER the case is already marked complete —
+    so results appear instantly and capture never blocks the investigation from finishing.
+    Sync, on this background thread (no event loop is running here once asyncio.run returns,
+    so Playwright's sync API is safe). Gated by the per-case toggle; fully defensive."""
+    try:
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT capture_evidence FROM cases WHERE case_id = ?",
+                               (case_id,)).fetchone()
+            if not row or not int(dict(row).get("capture_evidence") or 0):
+                return
+            # Capture the evidence-worthy accounts first (highest match confidence), http only.
+            ents = conn.execute(
+                "SELECT entity_id, source_url FROM entities WHERE case_id = ? "
+                "AND source_url LIKE 'http%' ORDER BY confidence DESC", (case_id,)).fetchall()
+        finally:
+            conn.close()
+        pairs = [(e["entity_id"], e["source_url"]) for e in ents]
+        if not pairs:
+            return
+        from backend.evidence.capturer import capture_case_entities
+        log_action(case_id, "evidence_capture_started", {"candidates": len(pairs)}, None, "system")
+        capture_case_entities(case_id, pairs)
+        log_action(case_id, "evidence_capture_finished", None, None, "system")
+    except Exception:  # noqa: BLE001 — capture is best-effort; never disturb a completed case
+        pass
+
+
 def run_investigation_sync(case_id: str) -> dict:
     """Blocking wrapper for FastAPI BackgroundTasks.
 
@@ -1243,11 +1253,12 @@ def run_investigation_sync(case_id: str) -> dict:
             loop = asyncio.ProactorEventLoop()
             try:
                 asyncio.set_event_loop(loop)
-                return loop.run_until_complete(run_investigation(case_id))
+                result = loop.run_until_complete(run_investigation(case_id))
             finally:
                 asyncio.set_event_loop(None)
                 loop.close()
-        return asyncio.run(run_investigation(case_id))
+        else:
+            result = asyncio.run(run_investigation(case_id))
     except Exception as e:  # noqa: BLE001
         import traceback
         tb = traceback.format_exc()
@@ -1256,6 +1267,12 @@ def run_investigation_sync(case_id: str) -> dict:
         log_action(case_id, "investigation_error", None,
                    {"error": str(e), "traceback": tb}, "system")
         return {"status": "error", "reason": str(e)}
+
+    # Investigation is COMPLETE and results are visible. Now capture evidence (if enabled) —
+    # off the critical path, in this same background thread, so it can never delay or hang the
+    # case's completion (the earlier in-pipeline placement made large cases sit on 'running').
+    _maybe_capture_evidence(case_id)
+    return result
 
 
 def _harvest_case_facts(case_id: str, seeds: list[dict],

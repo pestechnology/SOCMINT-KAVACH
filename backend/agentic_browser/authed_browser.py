@@ -100,12 +100,84 @@ def _autoscroll(page, max_scrolls: int) -> int:
     return n
 
 
-def capture_bundle(url: str, wait_ms: int = 3500, max_scrolls: int = 12) -> dict:
-    """Render `url` in the logged-in profile (headless) and capture a forensic bundle:
-    full-page PNG + MHTML single-file (CDP) + post-JS DOM + provenance. Sync (patchright);
-    call via asyncio.to_thread from async code. NEVER raises — returns {ok: False, error} on
-    any failure, and {ok: False} if the render produced nothing (fail loud, never a blank
-    'success')."""
+# Nav timeout kept tight: a page that won't reach domcontentloaded in this window is either
+# blocked or dead — waiting 30s per page is what made a 19-account case take ~15 min.
+_NAV_TIMEOUT_MS = 15000
+
+
+def _capture_via_context(ctx, url: str, wait_ms: int, max_scrolls: int) -> dict:
+    """Capture a forensic bundle (full-page PNG + MHTML + post-JS DOM + provenance) using an
+    ALREADY-OPEN context. Opens a fresh page, captures, and always closes that page. Never
+    raises; returns {ok: False, error} on failure and {ok: False} on a blank render."""
+    page = ctx.new_page()
+    try:
+        try:
+            resp = page.goto(url, timeout=_NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+        except Exception as e:  # noqa: BLE001 — slow/blocked page: fail this one, keep going
+            return {"ok": False, "error": f"navigation: {type(e).__name__}: {e}"}
+        page.wait_for_timeout(wait_ms)
+        scrolls = _autoscroll(page, max_scrolls)
+
+        title = ""
+        try:
+            title = page.title()
+        except Exception:  # noqa: BLE001
+            pass
+        dom = None
+        try:
+            dom = page.content()
+        except Exception:  # noqa: BLE001
+            pass
+        png = None
+        try:
+            png = page.screenshot(full_page=True)
+        except Exception:  # noqa: BLE001
+            try:
+                png = page.screenshot()
+            except Exception:  # noqa: BLE001
+                png = None
+        mhtml = None
+        try:
+            cdp = ctx.new_cdp_session(page)
+            snap = cdp.send("Page.captureSnapshot", {"format": "mhtml"})
+            data = (snap or {}).get("data")
+            if isinstance(data, str):
+                mhtml = data.encode("utf-8", "replace")
+            elif isinstance(data, (bytes, bytearray)):
+                mhtml = bytes(data)
+        except Exception:  # noqa: BLE001
+            mhtml = None
+
+        # Fail loud: a render that produced no artifact is NOT a success.
+        if not dom and not png and not mhtml:
+            return {"ok": False, "error": "render produced no artifacts (blank/blocked page?)"}
+
+        status = getattr(resp, "status", None) if resp else None
+        final_url = url
+        try:
+            final_url = page.url
+        except Exception:  # noqa: BLE001
+            pass
+        versions = {"engine": "patchright", "channel": "chrome"}
+        try:
+            import playwright
+            versions["playwright"] = getattr(playwright, "__version__", "?")
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "title": title, "dom": dom, "png": png, "mhtml": mhtml,
+                "status": status, "final_url": final_url, "scroll_count": scrolls,
+                "viewport": None, "versions": versions}
+    finally:
+        try:
+            page.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def capture_bundle(url: str, wait_ms: int = 1200, max_scrolls: int = 5) -> dict:
+    """One-shot capture: opens its own browser, captures `url`, closes. NEVER raises. For
+    capturing MANY pages, prefer open_capture_session()/capture_on_session() so a single
+    browser is reused (cold-launching Chrome per page is the slow path)."""
     try:
         from patchright.sync_api import sync_playwright
     except Exception as e:  # noqa: BLE001
@@ -114,64 +186,55 @@ def capture_bundle(url: str, wait_ms: int = 3500, max_scrolls: int = 12) -> dict
         with sync_playwright() as p:
             ctx = _context(p, headless=True)
             try:
-                page = ctx.new_page()
-                resp = page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                page.wait_for_timeout(wait_ms)
-                scrolls = _autoscroll(page, max_scrolls)
-
-                title = ""
-                try:
-                    title = page.title()
-                except Exception:  # noqa: BLE001
-                    pass
-                dom = None
-                try:
-                    dom = page.content()
-                except Exception:  # noqa: BLE001
-                    pass
-                png = None
-                try:
-                    png = page.screenshot(full_page=True)
-                except Exception:  # noqa: BLE001
-                    try:
-                        png = page.screenshot()
-                    except Exception:  # noqa: BLE001
-                        png = None
-                mhtml = None
-                try:
-                    cdp = ctx.new_cdp_session(page)
-                    snap = cdp.send("Page.captureSnapshot", {"format": "mhtml"})
-                    data = (snap or {}).get("data")
-                    if isinstance(data, str):
-                        mhtml = data.encode("utf-8", "replace")
-                    elif isinstance(data, (bytes, bytearray)):
-                        mhtml = bytes(data)
-                except Exception:  # noqa: BLE001
-                    mhtml = None
-
-                # Fail loud: a render that produced no artifact is NOT a success.
-                if not dom and not png and not mhtml:
-                    return {"ok": False, "error": "render produced no artifacts (blank/blocked page?)"}
-
-                status = getattr(resp, "status", None) if resp else None
-                final_url = url
-                try:
-                    final_url = page.url
-                except Exception:  # noqa: BLE001
-                    pass
-                versions = {"engine": "patchright", "channel": "chrome"}
-                try:
-                    import playwright
-                    versions["playwright"] = getattr(playwright, "__version__", "?")
-                except Exception:  # noqa: BLE001
-                    pass
-                return {"ok": True, "title": title, "dom": dom, "png": png, "mhtml": mhtml,
-                        "status": status, "final_url": final_url, "scroll_count": scrolls,
-                        "viewport": None, "versions": versions}
+                return _capture_via_context(ctx, url, wait_ms, max_scrolls)
             finally:
                 ctx.close()
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def open_capture_session():
+    """Open ONE persistent headless browser to reuse across many captures (avoids the
+    per-page cold-launch + shared-profile lock churn). Returns (playwright, context) or
+    (None, None) on failure. Pair with close_capture_session()."""
+    try:
+        from patchright.sync_api import sync_playwright
+        p = sync_playwright().start()
+    except Exception:  # noqa: BLE001
+        return None, None
+    try:
+        ctx = _context(p, headless=True)
+        return p, ctx
+    except Exception:  # noqa: BLE001
+        try:
+            p.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        return None, None
+
+
+def capture_on_session(ctx, url: str, wait_ms: int = 1200, max_scrolls: int = 5) -> dict:
+    """Capture `url` on an open session context (from open_capture_session). Never raises."""
+    if ctx is None:
+        return {"ok": False, "error": "no capture session"}
+    try:
+        return _capture_via_context(ctx, url, wait_ms, max_scrolls)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def close_capture_session(p, ctx) -> None:
+    """Tear down an open capture session. Never raises."""
+    try:
+        if ctx is not None:
+            ctx.close()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        if p is not None:
+            p.stop()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def login_setup(start_url: str = "https://intelbase.is/") -> None:

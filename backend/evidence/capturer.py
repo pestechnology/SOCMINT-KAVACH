@@ -132,7 +132,7 @@ def _token_from_response(resp_der: bytes) -> bytes | None:
 
 
 def request_timestamp(digest_hex: str, *, tsa_url: str = FREETSA_URL,
-                      timeout: int = 8, post_fn=None) -> dict | None:
+                      timeout: int = 6, post_fn=None) -> dict | None:
     """Best-effort RFC-3161 timestamp of a hex digest. Returns
     {tsr, token, tsa_url, digest} or None. NEVER raises (anchor is optional)."""
     try:
@@ -275,27 +275,38 @@ def capture_and_store(case_id: str, entity_id: str | None, url: str, *,
 
 
 def capture_case_entities(case_id: str, entity_url_pairs, *, actor: str = "system",
-                          max_pages: int = 25) -> list[dict]:
-    """Capture every entity with an http(s) source_url, sequentially (concurrency 1 — avoids
-    the shared-Chrome-profile lock). De-dupes URLs and caps count (cost bound); a cap hit is
-    logged, never silent. Never raises."""
+                          max_pages: int = 15) -> list[dict]:
+    """Capture entities with an http(s) source_url, sequentially, through ONE reused browser
+    (cold-launching Chrome per page is what made large cases crawl). De-dupes URLs and caps
+    count (a cap hit is logged, never silent). Never raises."""
     from backend.ledger.audit_ledger import log_action
+    from backend.agentic_browser import authed_browser
+
     seen: set[str] = set()
-    results: list[dict] = []
-    done = 0
+    todo: list[tuple] = []
     for eid, url in entity_url_pairs:
         u = str(url or "").strip()
         if not u.lower().startswith("http") or u in seen:
             continue
         seen.add(u)
-        if done >= max_pages:
-            log_action(case_id, "evidence_capture_capped",
-                       {"cap": max_pages}, {"skipped_from": u}, actor)
-            break
-        try:
-            results.append(capture_and_store(case_id, eid, u, actor=actor))
-        except Exception as e:  # noqa: BLE001 — defensive; capture_and_store already guards
-            log_action(case_id, "evidence_capture_failed", {"url": u},
-                       {"error": str(e)[:200]}, actor)
-        done += 1
+        todo.append((eid, u))
+    if len(todo) > max_pages:
+        log_action(case_id, "evidence_capture_capped",
+                   {"cap": max_pages, "skipped": len(todo) - max_pages}, None, actor)
+        todo = todo[:max_pages]
+
+    results: list[dict] = []
+    # One browser for the whole case. Fall back to per-page open/close if it won't start.
+    p, ctx = authed_browser.open_capture_session()
+    try:
+        for eid, u in todo:
+            capture_fn = (lambda uu: authed_browser.capture_on_session(ctx, uu)) if ctx else None
+            try:
+                results.append(capture_and_store(case_id, eid, u, actor=actor,
+                                                 capture_fn=capture_fn))
+            except Exception as e:  # noqa: BLE001 — capture_and_store already guards; belt+braces
+                log_action(case_id, "evidence_capture_failed", {"url": u},
+                           {"error": str(e)[:200]}, actor)
+    finally:
+        authed_browser.close_capture_session(p, ctx)
     return results
