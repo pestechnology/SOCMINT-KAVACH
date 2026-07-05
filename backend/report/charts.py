@@ -13,16 +13,18 @@ from io import BytesIO
 
 from svglib.svglib import svg2rlg
 
-# Report palette (mirrors bsa63_generator's tones)
-NAVY = "#1a2b4a"
-INK = "#33404f"
-MUTED = "#6b7785"
-LIGHT = "#c8d0da"
-GRID = "#e6eaf0"
-HIGH = "#1d6b3f"
-MED = "#b26a00"
-LOW = "#8a939c"
-ACCENT = "#0a6f96"
+# Professional data-viz palette — desaturated Tableau-style tones. A single muted steel-blue
+# carries the "data" charts (platform / activity / timeline); the confidence tiers use soft
+# semantic colours (teal-green / ochre / cool-grey) rather than saturated traffic-light hues.
+NAVY = "#2b3a4d"     # slate ink — numbers / emphasis
+INK = "#3f4b5b"      # primary labels
+MUTED = "#7c858f"    # axis ticks / secondary labels
+LIGHT = "#d6dce3"    # baseline rules
+GRID = "#edf0f4"     # empty / zero bars
+HIGH = "#4c9a78"     # muted teal-green
+MED = "#dca63f"      # muted ochre
+LOW = "#9aa4ad"      # cool grey (leads)
+ACCENT = "#4e79a7"   # muted steel blue — primary data hue
 
 
 def _draw(svg: str):
