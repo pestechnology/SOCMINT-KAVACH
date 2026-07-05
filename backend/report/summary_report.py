@@ -36,6 +36,7 @@ from svglib.svglib import svg2rlg
 
 from backend import config
 from backend.report import bsa63_generator as base
+from backend.report import charts
 from backend.ledger.audit_ledger import get_artifacts, get_ledger, verify_chain
 
 # Only a genuine biometric/verified-ID signal justifies a displayed 100%.
@@ -422,6 +423,41 @@ def generate_summary_report(case_id: str, output_path: str | None = None) -> str
                      "appendix below and the accompanying full report.", ss["Small"]),
            Spacer(1, 4 * mm)]
 
+    # ---- 3b. visual overview: confidence distribution + footprint charts ----
+    try:
+        _high = len(_tier_accts(("HIGH",)))
+        _med = len(_tier_accts(("MEDIUM",)))
+        _lead = len([e for e in entities if e["entity_id"] not in _tier_accts(("HIGH", "MEDIUM"))])
+        _vb = charts.verdict_bars(_high, _med, _lead)
+        if _vb is not None:
+            el += [Paragraph("Accounts by confidence tier", ss["Small"]), _vb, Spacer(1, 3 * mm)]
+        from collections import Counter as _Counter
+        _plat = _Counter(e.get("platform") for e in entities if e.get("platform")).most_common(8)
+        _hours: dict = {}
+        for e in entities:
+            try:
+                _m = json.loads(e.get("metadata_json") or "{}")
+            except Exception:
+                _m = {}
+            for _h in (_m.get("posting_hours") or []):
+                try:
+                    _hi = int(_h)
+                except Exception:
+                    continue
+                if 0 <= _hi < 24:
+                    _hours[_hi] = _hours.get(_hi, 0) + 1
+        _pb = charts.platform_bars(_plat)
+        _ab = charts.activity_hours(_hours)
+        if _pb is not None or _ab is not None:
+            el += base._section(ss, "", "Subject profile at a glance")
+        if _pb is not None:
+            el += [Paragraph("Accounts by platform", ss["Small"]), _pb, Spacer(1, 2 * mm)]
+        if _ab is not None:
+            el += [Paragraph("Active hours (UTC) — from posting-time metadata", ss["Small"]),
+                   _ab, Spacer(1, 3 * mm)]
+    except Exception:
+        pass
+
     # ---- 4. evidence graph (only when there's a network) ----
     drawing = build_evidence_graph_drawing(clusters, seed_label, ent_by_id)
     if drawing is not None:
@@ -476,6 +512,31 @@ def generate_summary_report(case_id: str, output_path: str | None = None) -> str
         if topics:
             el += [Spacer(1, 2 * mm),
                    Paragraph("<b>Observed topics:</b> " + base._esc(", ".join(topics)), ss["Small"])]
+    except Exception:
+        pass
+
+    # ---- 6b. investigation timeline (process milestones from the tamper-evident ledger) ----
+    try:
+        _rows = get_ledger(case_id)
+        _miles = [
+            ("Opened", lambda a: a == "investigation_started"),
+            ("Scraping", lambda a: a.startswith("scrape")),
+            ("Scored", lambda a: a == "scoring_complete"),
+            ("AI rerank", lambda a: a == "rerank_summary"),
+            ("Capture", lambda a: a == "evidence_capture_started"),
+            ("Complete", lambda a: a == "investigation_complete"),
+        ]
+        _ev = []
+        for _lab, _pred in _miles:
+            for _r in _rows:
+                if _pred(str(_r.get("action") or "")):
+                    _ev.append((_lab, (_r.get("timestamp") or "")[11:16]))
+                    break
+        _tl = charts.timeline(_ev)
+        if _tl is not None:
+            el += base._section(ss, "", "Investigation timeline")
+            el += [_tl, Paragraph("Key milestones, timed from the tamper-evident ledger (UTC).",
+                                  ss["Small"]), Spacer(1, 3 * mm)]
     except Exception:
         pass
 
