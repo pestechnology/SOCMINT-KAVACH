@@ -57,6 +57,18 @@ def test_redaction_handles_bytes_and_inline_bearer():
     assert "LEAKME123456" not in redact_secrets("x Authorization: Bearer LEAKME123456 y")
 
 
+def test_redaction_catches_inline_nonkeyword_cookie():
+    # Regression: an inline `Set-Cookie: s=…` (non-keyword cookie name, embedded in body/JS,
+    # NOT a line-anchored header) must still be redacted — a live-capture probe caught this
+    # leaking into the stored MHTML because the old pattern was line-anchored.
+    from backend.evidence.capturer import redact_secrets
+    out = redact_secrets("<div>Set-Cookie: s=LEAK_XYZ_123456</div>")
+    assert "LEAK_XYZ_123456" not in out
+    assert "<div>" in out and "</div>" in out  # surrounding markup preserved
+    # quoted-printable MHTML form ('=' encoded as '=3D')
+    assert "LEAK_XYZ_123456" not in redact_secrets("Set-Cookie: s=3DLEAK_XYZ_123456")
+
+
 def test_merkle_root():
     from backend.evidence.capturer import merkle_root
     assert merkle_root([]) == ""
@@ -72,6 +84,25 @@ def test_rfc3161_request_builder_and_graceful_failure():
     # TSA unreachable / returns nothing / raises → None, never an exception
     assert request_timestamp("aa" * 32, post_fn=lambda u, q, t: None) is None
     assert request_timestamp("aa" * 32, post_fn=lambda u, q, t: (_ for _ in ()).throw(OSError())) is None
+
+
+def test_verify_timestamp_rejects_garbage():
+    from backend.evidence.capturer import verify_timestamp
+    assert verify_timestamp(b"not-a-token", "ab" * 32) is False
+    assert verify_timestamp(b"", "ab" * 32) is False
+
+
+def test_verify_timestamp_roundtrip_live():
+    """When FreeTSA is reachable, a token verifies against its digest and rejects a wrong one.
+    Skips cleanly offline so CI stays deterministic."""
+    import hashlib
+    from backend.evidence.capturer import request_timestamp, verify_timestamp
+    digest = hashlib.sha256(b"vertex-test").hexdigest()
+    tok = request_timestamp(digest, timeout=10)
+    if not tok:
+        pytest.skip("FreeTSA unreachable (offline)")
+    assert verify_timestamp(tok["tsr"], digest) is True
+    assert verify_timestamp(tok["tsr"], "ff" * 32) is False
 
 
 # ── full flow ──

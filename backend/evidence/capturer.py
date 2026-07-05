@@ -50,8 +50,10 @@ def _now() -> str:
 # Redaction — strip live secrets before anything is hashed/persisted.
 # --------------------------------------------------------------------------------------
 _REDACTIONS = (
-    # HTTP header lines inlined into MHTML / DOM
-    re.compile(r"(?im)^(\s*(?:set-)?(?:cookie|authorization)\s*:\s*).*$"),
+    # Cookie / Set-Cookie / Authorization ANYWHERE (real header lines OR inline in body/JS,
+    # incl. quoted-printable MHTML) — redact just the value TOKEN (bounded to non-space, so we
+    # never gut the document). NOT line-anchored: an inline `Set-Cookie: s=…` must not slip by.
+    re.compile(r"(?i)((?:set-)?(?:cookie|authorization)\s*[:=]\s*)(?:bearer\s+)?[^\s;,<>&]{4,}"),
     # token-ish key: value / key=value in JSON, query strings, inline script
     re.compile(r"(?i)((?:session(?:id)?|sid|auth|access[_-]?token|token|api[_-]?key|csrf|bearer)"
                r"\"?\s*[:=]\s*\"?)[A-Za-z0-9._\-]{8,}"),
@@ -156,8 +158,10 @@ def verify_timestamp(tsr_der: bytes, digest_hex: str) -> bool:
         token = _token_from_response(tsr_der)
         if not token:
             return False
-        ci = cms.ContentInfo.load(token)
-        tst_info = tsp.TSTInfo.load(ci["content"]["encap_content_info"]["content"].native)
+        content = cms.ContentInfo.load(token)["content"]["encap_content_info"]["content"]
+        # asn1crypto decodes the TSTInfo content as a ParsableOctetString: `.parsed` IS the
+        # TSTInfo (`.native` is an already-decoded dict, not the DER bytes TSTInfo.load wants).
+        tst_info = content.parsed if hasattr(content, "parsed") else tsp.TSTInfo.load(content.native)
         return tst_info["message_imprint"]["hashed_message"].native == bytes.fromhex(digest_hex)
     except Exception:  # noqa: BLE001
         return False
