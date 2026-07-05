@@ -43,6 +43,10 @@ export default function AccountCard({
   const secondary = truncate(meta.title || meta.bio || "", 80);
   const isLive = entity.data_mode === "live";
   const link = safeUrl(entity.source_url);
+  // A discovered contact email is a high-value finding (often the whole point of the
+  // search) — surface it right on the card. meta.email is set by GitHub/Gravatar and by
+  // the stealth-browser fallback that reads a Facebook profile's public Intro box.
+  const email = typeof meta.email === "string" && meta.email.includes("@") ? meta.email : null;
 
   return (
     <button
@@ -115,6 +119,26 @@ export default function AccountCard({
       {secondary && (
         <div className="mt-0.5 text-xs text-slate-500 line-clamp-2">
           {secondary}
+        </div>
+      )}
+
+      {/* Row 3b: discovered contact email (high-value PII — made prominent + copyable) */}
+      {email && (
+        <div className="mt-1.5 flex items-center gap-1.5 min-w-0">
+          <span className="text-[11px] shrink-0" aria-hidden>✉</span>
+          <a
+            href={`mailto:${email}`}
+            onClick={(e) => e.stopPropagation()}
+            title={meta.browser_enriched ? `${email} (recovered via browser)` : email}
+            className="text-[12px] font-mono text-amber-300 hover:text-amber-200 hover:underline truncate min-w-0"
+          >
+            {email}
+          </a>
+          {meta.browser_enriched && (
+            <span className="text-[9px] font-mono uppercase tracking-wide text-amber-400/70 border border-amber-400/30 rounded px-1 py-0.5 shrink-0" title="Public contact email read from the profile page in a real browser">
+              🌐 browser
+            </span>
+          )}
         </div>
       )}
 

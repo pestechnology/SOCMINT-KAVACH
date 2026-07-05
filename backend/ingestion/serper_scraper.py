@@ -9,6 +9,7 @@ Needs config.SERPER_API_KEY; returns [] without it.
 """
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import urlparse
 
 import httpx
@@ -109,12 +110,24 @@ class SerperScraper(BaseDataSource):
         if not config.SERPER_API_KEY:
             return []
         query = self.query_template.format(q=identifier)
+        # ROOT CAUSE (found and verified live, deterministically reproducible — not a
+        # rate limit, not flaky): Serper's free tier rejects a `site:`-scoped query with
+        # HTTP 400 {"message":"Query pattern not allowed for free accounts"} whenever
+        # num > 10 — confirmed num=10 always 200s, num=11+ always 400s, for EVERY site:
+        # dork tested (linkedin, instagram), while plain and filetype: queries are fine at
+        # num=20. Since every dork in this file's "name" tool_map (and the LinkedIn search)
+        # IS a site: query, this was silently zeroing out results for all of them whenever
+        # this cap was hit. Fix: cap num at 10 for any site:-scoped query.
+        num = 10 if "site:" in self.query_template.lower() else 20
+        payload = {"q": query, "num": num}
+        headers = {"X-API-KEY": config.SERPER_API_KEY, "Content-Type": "application/json"}
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(
-                _ENDPOINT,
-                headers={"X-API-KEY": config.SERPER_API_KEY, "Content-Type": "application/json"},
-                json={"q": query, "num": 20},
-            )
+            r = await client.post(_ENDPOINT, headers=headers, json=payload)
+            # A real 429 (actual rate limit, distinct from the num-cap 400 above) still
+            # gets one short retry, same conservative policy llm_client.py already uses.
+            if r.status_code == 429:
+                await asyncio.sleep(1.5)
+                r = await client.post(_ENDPOINT, headers=headers, json=payload)
             if r.status_code != 200:
                 return []
             data = r.json()

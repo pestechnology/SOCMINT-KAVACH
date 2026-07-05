@@ -67,6 +67,19 @@ GRAVATAR_API_KEY: str = _get("GRAVATAR_API_KEY")
 EMAILREP_API_KEY: str = _get("EMAILREP_API_KEY")
 TELEGRAM_API_ID: str = _get("TELEGRAM_API_ID")
 TELEGRAM_API_HASH: str = _get("TELEGRAM_API_HASH")
+# NewLeaks OSINT Telegram bot (@NewleaksOsintBot) — an OPTIONAL add-on breach/PII source
+# queried by messaging the bot over a Telethon USER session (bots can't message bots).
+# Fully inert unless NEWLEAKS_ENABLED=true AND a user .session file exists — see
+# newleaks_scraper.py. NEWLEAKS_API_KEY is stored for a possible in-chat auth step; the
+# actual lookup goes through the user session, not this key.
+NEWLEAKS_ENABLED: bool = _get_bool("NEWLEAKS_ENABLED", False)
+NEWLEAKS_BOT_USERNAME: str = _get("NEWLEAKS_BOT_USERNAME", "NewleaksOsintBot")
+NEWLEAKS_API_KEY: str = _get("NEWLEAKS_API_KEY")
+NEWLEAKS_TIMEOUT_SECONDS: int = int(_get("NEWLEAKS_TIMEOUT_SECONDS", "25"))
+# Path (no extension) for the Telethon USER session created by scripts/telegram_login.py.
+# _ROOT is defined further down, so compute the project root inline here.
+TELEGRAM_USER_SESSION: str = _get(
+    "TELEGRAM_USER_SESSION", str(Path(__file__).resolve().parent.parent / "user_session"))
 # Reddit app-only OAuth (free "script"/"web" app). When set, the Reddit scraper uses
 # oauth.reddit.com instead of the public endpoint, which avoids the anti-bot 403s that
 # block datacenter IPs and makes activity analysis reliable on any network.
