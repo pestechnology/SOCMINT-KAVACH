@@ -500,11 +500,11 @@ def generate_summary_report(case_id: str, output_path: str | None = None) -> str
     # Split court-grade evidence exhibits (captured source pages) from routine artifacts so the
     # exhibit annexure reads like an evidence log: source URL + capture method + external
     # timestamp, not just a filename. Grounded in the provenance columns on the artifacts row.
-    evidence = [a for a in artifacts if str(a.get("artifact_type") or "").startswith("evidence_")]
-    routine = [a for a in artifacts if not str(a.get("artifact_type") or "").startswith("evidence_")]
     _ETYPE = {"evidence_mhtml": "MHTML page snapshot", "evidence_screenshot": "Full-page screenshot",
-              "evidence_dom": "Post-JS DOM", "evidence_metadata": "Provenance metadata",
-              "evidence_tsr": "RFC-3161 timestamp token"}
+              "evidence_dom": "Post-JS DOM", "evidence_metadata": "Provenance metadata"}
+    # Visual exhibits only in this table; the tsr token + manifest record are supporting files.
+    evidence = [a for a in artifacts if a.get("artifact_type") in _ETYPE]
+    routine = [a for a in artifacts if not str(a.get("artifact_type") or "").startswith("evidence_")]
     if evidence:
         anchored = any(a.get("artifact_type") == "evidence_tsr" for a in evidence)
         el += [Spacer(1, 3 * mm),

@@ -307,13 +307,27 @@ export default function CaseView() {
                 </span>
               )}
               {!!(kase.capture_evidence || (data.evidence && data.evidence.enabled)) && (
-                <span
-                  className="hidden md:inline-flex items-center gap-1 text-[11px] rounded-full border px-2.5 py-0.5 shrink-0"
+                <button
+                  type="button"
+                  disabled={!(data.evidence?.exhibits)}
+                  onClick={async () => {
+                    try {
+                      const blob = await api.downloadEvidenceReport(id);
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url; a.download = `Evidence_exhibits_${id}.pdf`;
+                      document.body.appendChild(a); a.click(); a.remove();
+                      URL.revokeObjectURL(url);
+                    } catch (e) { alert(`Evidence report: ${e.message}`); }
+                  }}
+                  className="hidden md:inline-flex items-center gap-1 text-[11px] rounded-full border px-2.5 py-0.5 shrink-0 hover:opacity-80 disabled:cursor-default"
                   style={{ color: "var(--tone-emerald)", borderColor: "rgba(16,185,129,0.35)", background: "rgba(16,185,129,0.08)" }}
-                  title={`Court-grade evidence capture is ON. ${(data.evidence?.exhibits ?? 0)} exhibits across ${(data.evidence?.bundles ?? 0)} pages${data.evidence?.anchored ? `, ${data.evidence.anchored} externally timestamped` : ""}. Exhibits are included in the downloadable report.`}
+                  title={data.evidence?.exhibits
+                    ? `Download the Evidence Exhibit Report — ${data.evidence.exhibits} exhibits across ${data.evidence.bundles ?? 0} pages${data.evidence?.anchored ? `, ${data.evidence.anchored} externally timestamped` : ""} (screenshots + SHA-256 + RFC-3161).`
+                    : "Court-grade evidence capture is ON. Exhibits will appear here once the scan completes."}
                 >
-                  🛡️ Evidence {data.evidence?.exhibits ? `· ${data.evidence.exhibits}` : "ON"}
-                </span>
+                  🛡️ Evidence {data.evidence?.exhibits ? `· ${data.evidence.exhibits} ↓` : "ON"}
+                </button>
               )}
             </div>
             <div className="flex items-center gap-3 shrink-0">

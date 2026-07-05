@@ -226,7 +226,8 @@ def get_results(case_id: str, user_id: str) -> dict | None:
         from backend.ledger.audit_ledger import get_artifacts
         ev = [a for a in get_artifacts(case_id)
               if str(a.get("artifact_type") or "").startswith("evidence_")]
-        evidence["exhibits"] = len([a for a in ev if a.get("artifact_type") != "evidence_tsr"])
+        _visual = {"evidence_mhtml", "evidence_screenshot", "evidence_dom", "evidence_metadata"}
+        evidence["exhibits"] = len([a for a in ev if a.get("artifact_type") in _visual])
         evidence["bundles"] = len({a.get("manifest_id") for a in ev if a.get("manifest_id")})
         evidence["anchored"] = len([a for a in ev if a.get("artifact_type") == "evidence_tsr"])
     except Exception:

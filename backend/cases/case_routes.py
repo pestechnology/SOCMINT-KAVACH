@@ -117,6 +117,19 @@ def summary_report(case_id: str, user_id: str = Depends(get_current_user)):
                         filename=f"BSA63_summary_{case_id}.pdf")
 
 
+@router.get("/{case_id}/evidence_report")
+def evidence_report(case_id: str, user_id: str = Depends(get_current_user)):
+    """Dedicated Evidence Exhibit Report — every captured source page as a numbered exhibit
+    (embedded screenshot + SHA-256 of each file + external RFC-3161 timestamp + chain verdict).
+    A 'Hunchly report' the officer can file. Separate from the briefing and full court report."""
+    if not get_case(case_id, user_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    from backend.report.evidence_report import generate_evidence_report
+    path = generate_evidence_report(case_id)
+    return FileResponse(path, media_type="application/pdf",
+                        filename=f"Evidence_exhibits_{case_id}.pdf")
+
+
 @router.get("/{case_id}/summary")
 def summary(case_id: str, user_id: str = Depends(get_current_user)):
     """Officer-facing intelligence briefing (verdict-first, tiered graph). Separate from the

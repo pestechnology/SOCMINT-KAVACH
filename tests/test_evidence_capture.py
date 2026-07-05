@@ -32,10 +32,19 @@ def db(tmp_path, monkeypatch):
     return "c1"
 
 
+def _real_png() -> bytes:
+    """A genuine tiny PNG so the evidence-report embed path is exercised for real."""
+    from io import BytesIO
+    from PIL import Image as _PILImage
+    buf = BytesIO()
+    _PILImage.new("RGB", (6, 6), (180, 20, 40)).save(buf, "PNG")
+    return buf.getvalue()
+
+
 def _fake_capture(url):
     return {"ok": True, "title": "Suspect Profile", "final_url": url, "status": 200,
             "dom": "<html>bio Authorization: Bearer LEAKME123456</html>",
-            "png": b"\x89PNG fake-bytes",
+            "png": _real_png(),
             "mhtml": b"From: <snapshot>\nCookie: sess=LEAKME999999\n\nbody",
             "scroll_count": 3, "versions": {"engine": "patchright"}}
 
@@ -116,8 +125,10 @@ def test_capture_and_store_bundle(db):
     assert res["bundle_sha256"] and len(res["artifacts"]) == 4  # mhtml+png+dom+metadata
 
     arts = get_artifacts(db)
+    # the 4 hashed exhibit files + the persisted manifest record (anchor off → no tsr)
     assert sorted(a["artifact_type"] for a in arts) == [
-        "evidence_dom", "evidence_metadata", "evidence_mhtml", "evidence_screenshot"]
+        "evidence_dom", "evidence_manifest", "evidence_metadata", "evidence_mhtml",
+        "evidence_screenshot"]
     # provenance columns populated + one shared manifest_id
     mids = {a["manifest_id"] for a in arts}
     assert len(mids) == 1 and None not in mids
@@ -159,6 +170,27 @@ def test_capture_anchor_stores_tsr_when_tsa_responds(db, monkeypatch):
     assert res["ok"] and res["anchored"] is True and res.get("tsr_artifact_id")
     from backend.ledger.audit_ledger import get_artifacts
     assert any(a["artifact_type"] == "evidence_tsr" for a in get_artifacts(db))
+
+
+def test_evidence_report_pdf_generates_with_exhibit(db, tmp_path):
+    # Capture a bundle (fake browser, no network), then render the dedicated exhibit PDF.
+    from backend.evidence.capturer import capture_and_store
+    from backend.report.evidence_report import generate_evidence_report, _bundles
+    capture_and_store(db, "e1", "https://instagram.com/suspect",
+                      capture_fn=_fake_capture, anchor=False)
+    bundles, orphans = _bundles(db)
+    assert len(bundles) == 1 and orphans == 0
+    assert bundles[0]["source_url"] == "https://instagram.com/suspect"
+    out = generate_evidence_report(db, output_path=str(tmp_path / "ev.pdf"))
+    data = Path(out).read_bytes()
+    assert data[:4] == b"%PDF" and len(data) > 1500  # a real, non-empty PDF
+
+
+def test_evidence_report_pdf_when_no_exhibits(db, tmp_path):
+    # No capture on this case → a valid PDF stating none were captured (never crashes).
+    from backend.report.evidence_report import generate_evidence_report
+    out = generate_evidence_report(db, output_path=str(tmp_path / "empty.pdf"))
+    assert Path(out).read_bytes()[:4] == b"%PDF"
 
 
 def test_capture_case_entities_dedupes_skips_nonhttp_and_caps(db, monkeypatch):

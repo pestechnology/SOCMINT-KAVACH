@@ -262,6 +262,14 @@ def capture_and_store(case_id: str, entity_id: str | None, url: str, *,
             anchored = True
     manifest["anchored"] = anchored
 
+    # Persist the machine-readable bundle record (bundle_sha256 + every file hash + tsr link)
+    # as its own artifact so the evidence report can re-verify the external timestamp OFFLINE
+    # (verify_timestamp needs the stamped digest, which is manifest["bundle_sha256"]).
+    save_artifact(case_id, entity_id, "evidence_manifest",
+                  json.dumps(manifest, indent=2, default=str), ".json",
+                  mime="application/json", source_url=url, capture_method=method,
+                  manifest_id=manifest_id)
+
     log_action(case_id, "evidence_bundle_captured", {"url": url}, manifest, actor)
     return {"ok": True, **manifest}
 

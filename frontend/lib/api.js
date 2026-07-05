@@ -72,6 +72,19 @@ export const api = {
     }
     return res.blob();
   },
+  // Dedicated Evidence Exhibit Report (embedded screenshots + hashes + RFC-3161 timestamps).
+  downloadEvidenceReport: async (id) => {
+    const res = await fetch(`${BASE}/cases/${id}/evidence_report`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      const err = new Error(d.detail || `${res.status} ${res.statusText}`);
+      err.status = res.status;
+      throw err;
+    }
+    return res.blob();
+  },
   // Agentic Web Browser
   getAgenticTools: () => req("/api/agentic-browser/tools"),
   startAgenticInvestigate: (body) => req("/api/agentic-browser/investigate", { method: "POST", body }),
