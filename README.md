@@ -205,3 +205,9 @@ signature. Have a qualified advocate co-sign before any real or court use.
 - Secrets live in `.env`, which is gitignored. Never commit real keys, and rotate any that
   were exposed.
 - The default admin password is for local development only; change it.
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
