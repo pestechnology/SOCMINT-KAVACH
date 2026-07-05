@@ -110,6 +110,54 @@ def build_context(case: dict, entities: list[dict], clusters: list[dict],
     if tone:
         lines.append(f"  writing tone: {tone}")
 
+    # LEAK / BREACH DATA — the "Additional Data" tab (NewLeaks OSINT bot). Previously the
+    # RAG ignored this entirely, so it could not answer about leaked identity fields. Surface
+    # the classified identity fields, leftover labelled facts and breach sources. Passwords
+    # are flagged by count only, never echoed as raw credentials in a chat answer.
+    leak_ents = [e for e in entities if (e.get("metadata") or {}).get("source") == "newleaks_bot"]
+    if leak_ents:
+        lines.append("\nLEAK / BREACH DATA (from the 'Additional Data' tab, via NewLeaks OSINT bot):")
+        for e in leak_ents[:6]:
+            m = e.get("metadata") or {}
+            ident = e.get("value") or m.get("value") or "?"
+            dbs = m.get("databases") or m.get("breaches") or []
+            cnt = m.get("breach_count") or m.get("leaks_count")
+            head = f"  for {ident}"
+            if dbs:
+                head += f"; breach sources: {', '.join(str(x) for x in dbs[:8])}"
+            if cnt:
+                head += f"; records: {cnt}"
+            lines.append(head)
+
+            classified = m.get("leak_classified") or {}
+            leftover = m.get("leak_leftover") or {}
+            passwords: list = []
+
+            def _emit(key, val):
+                if val is None or val == "":
+                    return
+                if isinstance(val, (list, tuple)):
+                    val = ", ".join(str(x) for x in list(val)[:6])
+                lines.append(f"    {str(key).replace('_', ' ')}: {val}")
+
+            for k, v in list(classified.items())[:20]:
+                if k in ("password", "passwords"):
+                    passwords.extend(v if isinstance(v, (list, tuple)) else [v])
+                    continue
+                _emit(k, v)
+            for k, v in list(leftover.items())[:12]:
+                _emit(k, v)
+            # Raw fallback fields when the LLM classification was unavailable.
+            if not classified:
+                for label, key in (("names", "names"), ("emails", "emails"),
+                                   ("phones", "phones"), ("links", "links"), ("ips", "ips")):
+                    _emit(label, m.get(key))
+            passwords.extend(m.get("passwords") or [])
+            passwords = [p for p in passwords if p]
+            if passwords:
+                lines.append(f"    passwords: {len(passwords)} leaked "
+                             "(sensitive — shown in the Additional Data tab, not repeated here)")
+
     text = "\n".join(lines)
     return text[:_MAX_CONTEXT]
 
@@ -133,6 +181,8 @@ def suggested_queries(case: dict, entities: list[dict], clusters: list[dict]) ->
         qs.append("Which accounts share the same phone number or email?")
     if any((e.get("metadata") or {}).get("location") for e in entities):
         qs.append("What locations are associated with the subject?")
+    if any((e.get("metadata") or {}).get("source") == "newleaks_bot" for e in entities):
+        qs.append("What personal details surfaced in the leak/breach data?")
     qs.append("What are the unconfirmed leads I should verify next?")
     qs.append("Is there a real name behind the accounts?")
 
