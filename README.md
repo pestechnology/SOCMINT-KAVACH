@@ -1,5 +1,6 @@
 # VERTEX
 **TEAM: KAVACH**
+
 **SOCMINT / OSINT suspect-profiling that produces defensible evidence — not just leads.**
 One identifier in, a complete and court-ready digital profile out.
 
@@ -73,7 +74,7 @@ One identifier flows through a five-stage pipeline:
   chain-of-custody), an executive summary, and a numbered Evidence Exhibit Report.
 
 **AI, with guardrails**
-- **Agentic browser** — a real browser (browser-use + Playwright) reaches sources a scraper
+- **Agentic browser(on process....)** — a real browser (browser-use + Playwright) reaches sources a scraper
   cannot, under a hard anti-fabrication guardrail; results re-correlate like any other source.
 - **Kavach case assistant (RAG)** — grounded Q&A hard-constrained to the case evidence, with a
   deterministic fallback; never invents an identifier or fact.
