@@ -1,5 +1,6 @@
 # VERTEX
-**TEAM : KAVACH**
+**TEAM : KAVACH **
+
 **SOCMINT / OSINT suspect-profiling that produces defensible evidence — not just leads.**
 One identifier in, a complete and court-ready digital profile out.
 
