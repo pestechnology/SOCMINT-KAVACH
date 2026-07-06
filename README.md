@@ -92,7 +92,6 @@ One identifier flows through a five-stage pipeline:
 **Investigator workflow**
 - **Re-iteration / cross-pivoting** — select discovered accounts, derived names, or profile
   photos and run one combined follow-up search that folds back into the same case.
-  See [`docs/REITERATION_AND_SEARCH_SYSTEM.md`](docs/REITERATION_AND_SEARCH_SYSTEM.md).
 - **Investigative copilot** — ranked next actions plus a law-enforcement data-request directory
   (correct portal + a BNSS §94 preservation-letter target).
 - **Network graph** and **activity timeline** views.
@@ -164,7 +163,6 @@ backend/
 frontend/            Next.js 14 + Tailwind dashboard
 scripts/             create_admin, seed_demo_case, download_face_models, telegram_login
 tests/               pytest suite
-docs/                design and integration notes
 ```
 
 ---
@@ -192,8 +190,7 @@ docs/                design and integration notes
 ## Legal and responsible use
 
 VERTEX collects only publicly available data, for lawful and authorised investigative use.
-All BSA-63 claims are checked against primary sources — see
-[`LEGAL_VERIFICATION.md`](LEGAL_VERIFICATION.md). Two incorrect citations from the original
+All BSA-63 claims are checked against primary sources. Two incorrect citations from the original
 brief (PMLA §12, CPCR §12) were replaced with BNSS §94 and POCSO §23 / JJ Act §74. Part B of
 the certificate is a template for a qualified expert to sign; VERTEX never fabricates a
 signature. Have a qualified advocate co-sign before any real or court use.

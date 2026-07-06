@@ -171,9 +171,7 @@ shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
   new candidate identifiers (guessed emails, recovered names, handle variants) from
   anything already in a case; the frontend lets you multi-select discovered accounts,
   suggested candidates, and profile pictures (drag-and-drop) into one staging tray and
-  run a single combined follow-up search, merged back into the same case. See
-  [`docs/REITERATION_AND_SEARCH_SYSTEM.md`](docs/REITERATION_AND_SEARCH_SYSTEM.md) for the full
-  design.
+  run a single combined follow-up search, merged back into the same case.
 - An email seed automatically also runs its local part as a username search (finds
   Instagram/GitHub/etc., not just breach records), and re-scraping an account you
   already have now MERGES newly-found facts into it instead of discarding them.
@@ -192,6 +190,6 @@ lookups, Reddit OAuth (needs CLIENT_ID/SECRET).
 
 ## 10. Legal
 
-See [`LEGAL_VERIFICATION.md`](LEGAL_VERIFICATION.md). All BSA-63 claims verified.
+All BSA-63 claims verified against primary sources.
 Two wrong citations from the original brief replaced: BNSS §94 and POCSO §23 / JJ §74.
 Get a qualified advocate to co-sign before July 4.
