@@ -87,8 +87,8 @@ One identifier flows through a five-stage pipeline:
   phonetic keys; the original string is always preserved as the evidentiary field.
 - **Breach data** — optional NewLeaks source folds leaked identity fields into a dedicated
   Additional Data panel (inert unless enabled with a valid session).
-- **Deep bio scraping**, **email→username bridging**, and **Tier-1 enrichment** (Gravatar,
-  EmailRep, socid_extractor).
+- **Deep bio scraping**, **email→username bridging**, and structured profile-page fact
+  extraction (socid_extractor).
 
 **Investigator workflow**
 - **Re-iteration / cross-pivoting** — select discovered accounts, derived names, or profile
@@ -100,6 +100,24 @@ One identifier flows through a five-stage pipeline:
 ---
 
 ## Quick start
+
+### Option A — Docker (recommended)
+
+The whole stack (backend + frontend + PhoneInfoga) in two commands. Requires only
+[Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+```bash
+cp .env.example .env       # then fill in your keys — step-by-step in GET_API_KEYS.md
+docker compose up --build  # UI: http://localhost:3000   API: http://localhost:8000/docs
+```
+
+- **No keys yet?** Set `DATA_MODE=mock` in `.env` first — the full demo runs offline
+  (HIGH-confidence cluster, a rejected red herring, and a PDF) with no keys at all.
+- Default admin (created on first boot): `admin` / `vertex2026` — **change it before real use.**
+- Full Docker guide (enabling the agentic browser, the Telegram session, troubleshooting):
+  [`DOCKER.md`](DOCKER.md). Getting each API key: [`GET_API_KEYS.md`](GET_API_KEYS.md).
+
+### Option B — Run natively (without Docker)
 
 Requires Python 3.10+ and Node 18+. See [`SETUP.md`](SETUP.md) for the full guide, including
 Blackbird (an external repo) and all optional tools.
@@ -155,7 +173,7 @@ backend/
                      case_chat (Kavach RAG), next_actions, le_directory
   correlation/       pairwise 20-signal computation
   scoring/           clustering, confidence tiers, and the red-herring rule
-  llm/               NVIDIA/Groq client with regex/template fallbacks
+  llm/               LLM client (OpenAI-compatible) with regex/template fallbacks
   pipeline/          orchestrator (investigation + re-iteration) + lead_reverification
   ledger/            tamper-evident hash chain + artifact hashing
   evidence/          court-grade page capture (screenshot/MHTML/DOM + external timestamp)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 
 import httpx
@@ -61,8 +62,11 @@ class IgnorantScraper(BaseDataSource):
 class PhoneInfogaScraper(BaseDataSource):
     name = "phoneinfoga"
 
-    def __init__(self, base_url: str = "http://localhost:5000"):
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: str | None = None):
+        # Default to localhost for a native run; PHONEINFOGA_URL lets a containerized
+        # backend reach the PhoneInfoga service by name (e.g. http://phoneinfoga:5000).
+        self.base_url = (base_url or os.environ.get("PHONEINFOGA_URL")
+                         or "http://localhost:5000").rstrip("/")
 
     async def _run_live(self, number: str) -> list[RawProfile]:
         digits = re.sub(r"\D", "", number)

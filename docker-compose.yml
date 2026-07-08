@@ -1,0 +1,58 @@
+# ============================================================
+# VERTEX — local, single-machine Docker stack.
+#
+#   1. cp .env.example .env      # fill in SERPER_API_KEY, GITHUB_TOKEN, NVIDIA_API_KEY, JWT_SECRET
+#   2. docker compose up --build
+#   3. UI: http://localhost:3000   API: http://localhost:8000/docs
+# ============================================================
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        # Flip to "true" to include the Playwright agentic browser (larger image).
+        WITH_AGENTIC_BROWSER: "false"
+    env_file:
+      - .env                      # your secrets (gitignored). Must exist — copy from .env.example.
+    environment:
+      DATA_MODE: "${DATA_MODE:-live}"
+      # The browser talks to the backend on the host-published port, so allow that origin.
+      CORS_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+      # Reach the PhoneInfoga container by service name (see phone_scrapers.py).
+      PHONEINFOGA_URL: "http://phoneinfoga:5000"
+      DB_PATH: "/data/cidecode.db"
+      REPORT_OUTPUT_DIR: "/data/reports"
+      BLACKBIRD_PATH: "/opt/blackbird"
+    ports:
+      - "8000:8000"
+    volumes:
+      - vertex-data:/data         # persists the SQLite DB, reports, and telegram session
+    depends_on:
+      - phoneinfoga
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # BUILD-time (baked into the client bundle). Must be reachable from the BROWSER.
+        NEXT_PUBLIC_API_URL: "http://localhost:8000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  phoneinfoga:
+    image: sundowndev/phoneinfoga:latest
+    # The upstream image is amd64-only; run under emulation on Apple Silicon (arm64).
+    platform: linux/amd64
+    # REST API on :5000. --no-client = API only (backend calls it over HTTP, no web UI needed).
+    command: ["serve", "--no-client"]
+    expose:
+      - "5000"                    # internal only; backend reaches it via http://phoneinfoga:5000
+    restart: unless-stopped
+
+volumes:
+  vertex-data:

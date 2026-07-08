@@ -18,13 +18,12 @@ cp .env.example .env
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Required for a strong demo: `SERPER_API_KEY`, `GITHUB_TOKEN`, `NVIDIA_API_KEY`, `JWT_SECRET`.
+Required (all free): `SERPER_API_KEY`, `GITHUB_TOKEN`, `NVIDIA_API_KEY`, `NUMVERIFY_KEY`,
+`JWT_SECRET`. Telegram (`TELEGRAM_API_ID/HASH` + a one-time session login) is required for
+the phone-lookup feature — see `GET_API_KEYS.md`.
 
-Optional: `HIBP_API_KEY`, `TELEGRAM_API_ID/HASH`, `NUMVERIFY_KEY`, `REDDIT_CLIENT_ID/SECRET`,
-`DEHASHED_EMAIL`/`DEHASHED_API_KEY`, `LEAKCHECK_API_KEY` (deeper breach coverage — the
-pipeline runs identically, just with fewer breach hits, if these are unset), plus
-`GRAVATAR_API_KEY` / `EMAILREP_API_KEY` (both free-tier — Gravatar still does a free
-no-key avatar-existence check without one; EmailRep returns `[]` until a key is set).
+Optional: `HIBP_API_KEY` (paid — the pipeline runs identically, just with fewer breach
+hits, if unset).
 
 > If any key was ever pasted into chat/screenshots, ROTATE it before use.
 
@@ -154,11 +153,9 @@ shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
   (red-herring rule + hard-anchor gating), LLM client (with fallbacks), orchestrator,
   audit ledger (hash chain), BSA-63 PDF.
 - Live scrapers: GitHub (incl. followers sample for mutual-connections), Serper
-  (incl. filetype/medium/pinterest/pastebin dorks), HIBP, XposedOrNot, DeHashed,
-  LeakCheck (both stubbed pending API keys), Holehe, Maigret, Sherlock, Blackbird
-  (username + email), Socialscan, ignorant, PhoneInfoga, UPI, Wayback, Reddit,
-  Telethon, URL scraper, Gravatar (avatar existence + verified accounts), EmailRep
-  (registered-service lookup), socid_extractor (structured profile-page facts).
+  (incl. filetype/medium/pinterest/pastebin dorks), HIBP, XposedOrNot, Holehe,
+  Maigret, Sherlock, Blackbird (username + email), Socialscan, ignorant, PhoneInfoga,
+  UPI, Wayback, Telethon, URL scraper, socid_extractor (structured profile-page facts).
 - False-positive filter: Maigret (36 excluded sites), Sherlock (3), Blackbird (1).
 - Profile photo og:image enrichment, perceptual-hash matching, and face-embedding
   matching (OpenCV YuNet+SFace — see §3 above) + frontend avatar display.
@@ -185,8 +182,7 @@ shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
 graph, vis-timeline, forensics panel, re-iteration staging tray + floating action
 button. `npm run build` passes.
 
-**Pending (optional):** Telethon (needs bot-token), Playwright-based Facebook/UPI-name
-lookups, Reddit OAuth (needs CLIENT_ID/SECRET).
+**Pending (optional):** Playwright-based Facebook/UPI-name lookups.
 
 ## 10. Legal
 
