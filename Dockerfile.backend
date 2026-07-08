@@ -1,0 +1,56 @@
+# ============================================================
+# VERTEX backend — FastAPI + OSINT CLI tools.
+#
+# Default build EXCLUDES the agentic browser (Playwright/browser-use) to keep the
+# image small. Re-enable with:  --build-arg WITH_AGENTIC_BROWSER=true
+# ============================================================
+FROM python:3.11-slim
+
+# WITH_AGENTIC_BROWSER=true installs requirements-agentic.txt + Chromium runtime.
+ARG WITH_AGENTIC_BROWSER=false
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    # App config (overridable in docker-compose). Data (SQLite DB, reports, telegram
+    # session) lives under /data so it can be a persistent volume.
+    DB_PATH=/data/cidecode.db \
+    REPORT_OUTPUT_DIR=/data/reports \
+    TELEGRAM_USER_SESSION=/data/user_session \
+    BLACKBIRD_PATH=/opt/blackbird
+
+# System deps: git (clone Blackbird), build-essential (any C-ext without a wheel),
+# libglib2.0-0 (OpenCV headless runtime), curl (healthchecks).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git build-essential libglib2.0-0 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ---- Python deps (core; agentic stack added conditionally below) ----
+COPY requirements.docker.txt requirements-agentic.txt ./
+RUN pip install --upgrade pip && pip install -r requirements.docker.txt
+RUN if [ "$WITH_AGENTIC_BROWSER" = "true" ]; then \
+        pip install -r requirements-agentic.txt && \
+        playwright install --with-deps chromium && \
+        python -m patchright install chromium ; \
+    fi
+
+# ---- Blackbird (not on PyPI) — isolated in its own venv so its pinned deps never
+#      clash with the app's. resolve_tool("blackbird") finds the /usr/local/bin wrapper. ----
+RUN git clone --depth 1 https://github.com/p1ngul1n0/blackbird /opt/blackbird && \
+    python -m venv /opt/blackbird/venv && \
+    /opt/blackbird/venv/bin/pip install --no-cache-dir -r /opt/blackbird/requirements.txt && \
+    printf '#!/bin/sh\nexec /opt/blackbird/venv/bin/python /opt/blackbird/blackbird.py "$@"\n' \
+        > /usr/local/bin/blackbird && chmod +x /usr/local/bin/blackbird
+
+# ---- App code ----
+COPY . .
+
+# ---- Face-matching models (~37 MB, downloaded at build). Non-fatal: if the download
+#      fails, face matching is simply disabled and every other signal still works. ----
+RUN python backend/scripts/download_face_models.py || echo "[docker] face models skipped (network?)"
+
+RUN chmod +x docker/entrypoint.sh
+EXPOSE 8000
+ENTRYPOINT ["docker/entrypoint.sh"]
