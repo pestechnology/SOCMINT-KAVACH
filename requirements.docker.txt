@@ -1,0 +1,53 @@
+# ============================================================
+# VERTEX — Python dependencies for the DOCKER backend image.
+#
+# This is requirements.txt MINUS the agentic-browser stack (browser-use,
+# playwright, patchright, google-genai), which is excluded from the default
+# image to keep it small and fast to build.
+#
+# To RE-ENABLE the agentic browser later, build with:
+#     docker compose build --build-arg WITH_AGENTIC_BROWSER=true backend
+# (see Dockerfile.backend — it installs requirements-agentic.txt and the
+#  Chromium runtime when that flag is true). No need to edit this file.
+# ============================================================
+
+# ---- Backend / API ----
+fastapi==0.115.6
+truststore>=0.10.0
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+pydantic==2.12.5
+pydantic-settings==2.7.1
+python-dotenv==1.2.2
+
+# ---- Auth ----
+python-jose[cryptography]==3.3.0
+bcrypt==4.2.1
+
+# ---- Correlation / scoring ----
+thefuzz==0.22.1
+python-Levenshtein==0.26.1
+scikit-learn==1.6.1
+imagehash==4.3.1
+pillow==12.2.0
+opencv-python-headless==4.13.0.92
+
+# ---- Report (BSA-63 PDF) ----
+reportlab>=4.4.3,<5.0.0
+svglib>=1.5.1
+
+# ---- Forensics ----
+vaderSentiment>=3.3.2
+
+# ---- OSINT scrapers ----
+maigret==0.5.0
+socialscan==1.4.2
+waybackpy==3.0.6
+telethon==1.38.1
+holehe>=1.61
+sherlock-project>=0.16.0
+socid-extractor>=0.0.27
+ignorant                     # phone-registration checker (installed separately in SETUP.md; baked in here)
+
+# ---- Multilingual normalization ----
+aksharamukha

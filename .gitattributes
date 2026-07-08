@@ -1,0 +1,5 @@
+# Force LF line endings on shell scripts so they run correctly inside Linux
+# containers even when cloned on Windows (CRLF would break the shebang / crash the
+# container entrypoint). Applies regardless of the user's core.autocrlf setting.
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf

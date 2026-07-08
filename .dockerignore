@@ -1,0 +1,46 @@
+# Keep the backend build context small & secret-free.
+.git
+.gitignore
+
+# Secrets — provided at runtime via env_file, never baked into the image.
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+
+# Python junk
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Frontend (built in its own image)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Generated / regenerable data
+*.db
+*.sqlite
+*.sqlite3
+reports/
+artifacts/
+data/synthetic_dataset.json
+backend/models/*.onnx
+
+# Local tooling / docs not needed at runtime
+.vscode/
+.claude/
+.serena/
+scratchpad/
+tests/
+*.log
+.DS_Store

@@ -1,0 +1,10 @@
+node_modules
+.next
+out
+.turbo
+npm-debug.log*
+.env.local
+.env*.local
+.DS_Store
+Dockerfile
+.dockerignore
