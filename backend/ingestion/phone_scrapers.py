@@ -17,11 +17,16 @@ import re
 
 import httpx
 
+from backend import config
 from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profile, resolve_tool
 
 
 def _split_phone(number: str) -> tuple[str, str]:
     digits = re.sub(r"\D", "", number)
+    if not digits:
+        return "91", ""
+    if len(digits) < 10:
+        return "91", digits
     if number.strip().startswith("+"):
         # naive split: assume last 10 are national number, rest is country code
         cc, nat = digits[:-10] or "91", digits[-10:]
@@ -35,6 +40,8 @@ class IgnorantScraper(BaseDataSource):
 
     async def _run_live(self, number: str) -> list[RawProfile]:
         cc, nat = _split_phone(number)
+        if not nat or len(nat) < 5:
+            return []
         exe = resolve_tool("ignorant")
         if not exe:
             return []  # ignorant not installed
@@ -70,6 +77,8 @@ class PhoneInfogaScraper(BaseDataSource):
 
     async def _run_live(self, number: str) -> list[RawProfile]:
         digits = re.sub(r"\D", "", number)
+        if not digits or len(digits) < 5:
+            return []
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.get(f"{self.base_url}/api/numbers/{digits}/scan/local")
             if r.status_code != 200:
@@ -94,18 +103,19 @@ class NumVerifyScraper(BaseDataSource):
     name = "numverify"
 
     async def _run_live(self, number: str) -> list[RawProfile]:
-        from backend import config
-        import os
         api_key = os.environ.get("NUMVERIFY_KEY") or getattr(config, "NUMVERIFY_KEY", None)
         if not api_key:
             return []
             
         digits = re.sub(r"\D", "", number)
-        url = f"http://apilayer.net/api/validate?access_key={api_key}&number={digits}"
+        if not digits or len(digits) < 5:
+            return []
+        url = "https://apilayer.net/api/validate"
+        params = {"access_key": api_key, "number": digits}
         
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                r = await client.get(url)
+                r = await client.get(url, params=params)
                 if r.status_code != 200:
                     return []
                 data = r.json()
