@@ -110,9 +110,13 @@ one-time interactive login — so it gets its own steps here.
 **Step 2 — one-time interactive login (creates the session the bot uses):**
 - Run the login once and follow the prompts (phone number + the code Telegram texts you):
   ```bash
+  # Docker:
   docker compose exec backend python -m scripts.telegram_login
+  # Native (venv active):
+  python -m scripts.telegram_login
   ```
-- Then set `NEWLEAKS_ENABLED=true` in `.env` and restart: `docker compose up -d backend`.
+- Then set `NEWLEAKS_ENABLED=true` in `.env` and restart the backend (`docker compose up -d
+  backend`, or just re-run `uvicorn` natively).
 
 Full details (and the safety notes — the session logs into YOUR Telegram account, never
 share it) are in `API_KEYS_AND_BOTS.md` and `DOCKER.md`.

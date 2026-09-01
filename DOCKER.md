@@ -13,6 +13,11 @@ docker compose up --build
 - **UI:** http://localhost:3000
 - **API / Swagger:** http://localhost:8000/docs
 - Default admin (created on first boot): `admin` / `vertex2026` — **change it before any real use.**
+- Optional extra search source: `BRAVE_API_KEY` (see `API_KEYS_AND_BOTS.md`).
+- `[llm] ... 410` in `docker compose logs backend`: an NVIDIA model id was retired — check
+  `curl -H "Authorization: Bearer $NVIDIA_API_KEY" https://integrate.api.nvidia.com/v1/models`
+  and override `LLM_EXTRACT_MODEL` / `LLM_EXPLAIN_MODEL` / `CHAT_LLM_MODEL` in `.env`, then
+  `docker compose up -d backend`.
 
 To stop: `docker compose down`. Your data (DB, reports) is kept in the `vertex-data`
 volume and survives restarts. To wipe it: `docker compose down -v`.
@@ -66,18 +71,25 @@ The NewLeaks add-on needs an interactive Telegram **user session**, which can't 
 during a build. Create it on the host once, then it's picked up via the `/data` volume:
 
 ```bash
-# with the stack running:
+# Docker (stack running):
 docker compose exec backend python -m scripts.telegram_login   # prompts for phone + code
+# Native (venv active):
+python -m scripts.telegram_login
 # then set NEWLEAKS_ENABLED=true in .env and restart: docker compose up -d backend
 ```
 
 See `API_KEYS_AND_BOTS.md` for the full bot/key reference.
 
+## Standalone side-tool: dark-web search
+
+`tools/onionsearch-sandbox/` — separate `docker compose` stack, not started by this one.
+See its own `README.md`.
+
 ## Troubleshooting
 
 - **`no configuration file provided: not found`** — you're in the wrong folder. All the
-  commands must be run from **inside the `KAVACH` folder** (where `docker-compose.yml` lives).
-  Run `cd KAVACH` first. Check with `ls docker-compose.yml` — it should print the filename.
+  commands must be run from **inside this repo's root folder** (where `docker-compose.yml`
+  lives). Check with `ls docker-compose.yml` — it should print the filename.
 - **`failed to connect to the docker API ... is the daemon running?`** — Docker Desktop
   isn't started. Open **Docker Desktop** (Mac: `open -a Docker`), wait ~30–60s until the
   whale icon is steady, then confirm with `docker info` and retry.

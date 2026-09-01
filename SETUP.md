@@ -162,13 +162,11 @@ cd -
 REM Add to .env:  BLACKBIRD_PATH=C:\tools\blackbird
 ```
 
-**Windows-specific gotcha:** Sherlock always writes a `<username>.txt` scan dump to its
-*current working directory* on every run. `sherlock_scraper.py` gives it a dedicated
-`REPORT_OUTPUT_DIR/sherlock` cwd precisely so this doesn't litter your repo root — if
-you're on an older checkout without that fix, you'll find stray `<username>.txt` files
-appearing at the repo root; safe to delete, and gitignored either way.
-
 </details>
+
+**Note (all OSes):** Sherlock dumps `<username>.txt` to its cwd each run;
+`sherlock_scraper.py` sets `cwd=REPORT_OUTPUT_DIR/sherlock` so it doesn't land at the repo
+root. Older checkout without that fix → stray `<username>.txt` at repo root; safe to delete.
 
 ## 4. Run the backend
 
