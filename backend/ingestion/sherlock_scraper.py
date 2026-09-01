@@ -15,9 +15,11 @@ Parses `[+] Site: url` lines.  Fail-safe: [] if sherlock isn't installed/errors.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from urllib.parse import urlparse
 
+from backend import config
 from backend.ingestion.base_module import BaseDataSource, RawProfile, make_profile, resolve_tool
 from backend.ingestion.fp_filter import filter_with_control
 
@@ -42,9 +44,16 @@ class SherlockScraper(BaseDataSource):
         exe = resolve_tool("sherlock")
         if not exe:
             return []
+        # Sherlock always writes a `<username>.txt` dump to its CWD regardless of
+        # --print-found; without an explicit cwd that lands in the repo root (or
+        # wherever uvicorn happened to be launched from). Give it its own scratch
+        # folder under REPORT_OUTPUT_DIR (same pattern as maigret's --folderoutput).
+        outdir = os.path.join(config.REPORT_OUTPUT_DIR, "sherlock")
+        os.makedirs(outdir, exist_ok=True)
         proc = await asyncio.create_subprocess_exec(
             exe, username, "--print-found", "--no-color", "--timeout", "5",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=outdir,
         )
         try:
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=60)

@@ -38,6 +38,7 @@ from backend.ingestion.maigret_scraper import MaigretScraper
 from backend.ingestion.mock_scraper import MockScraper
 from backend.ingestion.phone_scrapers import IgnorantScraper, PhoneInfogaScraper, NumVerifyScraper
 from backend.ingestion.serper_scraper import SerperScraper
+from backend.ingestion.brave_scraper import BraveScraper
 from backend.ingestion.upi_module import UPIScraper
 from backend.ingestion.url_scraper import URLScraper
 from backend.ingestion.blackbird_scraper import BlackbirdUsernameScraper, BlackbirdEmailScraper
@@ -81,9 +82,18 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         # DehashedScraper/LeakcheckScraper are fail-safe no-ops without their API keys
         # (return [] — see each module's docstring); wired here so the moment a key is
         # added to .env, deeper breach coverage activates with zero other changes.
+        # BraveScraper rides alongside the plain SerperScraper('"{q}"') call in every seed
+        # type below — a second, independent search index run in parallel (see
+        # brave_scraper.py). Both are fail-safe no-ops without their own key, so adding
+        # Brave costs nothing when BRAVE_API_KEY is unset. Deliberately NOT duplicated
+        # onto every site:-scoped dork below (e.g. the "name" seed's 10 platform dorks) —
+        # Brave's site: operator is documented as "experimental" and may be silently
+        # dropped, and doubling every dork's query volume is a real cost consideration
+        # for a paid API; the plain-query position captures most of the incremental
+        # coverage at a fifth of the added query cost.
         "email":    [HIBPScraper(), XposedOrNotScraper(), DehashedScraper(), LeakcheckScraper(),
                      HoleheScraper(), BlackbirdEmailScraper(), GitHubScraper(), GravatarScraper(),
-                     EmailRepScraper(), NewLeaksScraper(), SerperScraper('"{q}"')],
+                     EmailRepScraper(), NewLeaksScraper(), SerperScraper('"{q}"'), BraveScraper('"{q}"')],
         # NumVerify (carrier/line-type/country) works with the configured key; a PLAIN
         # Serper search returns real web mentions, whereas the old site:truecaller.com
         # dork returned nothing (Truecaller blocks indexing). PhoneInfoga/ignorant stay
@@ -91,7 +101,8 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         # it's dropped from the phone path. DehashedScraper/LeakcheckScraper also cover
         # phone-indexed breach records where the provider supports it.
         "phone":    [NumVerifyScraper(), PhoneInfogaScraper(), IgnorantScraper(),
-                     DehashedScraper(), LeakcheckScraper(), NewLeaksScraper(), SerperScraper('"{q}"')],
+                     DehashedScraper(), LeakcheckScraper(), NewLeaksScraper(),
+                     SerperScraper('"{q}"'), BraveScraper('"{q}"')],
         # LinkedIn blocks the WhatsMyName-style enumeration Maigret/Sherlock/Blackbird use
         # (verified: maigret's own site database has zero linkedin.com entries). LinkedIn
         # coverage for username/name seeds comes from the dedicated linkedin_search() step
@@ -99,8 +110,8 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         # LinkedIn vanity URL (those are name-based), so it needs the recovered-name/
         # discovered-name candidates linkedin_search() tries, not just the raw value.
         "username": [_maigret, _sherlock, _blackbird, SocialscanScraper(), RedditScraper(), TelethonScraper(), NewLeaksScraper(), GitHubScraper(),
-                     SerperScraper('"{q}"')],
-        "upi":      [UPIScraper(), SerperScraper('"{q}"')],
+                     SerperScraper('"{q}"'), BraveScraper('"{q}"')],
+        "upi":      [UPIScraper(), SerperScraper('"{q}"'), BraveScraper('"{q}"')],
         # LinkedIn coverage for a name seed also comes from the dedicated linkedin_search()
         # step (run after the fan-out below), not a dork in this list — keeping it in ONE
         # place avoids double-querying the same "site:linkedin.com/in "{q}"" search here
@@ -129,7 +140,7 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
                      SerperScraper('site:pastebin.com "{q}"', sensitive=True),
                      # NewLeaks OSINT bot — name/nick is one of its strongest query modes.
                      NewLeaksScraper(),
-                     SerperScraper('"{q}"')],
+                     SerperScraper('"{q}"'), BraveScraper('"{q}"')],
         "face":     [],   # handled separately — see build_face_seed_profile() below
         "url":      [URLScraper(), WaybackScraper()],
     }

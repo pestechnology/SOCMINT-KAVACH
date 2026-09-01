@@ -1,13 +1,30 @@
 # VERTEX — Setup & Run Guide
 
-SOCMINT/OSINT suspect-profiling system for CIDECODE 2026.
+SOCMINT/OSINT suspect-profiling system for CIDECODE 2026. This guide covers a **native**
+install (no Docker) on **Linux** (primary — this is the reference platform below),
+**macOS**, and **Windows**. If you'd rather not install anything OS-specific at all, use
+Docker instead — see [`DOCKER.md`](DOCKER.md); it's the same on every OS.
 
 ## 1. Prerequisites
 
-- Python 3.10 or later (tested on 3.10 and 3.13)
+- Python 3.10 or later (tested on 3.10, 3.13)
 - Node 18+ (for the frontend)
 - Git (to clone Blackbird — not on PyPI)
-- Docker (optional, only for PhoneInfoga)
+- Docker (optional, only needed for PhoneInfoga if you don't run it natively)
+
+**Linux (Debian/Ubuntu) — one-time system packages.** Several Python deps
+(`python-Levenshtein`, `pycares`, `opencv-python-headless`'s indirect deps) need a
+compiler and Python headers to build if no prebuilt wheel exists for your distro/arch:
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-dev build-essential git curl
+# Node 18+: use your distro's package, nvm, or nodesource — e.g.:
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+Fedora/RHEL: `sudo dnf install -y python3 python3-devel gcc gcc-c++ git nodejs`.
 
 ## 2. Secrets
 
@@ -15,29 +32,46 @@ SOCMINT/OSINT suspect-profiling system for CIDECODE 2026.
 cp .env.example .env
 # edit .env and fill in your REAL keys (this file is gitignored, never committed)
 # generate a JWT secret:
-python -c "import secrets; print(secrets.token_hex(32))"
+python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 Required (all free): `SERPER_API_KEY`, `GITHUB_TOKEN`, `NVIDIA_API_KEY`, `NUMVERIFY_KEY`,
 `JWT_SECRET`. Telegram (`TELEGRAM_API_ID/HASH` + a one-time session login) is required for
-the phone-lookup feature — see `GET_API_KEYS.md`.
+the phone-lookup feature — see `GET_API_KEYS.md`. `BRAVE_API_KEY` is an optional extra
+search source (widens coverage, not required) — see `API_KEYS_AND_BOTS.md`.
 
 Optional: `HIBP_API_KEY` (paid — the pipeline runs identically, just with fewer breach
 hits, if unset).
 
 > If any key was ever pasted into chat/screenshots, ROTATE it before use.
+>
+> **NVIDIA model IDs drift.** NVIDIA periodically retires model ids from
+> `integrate.api.nvidia.com` (they start returning `410 Gone` even with a perfectly valid
+> key). `backend/config.py`'s `LLM_EXTRACT_MODEL` / `LLM_EXPLAIN_MODEL` / `CHAT_LLM_MODEL`
+> defaults are kept current as of the date in that file's comment; if the pipeline logs
+> `[llm] ... 410` for you, check `curl -H "Authorization: Bearer $NVIDIA_API_KEY"
+> https://integrate.api.nvidia.com/v1/models` for a live model id and override the
+> relevant `*_MODEL` variable in `.env` (no code change needed).
 
-## 3. Install
+## 3. Install (Linux / macOS)
 
-> Python 3.10+ required. On Windows: `py -3.10 -m venv venv`.
-> Do **not** reuse a `venv` created on another machine — the interpreter path is absolute.
+> Do **not** reuse a `venv` created on another machine or another user's home directory —
+> the interpreter path baked into the venv is absolute.
 
 ```bash
-python -m venv venv
-# Windows:  venv\Scripts\activate     |  macOS/Linux: source venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 pip install pytest pytest-asyncio    # test deps (NOT in requirements.txt)
 # maigret, sherlock-project, holehe, socialscan already in requirements.txt
+
+# Agentic browser (backend/agentic_browser) — browser-use/playwright/patchright are
+# already in requirements.txt above, but their Chromium binary is a separate download
+# (skip this if you don't need the agentic browser; everything else works without it).
+# Exact commands from Dockerfile.backend's own build step:
+playwright install --with-deps chromium   # --with-deps also apt-installs OS libs (sudo)
+python -m patchright install chromium
 
 # Face-matching models (one-time, ~37 MB, NOT committed to git — see
 # backend/ingestion/photo_enrich.py's docstring for why OpenCV's YuNet+SFace models
@@ -49,28 +83,77 @@ python backend/scripts/download_face_models.py
 pip install ignorant
 
 # Blackbird (username/email enumerator — NOT pip-packaged, must be cloned):
-git clone https://github.com/p1ngul1n0/blackbird C:\tools\blackbird
-pip install -r C:\tools\blackbird\requirements.txt
-# Fix version conflicts (Blackbird pins older aiohttp/multidict/reportlab than maigret):
+git clone https://github.com/p1ngul1n0/blackbird tools/blackbird
+pip install -r tools/blackbird/requirements.txt
+# Fix version conflicts (Blackbird pins older aiohttp/multidict/reportlab than maigret) —
+# run this as a SEPARATE pip command right after the one above, not combined with it:
 pip install "aiohttp>=3.12.14,<4.0.0" "multidict>=6.6.3,<7.0.0" "reportlab>=4.4.3,<5.0.0"
 
-# Create the .bat wrapper so resolve_tool() can find Blackbird on Windows:
-# Create venv\Scripts\blackbird.bat with this content (adjust both paths):
-#   @echo off
-#   "C:\path\to\VERTEX\venv\Scripts\python.exe" "C:\tools\blackbird\blackbird.py" %*
+# Create the wrapper so resolve_tool() finds Blackbird on PATH (venv/bin is already
+# on PATH once the venv is activated):
+cat > venv/bin/blackbird <<'EOF'
+#!/usr/bin/env bash
+exec "$(dirname "$0")/python" "$(dirname "$0")/../../tools/blackbird/blackbird.py" "$@"
+EOF
+chmod +x venv/bin/blackbird
 
 # Download Blackbird's site list (one-time — run from inside the Blackbird dir):
-cd C:\tools\blackbird
-python blackbird.py -u torvalds    # triggers wmn-data.json download
-cd -
+(cd tools/blackbird && python blackbird.py -u torvalds)   # triggers wmn-data.json download
 
 # Add to .env:
-#   BLACKBIRD_PATH=C:\tools\blackbird
+#   BLACKBIRD_PATH=/absolute/path/to/this/repo/tools/blackbird
 
-# PhoneInfoga (optional):
-#   docker pull sundowndev/phoneinfoga:latest
-#   docker run -p 5000:5000 sundowndev/phoneinfoga serve
+# PhoneInfoga (optional — native binary or Docker, either works):
+#   docker run -d -p 5000:5000 sundowndev/phoneinfoga serve
+#   (or download a native release from github.com/sundowndev/phoneinfoga/releases
+#    and put it on PATH as `phoneinfoga`)
 ```
+
+**macOS notes:** identical to the above. If a package fails to build, `brew install`
+the missing system lib it names (Homebrew's Python/OpenSSL are usually already fine).
+Apple Silicon: everything here is pure-Python or has arm64 wheels; no Rosetta needed.
+
+### Windows
+
+<details>
+<summary>Click to expand native Windows instructions</summary>
+
+> Python 3.10+ required. On Windows: `py -3.10 -m venv venv`.
+
+```powershell
+python -m venv venv
+venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+pip install pytest pytest-asyncio
+REM Agentic browser Chromium binary (optional — skip if you don't need it):
+playwright install chromium
+python -m patchright install chromium
+python backend\scripts\download_face_models.py
+pip install ignorant
+
+git clone https://github.com/p1ngul1n0/blackbird C:\tools\blackbird
+pip install -r C:\tools\blackbird\requirements.txt
+pip install "aiohttp>=3.12.14,<4.0.0" "multidict>=6.6.3,<7.0.0" "reportlab>=4.4.3,<5.0.0"
+
+REM Create venv\Scripts\blackbird.bat (adjust both paths):
+REM   @echo off
+REM   "C:\path\to\VERTEX\venv\Scripts\python.exe" "C:\tools\blackbird\blackbird.py" %*
+
+cd C:\tools\blackbird
+python blackbird.py -u torvalds
+cd -
+
+REM Add to .env:  BLACKBIRD_PATH=C:\tools\blackbird
+```
+
+**Windows-specific gotcha:** Sherlock always writes a `<username>.txt` scan dump to its
+*current working directory* on every run. `sherlock_scraper.py` gives it a dedicated
+`REPORT_OUTPUT_DIR/sherlock` cwd precisely so this doesn't litter your repo root — if
+you're on an older checkout without that fix, you'll find stray `<username>.txt` files
+appearing at the repo root; safe to delete, and gitignored either way.
+
+</details>
 
 ## 4. Run the backend
 
@@ -96,8 +179,17 @@ CORS already allows ports 3000 and 3001.
 
 ### Troubleshooting: "port already in use"
 
-`uvicorn --reload` runs as a parent + child process. If the parent is hard-killed, the child
-can be orphaned. Find the real owner:
+**Linux/macOS:**
+
+```bash
+lsof -i :8000            # shows the PID holding the port
+kill -9 <pid>
+# or, to find+kill in one step:
+fuser -k 8000/tcp
+```
+
+**Windows:** `uvicorn --reload` runs as a parent + child process. If the parent is
+hard-killed, the child can be orphaned.
 
 ```powershell
 netstat -ano | findstr :8000   # shows the PID holding the port
@@ -134,29 +226,35 @@ Seed types: `username`, `email`, `phone`, `upi`, `name`, `url`, `face`
 - **Red-herring rejection** — a username-only match shows as `LOW — not linked`, never merged.
 - **Hash verification** — recompute any artifact's SHA-256 and match it against the PDF:
 
+```bash
+# Linux/macOS:
+sha256sum reports/artifacts/<case_id>/<artifact>.json
+```
+
 ```powershell
 # Windows PowerShell:
 Get-FileHash .\reports\artifacts\<case_id>\<artifact>.json -Algorithm SHA256
 ```
 
-```bash
-# macOS/Linux:
-shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
-```
-
 ## 9. What's built
 
-**Built and tested (189 pytest tests passing):**
+**Built and tested (300+ pytest tests passing — run `pytest tests/ -q` to confirm on
+your machine):**
 
 - Config, DB, auth, cases, data-source interface, mock scraper, correlation (20
   signals — 7 hard-anchor, 7 context-tier, see backend/correlation/), scoring
   (red-herring rule + hard-anchor gating), LLM client (with fallbacks), orchestrator,
-  audit ledger (hash chain), BSA-63 PDF.
+  audit ledger (hash chain, scoped per-case so merging/importing another machine's
+  case history never disturbs an existing case's verifiable chain), BSA-63 PDF.
 - Live scrapers: GitHub (incl. followers sample for mutual-connections), Serper
-  (incl. filetype/medium/pinterest/pastebin dorks), HIBP, XposedOrNot, Holehe,
-  Maigret, Sherlock, Blackbird (username + email), Socialscan, ignorant, PhoneInfoga,
-  UPI, Wayback, Telethon, URL scraper, socid_extractor (structured profile-page facts).
-- False-positive filter: Maigret (36 excluded sites), Sherlock (3), Blackbird (1).
+  (incl. filetype/medium/pinterest/pastebin dorks), Brave (optional second search
+  index run in parallel with Serper), HIBP, XposedOrNot, Holehe, Maigret, Sherlock,
+  Blackbird (username + email), Socialscan, ignorant, PhoneInfoga, UPI, Wayback,
+  Telethon, URL scraper, socid_extractor (structured profile-page facts).
+- False-positive filter: Maigret and Sherlock (and Blackbird's username path) each run
+  a random control-username probe in parallel and exclude any site that fires for it —
+  mitigates rotted per-site detection heuristics; results cached 6h per tool in
+  `reports/false_positive_sites.json`.
 - Profile photo og:image enrichment, perceptual-hash matching, and face-embedding
   matching (OpenCV YuNet+SFace — see §3 above) + frontend avatar display.
 - Bio-link extraction — generalised beyond a bio field to a platform's dedicated
@@ -182,10 +280,15 @@ shasum -a 256 reports/artifacts/<case_id>/<artifact>.json
 graph, vis-timeline, forensics panel, re-iteration staging tray + floating action
 button. `npm run build` passes.
 
+**Standalone side-tool (not wired into the main pipeline):** `tools/onionsearch-sandbox/`
+— a network-isolated Docker sandbox for dark-web (.onion) search via OnionSearch, routed
+exclusively through Tor with no route to the real internet even if the tool itself has a
+bug. See that folder's `docker-compose.yml` for the isolation model and usage.
+
 **Pending (optional):** Playwright-based Facebook/UPI-name lookups.
 
 ## 10. Legal
 
 All BSA-63 claims verified against primary sources.
 Two wrong citations from the original brief replaced: BNSS §94 and POCSO §23 / JJ §74.
-Get a qualified advocate to co-sign before July 4.
+Get a qualified advocate to co-sign before any real or court use.

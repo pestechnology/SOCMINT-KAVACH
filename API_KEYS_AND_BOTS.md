@@ -49,6 +49,12 @@ Related settings (already in `.env.example` with sensible defaults — change on
 | --- | --- | --- | --- |
 | `HIBP_API_KEY` | Have I Been Pwned breach lookup | https://haveibeenpwned.com/API/Key (paid, ~$4/mo) | **Not needed to run the project** — only adds extra breach coverage. Returns nothing if unset; the pipeline runs identically. |
 
+## 2b. Optional — Brave Search API
+
+| Variable | What it's for | Where to get it | Notes |
+| --- | --- | --- | --- |
+| `BRAVE_API_KEY` | A second, independent search index (`brave_scraper.py`), run in **parallel** with Serper — not a replacement | https://api-dashboard.search.brave.com (card required; includes $5/mo free credits, ≈1,000 queries) | **Not needed to run the project** — Serper alone covers the search-dork path. Adding a key widens coverage since Brave's index is independent of Google/Bing. Note: Brave's `site:`/`filetype:` operators are documented by Brave as "experimental" and can be silently dropped on a low-match query — `brave_scraper.py` defensively re-checks every `site:`-scoped result's host before accepting it, so a broadened Brave query can never leak an off-target hit into a case. |
+
 ---
 
 ## 3. Telegram — required for the phone-lookup feature

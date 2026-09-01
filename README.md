@@ -74,8 +74,11 @@ One identifier flows through a five-stage pipeline:
   chain-of-custody), an executive summary, and a numbered Evidence Exhibit Report.
 
 **AI, with guardrails**
-- **Agentic browser(on process....)** — a real browser (browser-use + Playwright) reaches sources a scraper
-  cannot, under a hard anti-fabrication guardrail; results re-correlate like any other source.
+- **Agentic browser (work in progress)** — a real browser (browser-use + Playwright) reaches
+  sources a scraper cannot, under a hard anti-fabrication guardrail; results re-correlate
+  like any other source. Excluded from the default Docker image (see `DOCKER.md`); a
+  native install needs one extra one-time step after `pip install -r requirements.txt` —
+  see `SETUP.md`.
 - **Kavach case assistant (RAG)** — grounded Q&A hard-constrained to the case evidence, with a
   deterministic fallback; never invents an identifier or fact.
 - **Adjudicator and reranker** — extend the deterministic engine, with AI-assessed links tagged
@@ -89,6 +92,14 @@ One identifier flows through a five-stage pipeline:
   Additional Data panel (inert unless enabled with a valid session).
 - **Deep bio scraping**, **email→username bridging**, and structured profile-page fact
   extraction (socid_extractor).
+- **Brave Search** — an optional second, independent search index run in parallel with
+  Serper (not a replacement); widens dork coverage since it's not the same underlying
+  index as Google/Bing. Same fail-safe contract as every optional source — inert with no
+  key. See `GET_API_KEYS.md` / `API_KEYS_AND_BOTS.md`.
+- **OnionSearch sandbox** (`tools/onionsearch-sandbox/`) — a standalone, network-isolated
+  Docker sandbox for dark-web (.onion) search, routed exclusively through Tor with no
+  route to the real internet even if the tool itself misbehaves. Not wired into the main
+  pipeline; run it separately per that folder's `docker-compose.yml`.
 
 **Investigator workflow**
 - **Re-iteration / cross-pivoting** — select discovered accounts, derived names, or profile

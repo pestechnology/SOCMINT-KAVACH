@@ -1,0 +1,57 @@
+# ============================================================
+# OnionSearch sandbox — network-isolated dark-web search.
+#
+# Safety model: the `onionsearch` service is attached ONLY to the `isolated`
+# network, which is created with `internal: true` — Docker removes the default
+# route to the internet for that network entirely. The ONLY thing onionsearch's
+# container can reach is the `tor` service (via Docker's built-in container DNS),
+# which straddles both networks and is the sole path out, over Tor.
+#
+# This means: even a hypothetical bug in OnionSearch's own proxy handling, or in
+# any of its dependencies, CANNOT leak a direct connection — there is no route for
+# it to leak through, at the kernel/network-namespace level, not just the
+# application level.
+#
+# Usage:
+#   docker compose up -d tor              # start Tor once (leave it running)
+#   docker compose run --rm onionsearch "search term" --limit 2
+#   -> results land in ./output/ on the host, nothing else touches your real network.
+#
+# Standalone tool — deliberately NOT part of the main VERTEX docker-compose.yml or
+# backend process: this never shares a process, credentials, or network with
+# anything that also makes real-IP calls.
+# ============================================================
+services:
+  tor:
+    image: dperson/torproxy
+    networks:
+      - egress    # tor needs real internet access to reach the Tor network itself
+      - isolated  # and it's onionsearch's only door out, over that Tor connection
+    restart: unless-stopped
+
+  onionsearch:
+    build: .
+    networks:
+      - isolated  # ONLY this network — no route to the internet at all
+    volumes:
+      - ./output:/output
+    depends_on:
+      - tor
+
+  # Proof-of-isolation check — NOT part of normal usage. Run this once after
+  # `docker compose up` to verify the isolation actually holds on this machine:
+  #   docker compose run --rm --entrypoint sh isolation-check -c \
+  #     "curl -m 5 -s -o /dev/null -w 'direct internet: HTTP %{http_code}\n' https://api.ipify.org || echo 'direct internet: BLOCKED (expected)'"
+  isolation-check:
+    build: .
+    networks:
+      - isolated
+    entrypoint: ["sh"]
+    profiles: ["check"]   # never starts unless explicitly invoked
+
+networks:
+  egress:
+    driver: bridge
+  isolated:
+    driver: bridge
+    internal: true   # <-- the actual safety guarantee: no default route out

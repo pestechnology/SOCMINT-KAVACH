@@ -49,6 +49,10 @@ DEMO_FALLBACK_ENABLED: bool = _get_bool("DEMO_FALLBACK_ENABLED", True)
 
 # ---- API keys ----
 SERPER_API_KEY: str = _get("SERPER_API_KEY")
+# Brave Search API — a second, independent search index run in parallel with Serper
+# (see brave_scraper.py). Optional: the scraper returns [] with no key, same fail-safe
+# contract as every other optional-key source.
+BRAVE_API_KEY: str = _get("BRAVE_API_KEY")
 SUPADATA_API_KEY: str = _get("SUPADATA_API_KEY")  # web scrape API (anti-bot bypass)
 INTELBASE_API_KEY: str = _get("INTELBASE_API_KEY")  # breach/OSINT lookup API (email/username/phone)
 # Route entity/fact extraction for Indic-script text to Gemini/IndicNER instead of Llama.
@@ -94,8 +98,14 @@ DEHASHED_API_KEY: str = _get("DEHASHED_API_KEY")
 LEAKCHECK_API_KEY: str = _get("LEAKCHECK_API_KEY")
 
 # ---- LLM model names (NVIDIA Cloud, OpenAI-compatible) ----
-LLM_EXTRACT_MODEL: str = _get("LLM_EXTRACT_MODEL", "meta/llama-3.3-70b-instruct")
-LLM_EXPLAIN_MODEL: str = _get("LLM_EXPLAIN_MODEL", "deepseek-ai/deepseek-v4-pro")
+# NOTE (2026-09-01): NVIDIA retired meta/llama-3.3-70b-instruct and
+# deepseek-ai/deepseek-v4-pro from the integrate.api.nvidia.com catalog (both now
+# 410 Gone) — a valid NVIDIA_API_KEY alone is NOT enough, the model id itself has to
+# still exist. The two defaults below were verified live against /v1/chat/completions
+# (HTTP 200) on that date; re-check https://integrate.api.nvidia.com/v1/models if
+# either goes 410 again, and override via .env rather than editing here.
+LLM_EXTRACT_MODEL: str = _get("LLM_EXTRACT_MODEL", "openai/gpt-oss-120b")
+LLM_EXPLAIN_MODEL: str = _get("LLM_EXPLAIN_MODEL", "nvidia/nemotron-3-super-120b-a12b")
 LLM_TIMEOUT_SECONDS: int = int(_get("LLM_TIMEOUT_SECONDS", "45"))
 
 # ---- Groq Cloud (reranking + failover) ----
@@ -110,10 +120,12 @@ GROQ_MODEL: str = _get("GROQ_MODEL", "llama-3.3-70b-versatile")
 # further falls back to the Groq path — so it works with zero extra config.
 CHAT_NVIDIA_API_KEY: str = _get("CHAT_NVIDIA_API_KEY") or NVIDIA_API_KEY
 CHAT_NVIDIA_BASE_URL: str = _get("CHAT_NVIDIA_BASE_URL", NVIDIA_BASE_URL)
-# llama-3.3-70b on the NVIDIA integrate tier queues hard and times out (~80s); the 3.1-70b
-# build answers in ~5s at comparable quality — the right default for interactive chat. Fast
-# 8b (meta/llama-3.1-8b-instruct, ~0.8s) is the fallback for the lowest latency.
-CHAT_LLM_MODEL: str = _get("CHAT_LLM_MODEL", "meta/llama-3.1-70b-instruct")
+# meta/llama-3.1-70b-instruct (the prior default) and meta/llama-3.1-8b-instruct (the
+# prior low-latency fallback) were both retired from NVIDIA's catalog as of 2026-09-01
+# (410 Gone) alongside the two models above. Reusing the same verified-working
+# openai/gpt-oss-120b here until a dedicated low-latency replacement is verified —
+# see the LLM_EXTRACT_MODEL note above for how to re-check the catalog.
+CHAT_LLM_MODEL: str = _get("CHAT_LLM_MODEL", "openai/gpt-oss-120b")
 
 # ---- Paths ----
 _ROOT = Path(__file__).resolve().parent.parent
@@ -133,6 +145,7 @@ _REQUIRED = {
 }
 # Keys that improve coverage but are not required.
 _OPTIONAL = {
+    "BRAVE_API_KEY": BRAVE_API_KEY,
     "HIBP_API_KEY": HIBP_API_KEY,
     "NUMVERIFY_KEY": NUMVERIFY_KEY,
     "TELEGRAM_API_ID": TELEGRAM_API_ID,

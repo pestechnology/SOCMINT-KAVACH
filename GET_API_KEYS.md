@@ -124,6 +124,7 @@ share it) are in `API_KEYS_AND_BOTS.md` and `DOCKER.md`.
 | Key | Free? | Where to get it |
 | --- | --- | --- |
 | `HIBP_API_KEY` | **Paid (~$4/mo)** | https://haveibeenpwned.com/API/Key → purchase → copy key. **Not needed to run the project** — it only adds extra breach coverage. |
+| `BRAVE_API_KEY` | Free tier ($5/mo credit, ≈1,000 queries; card required) | https://api-dashboard.search.brave.com → sign up → copy the API key. **Not needed to run the project** — a second, independent search index run in parallel with Serper; widens coverage since it's not the same underlying index as Google/Bing. |
 
 ---
 

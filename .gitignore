@@ -46,6 +46,17 @@ report_*.json
 data/synthetic_dataset.json
 artifacts/
 *.har
+# Blackbird itself is cloned locally per SETUP.md (git clone .../blackbird
+# tools/blackbird) - it's its own separate repo, never this repo's content.
+tools/blackbird/
+# OnionSearch sandbox's per-run search output (docker-compose.yml creates this dir
+# via its volume mount; nothing under it belongs in version control).
+tools/onionsearch-sandbox/output/
+# Rendered PDF copies of the *.md docs below aren't committed — the .md is the
+# source of truth; render your own copy locally if you want a PDF to hand out.
+VERTEX_Feature_Walkthrough.pdf
+VERTEX_Features_Reference.pdf
+VERTEX_Tools_Reference.pdf
 
 # ---- Pretrained model binaries (downloaded by setup, not committed) ----
 backend/models/*.onnx
