@@ -131,7 +131,8 @@ docker compose up --build  # UI: http://localhost:3000   API: http://localhost:8
 ### Option B — Run natively (without Docker)
 
 Requires Python 3.10+ and Node 18+. See [`SETUP.md`](SETUP.md) for the full guide, including
-Blackbird (an external repo) and all optional tools.
+Blackbird (an external repo) and all optional tools. **On Linux**, `./setup_linux.sh`
+automates everything below except filling in `.env` and starting the servers.
 
 ```bash
 # 1. Secrets

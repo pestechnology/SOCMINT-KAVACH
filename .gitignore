@@ -91,3 +91,5 @@ scratchpad/
 
 # ---- local pitch working files ----
 VERTEX-pitch/
+SESSION_LOG_*.md
+SESSION_LOG_*.pdf

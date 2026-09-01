@@ -5,6 +5,21 @@ install (no Docker) on **Linux** (primary — this is the reference platform bel
 **macOS**, and **Windows**. If you'd rather not install anything OS-specific at all, use
 Docker instead — see [`DOCKER.md`](DOCKER.md); it's the same on every OS.
 
+**On Linux, [`setup_linux.sh`](setup_linux.sh) automates every step in §1–§5 and §9**
+(system packages, venv, deps, Chromium, face models, Blackbird + its wrapper, frontend
+`npm install`, DB + admin user) — it's kept in exact sync with the manual steps below, so
+either works; the script exists to remove copy-paste transcription risk on a fresh box:
+
+```bash
+git clone <your-fork-url> vertex && cd vertex
+./setup_linux.sh                 # or add --skip-sudo / --skip-browser — see its own --help-style header comment
+# then: fill in .env (step 2 below), and start the backend + frontend (steps 4-5 below)
+```
+
+The rest of this document is the manual, step-by-step version — read it if the script
+fails partway (it tells you which step), if you're on macOS/Windows, or if you just want
+to understand what's happening.
+
 ## 1. Prerequisites
 
 - Python 3.10 or later (tested on 3.10, 3.13)
