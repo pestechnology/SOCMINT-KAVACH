@@ -35,7 +35,19 @@ export default function AccountCard({
 }) {
   const meta = entity.metadata || {};
   const platform = entity.platform || entity.type || "account";
-  const tier = entity._tier || tierFromConfidence(entity.confidence);
+  const rawTier = entity._tier || tierFromConfidence(entity.confidence);
+
+  // Did we ever actually retrieve anything FROM this account's page? A username
+  // enumerator only proves "a page exists at this handle" — it does not prove whose it
+  // is. Accounts joined to a cluster on handle identity alone, with no name/bio/photo
+  // ever fetched, would otherwise inherit that cluster's "Strong match" badge while
+  // contributing no evidence themselves (see profile_page_fetcher.py's MAX_FETCH cap —
+  // most discovered accounts are never fetched at all). Show those honestly as
+  // "Unverified" instead of asserting a match we never corroborated.
+  const hasProfileData = !!(
+    meta.fullname || meta.name || meta.bio || meta.photo_url || meta.title || meta.email
+  );
+  const tier = hasProfileData ? rawTier : "UNVERIFIED";
   // Badge the literal search-query match wherever it appears, from prop or server flag.
   const isExact = exactMatch || entity._exactMatch || !!meta.exact_seed_match;
 
@@ -142,9 +154,18 @@ export default function AccountCard({
         </div>
       )}
 
-      {/* Row 4: tier badge */}
-      <div className="mt-2">
+      {/* Row 4: tier badge. An unverified account also states WHY, so the investigator
+          knows this is "we never looked", not "we looked and found nothing". */}
+      <div className="mt-2 flex items-center gap-2 flex-wrap">
         <ConfidenceBadge tier={tier} />
+        {!hasProfileData && (
+          <span
+            className="text-[10px] text-slate-500"
+            title="A page exists at this handle, but no profile data (name, bio or photo) was retrieved from it, so nothing corroborates that it belongs to the subject."
+          >
+            handle only — no profile data retrieved
+          </span>
+        )}
       </div>
     </button>
   );

@@ -8,6 +8,12 @@ const CONFIG = {
   MEDIUM: { label: "Possible match", color: "var(--tone-amber)",   bg: "rgba(255,183,3,0.12)",  border: "rgba(255,183,3,0.35)" },
   LOW:    { label: "Not linked",     color: "var(--tone-rose)",    bg: "rgba(255,51,102,0.12)", border: "rgba(255,51,102,0.35)" },
   REJECT: { label: "Not linked",     color: "var(--tone-rose)",    bg: "rgba(255,51,102,0.12)", border: "rgba(255,51,102,0.35)" },
+  // UNVERIFIED: the account exists under a matching handle, but NOTHING was ever
+  // retrieved from its page (no name, bio, photo or title). It contributed no evidence
+  // of its own, so it must not wear the cluster's "Strong match" badge — claiming a
+  // match we never corroborated is exactly the over-claiming this product refuses.
+  // Deliberately neutral (slate), not red: it is not a rejected link, it is unchecked.
+  UNVERIFIED: { label: "Unverified", color: "rgb(148,163,184)", bg: "rgba(148,163,184,0.10)", border: "rgba(148,163,184,0.30)" },
 };
 
 export default function ConfidenceBadge({ tier = "LOW", score = null, className = "" }) {
