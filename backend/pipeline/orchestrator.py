@@ -49,6 +49,7 @@ from backend.ingestion.telethon_scraper import TelethonScraper
 from backend.ingestion.newleaks_scraper import NewLeaksScraper
 from backend.ingestion.xposedornot_scraper import XposedOrNotScraper
 from backend.ingestion.hudsonrock_scraper import HudsonRockScraper
+from backend.ingestion.account_oracle_scraper import AccountOracleScraper
 from backend.ingestion.holehe_scraper import HoleheScraper
 from backend.ingestion.sherlock_scraper import SherlockScraper
 from backend.ingestion.variants import username_variants
@@ -112,7 +113,7 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         # LinkedIn vanity URL (those are name-based), so it needs the recovered-name/
         # discovered-name candidates linkedin_search() tries, not just the raw value.
         "username": [_maigret, _sherlock, _blackbird, SocialscanScraper(), RedditScraper(), TelethonScraper(), NewLeaksScraper(), GitHubScraper(),
-                     HudsonRockScraper(),
+                     HudsonRockScraper(), AccountOracleScraper(),
                      SerperScraper('"{q}"'), BraveScraper('"{q}"')],
         "upi":      [UPIScraper(), SerperScraper('"{q}"'), BraveScraper('"{q}"')],
         # LinkedIn coverage for a name seed also comes from the dedicated linkedin_search()
