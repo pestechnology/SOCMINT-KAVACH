@@ -1,0 +1,8 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+requests>=2.32.3
+beautifulsoup4>=4.12.3
+html5lib>=1.1
+PySocks>=1.7.1
+nltk>=3.9.1
+textblob>=0.18.0

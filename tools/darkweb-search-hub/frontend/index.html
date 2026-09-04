@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Darkweb Search Hub</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #12151d; --border: #232733; --text: #e6e8ee;
+    --muted: #8b93a7; --accent: #6ea8fe; --danger: #ff6b6b; --ok: #4ade80;
+    --warn: #f5a524;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--border); }
+  header h1 { margin:0; font-size: 18px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main { max-width: 980px; margin: 0 auto; padding: 20px 24px 60px; }
+  .searchbar { display:flex; gap:8px; margin-bottom: 14px; }
+  input[type=text] {
+    flex:1; padding:10px 12px; background: var(--panel); border:1px solid var(--border);
+    color: var(--text); border-radius:6px; font-size:14px; font-family: inherit;
+  }
+  button {
+    padding: 10px 16px; background: var(--accent); color:#0b0d12; border:none;
+    border-radius:6px; font-weight:600; cursor:pointer; font-family: inherit;
+  }
+  button.secondary { background: transparent; color: var(--muted); border:1px solid var(--border); }
+  button:disabled { opacity: .5; cursor: default; }
+  .sources { display:flex; flex-wrap:wrap; gap: 14px; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
+  .sources label { display:flex; align-items:center; gap: 6px; cursor:pointer; }
+  fieldset { border:1px solid var(--border); border-radius:8px; padding: 10px 14px; margin: 0 0 16px; }
+  legend { color: var(--muted); font-size: 12px; padding: 0 6px; }
+  .engine-grid { display:flex; flex-wrap:wrap; gap: 10px; font-size: 13px; }
+  .engine-grid label { display:flex; align-items:center; gap:6px; padding: 4px 8px; border:1px solid var(--border); border-radius: 6px; }
+  .badge { font-size: 10px; padding: 1px 6px; border-radius: 10px; }
+  .badge.tor { background:#2a2440; color:#c4b5fd; }
+  .badge.unfiltered { background:#3a1f1f; color: var(--danger); }
+  .warn-box { border:1px solid var(--warn); background:#241c0c; color: var(--warn); padding: 10px 12px; border-radius:6px; font-size:13px; margin-bottom:14px; display:none; }
+  .status-line { color: var(--muted); font-size:12px; margin: 4px 0 20px; }
+  .status-line .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; position:relative; top:1px; }
+  .dot.up { background: var(--ok); } .dot.down { background: var(--danger); }
+  section.results-group { margin-bottom: 26px; }
+  section.results-group > h2 { font-size:14px; margin: 0 0 8px; color: var(--accent); display:flex; align-items:center; gap:8px; }
+  .count { color: var(--muted); font-weight: normal; font-size:12px; }
+  .card { background: var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+  .card .title { font-weight:600; font-size:13.5px; word-break: break-word; }
+  .card .desc { color: var(--muted); font-size:12.5px; margin-top:4px; }
+  .card a { color: var(--accent); text-decoration:none; word-break: break-all; }
+  .card a:hover { text-decoration: underline; }
+  .card .meta { margin-top: 6px; display:flex; gap:8px; align-items:center; }
+  .error-box { color: var(--danger); font-size:13px; padding: 8px 0; }
+  .confirm-box { color: var(--warn); font-size: 13px; padding: 8px 0; }
+  .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+  .loading { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🕸️ Darkweb Search Hub</h1>
+  <p>Ahmia · Darkdump (6 engines) · DeepDarkCTI — a standalone research tool, not wired into the main VERTEX pipeline.</p>
+</header>
+<main>
+  <div class="searchbar">
+    <input type="text" id="q" placeholder="identifier, username, keyword…" autofocus>
+    <button id="go">Search</button>
+    <button class="secondary" id="refreshDDCTI" title="git pull the deepdarkCTI list">↻ refresh list</button>
+  </div>
+
+  <div class="sources">
+    <label><input type="checkbox" id="src-ahmia" checked> Ahmia (clearnet, filtered)</label>
+    <label><input type="checkbox" id="src-darkdump" checked> Darkdump — other engines</label>
+    <label><input type="checkbox" id="src-deepdarkcti" checked> DeepDarkCTI (curated list)</label>
+  </div>
+
+  <fieldset id="engineFieldset">
+    <legend>Darkdump engines</legend>
+    <div class="engine-grid" id="engineGrid">loading engine status…</div>
+    <div class="warn-box" id="unfilteredWarn">
+      ⚠ One or more selected engines are <b>UNFILTERED</b> by upstream — results can include illegal or
+      disturbing content. This tool is for legitimate, authorised research only.
+      <label style="display:block;margin-top:6px;"><input type="checkbox" id="confirmUnfiltered"> I understand — include unfiltered engines</label>
+    </div>
+  </fieldset>
+
+  <div class="status-line" id="statusLine">checking Tor status…</div>
+
+  <div id="results"></div>
+</main>
+
+<script>
+const API = ""; // same origin
+
+async function loadHealth() {
+  const r = await fetch(`${API}/api/health`);
+  const h = await r.json();
+  const dot = h.tor_running ? 'up' : 'down';
+  document.getElementById('statusLine').innerHTML =
+    `<span class="dot ${dot}"></span>Tor ${h.tor_running ? 'is running' : 'is NOT running'} on 127.0.0.1:9050 ` +
+    `— Tor-only engines ${h.tor_running ? 'are available' : 'will be skipped'}. ` +
+    `DeepDarkCTI: ${h.deepdarkcti_categories.length} categories loaded.`;
+
+  const grid = document.getElementById('engineGrid');
+  grid.innerHTML = '';
+  Object.entries(h.engines).forEach(([key, e]) => {
+    if (key === 'ahmia') return; // ahmia has its own top-level checkbox
+    const label = document.createElement('label');
+    label.innerHTML = `
+      <input type="checkbox" data-engine="${key}" ${e.available ? 'checked' : ''} ${e.available ? '' : 'disabled'}>
+      ${e.name}
+      ${e.tor_required ? '<span class="badge tor">Tor</span>' : ''}
+      ${!e.filtered ? '<span class="badge unfiltered">unfiltered</span>' : ''}
+      ${e.available ? '' : '<span style="color:#666">(Tor down)</span>'}
+    `;
+    grid.appendChild(label);
+  });
+  updateUnfilteredWarning();
+  grid.querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', updateUnfilteredWarning));
+}
+
+function selectedEngines() {
+  return [...document.querySelectorAll('#engineGrid input[type=checkbox]:checked')]
+    .map(cb => cb.dataset.engine);
+}
+
+function anyUnfilteredSelected() {
+  const unfilteredKeys = [...document.querySelectorAll('#engineGrid .badge.unfiltered')]
+    .map(b => b.closest('label').querySelector('input').dataset.engine);
+  return selectedEngines().some(k => unfilteredKeys.includes(k));
+}
+
+function updateUnfilteredWarning() {
+  document.getElementById('unfilteredWarn').style.display = anyUnfilteredSelected() ? 'block' : 'none';
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderEngineResult(title, res) {
+  if (!res) return '';
+  let inner = '';
+  if (res.requires_confirmation) {
+    inner = `<div class="confirm-box">⚠ ${escapeHtml(res.error)}</div>`;
+  } else if (!res.ok) {
+    inner = `<div class="error-box">✕ ${escapeHtml(res.error || 'failed')}</div>`;
+  } else if (!res.results || res.results.length === 0) {
+    inner = `<div class="empty">no results</div>`;
+  } else {
+    inner = res.results.map(r => `
+      <div class="card">
+        <div class="title">${escapeHtml(r.title || r.name || 'untitled')}</div>
+        ${r.description ? `<div class="desc">${escapeHtml(r.description)}</div>` : ''}
+        ${(r.site_url || r.url) ? `<div class="meta"><a href="${escapeHtml(r.site_url || r.url)}" target="_blank" rel="noopener">${escapeHtml(r.site_url || r.url)}</a></div>` : ''}
+        ${r.status ? `<div class="meta"><span class="badge ${r.status==='ONLINE'?'ok':'tor'}" style="background:#1c2230;color:#9fb3d9">${r.status}</span> <span style="color:#666">${escapeHtml(r.category||'')}</span></div>` : ''}
+      </div>`).join('');
+  }
+  return `<section class="results-group"><h2>${title} <span class="count">${res.results ? res.results.length : 0} result(s)</span></h2>${inner}</section>`;
+}
+
+async function runSearch() {
+  const q = document.getElementById('q').value.trim();
+  if (!q) return;
+  const resultsEl = document.getElementById('results');
+  resultsEl.innerHTML = '<div class="loading">searching…</div>';
+
+  const sources = [];
+  if (document.getElementById('src-ahmia').checked) sources.push('ahmia');
+  if (document.getElementById('src-darkdump').checked) sources.push('darkdump');
+  if (document.getElementById('src-deepdarkcti').checked) sources.push('deepdarkcti');
+
+  const params = new URLSearchParams({
+    q,
+    sources: sources.join(','),
+    darkdump_engines: selectedEngines().join(','),
+    confirm_unfiltered: document.getElementById('confirmUnfiltered').checked,
+    amount: 20,
+  });
+
+  const r = await fetch(`${API}/api/search?${params.toString()}`);
+  const data = await r.json();
+
+  let html = '';
+  if (data.sources.ahmia) html += renderEngineResult('Ahmia', data.sources.ahmia);
+  if (data.sources.darkdump) {
+    Object.entries(data.sources.darkdump).forEach(([key, res]) => {
+      html += renderEngineResult(`Darkdump · ${key}`, res);
+    });
+  }
+  if (data.sources.deepdarkcti) html += renderEngineResult('DeepDarkCTI', data.sources.deepdarkcti);
+
+  resultsEl.innerHTML = html || '<div class="empty">no sources selected</div>';
+}
+
+document.getElementById('go').addEventListener('click', runSearch);
+document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
+document.getElementById('refreshDDCTI').addEventListener('click', async () => {
+  const btn = document.getElementById('refreshDDCTI');
+  btn.disabled = true; btn.textContent = 'refreshing…';
+  const r = await fetch(`${API}/api/deepdarkcti/refresh`, { method: 'POST' });
+  const res = await r.json();
+  btn.disabled = false; btn.textContent = '↻ refresh list';
+  await loadHealth();
+  alert(res.ok ? `deepdarkCTI list ${res.action}` : `refresh failed: ${res.error}`);
+});
+
+loadHealth();
+</script>
+</body>
+</html>

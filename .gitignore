@@ -49,6 +49,9 @@ artifacts/
 # Blackbird itself is cloned locally per SETUP.md (git clone .../blackbird
 # tools/blackbird) - it's its own separate repo, never this repo's content.
 tools/blackbird/
+# Same reasoning for deepdarkCTI (github.com/fastfire/deepdarkCTI) - cloned locally by
+# tools/darkweb-search-hub, its own separate repo, refreshed via git pull, not committed.
+tools/darkweb-search-hub/backend/deepdarkCTI/
 # OnionSearch sandbox's per-run search output (docker-compose.yml creates this dir
 # via its volume mount; nothing under it belongs in version control).
 tools/onionsearch-sandbox/output/
@@ -93,3 +96,6 @@ scratchpad/
 VERTEX-pitch/
 SESSION_LOG_*.md
 SESSION_LOG_*.pdf
+
+# ---- Local DB backups (real case data from a merge/migration - never commit) ----
+db_backups/
