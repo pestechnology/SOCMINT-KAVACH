@@ -117,8 +117,11 @@ export default function AccountCard({
               onClick={toggleBookmark}
               title={bookmarked ? "Remove bookmark" : "Bookmark this account"}
               aria-pressed={bookmarked}
-              className="text-[13px] leading-none shrink-0 transition-transform hover:scale-110"
-              style={{ color: bookmarked ? "var(--tone-cyan-bright, #00f2fe)" : "#64748b" }}
+              className="shrink-0 text-[18px] leading-none transition-all duration-150 hover:scale-125"
+              style={{
+                color: bookmarked ? "var(--tone-cyan-bright, #00f2fe)" : "#5b6472",
+                textShadow: bookmarked ? "0 0 8px rgba(0,242,254,0.6)" : "none",
+              }}
             >
               {bookmarked ? "★" : "☆"}
             </button>
@@ -201,7 +204,7 @@ export default function AccountCard({
         )}
         {/* Severity flags — investigator-set, red/orange/yellow. */}
         {onAnnotate && (
-          <span className="inline-flex items-center gap-1 ml-auto shrink-0" onClick={stop}>
+          <span className="inline-flex items-center gap-1.5 ml-auto shrink-0" onClick={stop}>
             {FLAGS.map((f) => {
               const on = activeFlag === f.key;
               return (
@@ -211,14 +214,22 @@ export default function AccountCard({
                   onClick={(e) => setFlag(e, f.key)}
                   title={`${f.title}${on ? " (click to clear)" : ""}`}
                   aria-pressed={on}
-                  className="w-3.5 h-3.5 rounded-full transition-all"
+                  className="w-[18px] h-[18px] rounded-full flex items-center justify-center transition-all duration-150 hover:scale-110"
                   style={{
                     background: on ? f.color : "transparent",
-                    border: `1.5px solid ${f.color}`,
-                    boxShadow: on ? `0 0 6px ${f.color}` : "none",
-                    opacity: on ? 1 : 0.55,
+                    border: `2px solid ${f.color}`,
+                    boxShadow: on ? `0 0 8px ${f.color}` : "none",
+                    opacity: on ? 1 : 0.4,
                   }}
-                />
+                >
+                  {on && (
+                    <svg width="9" height="9" viewBox="0 0 12 12" fill="none"
+                         aria-hidden style={{ color: "#0b0d12" }}>
+                      <path d="M2.5 6.2l2.2 2.3 4.8-5" stroke="currentColor"
+                            strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
               );
             })}
           </span>

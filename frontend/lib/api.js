@@ -47,6 +47,13 @@ export const api = {
   getAnnotations: (id) => req(`/cases/${id}/annotations`),
   setAnnotation: (id, entityId, patch) =>
     req(`/cases/${id}/annotations/${entityId}`, { method: "PUT", body: patch }),
+  // Case collections (named folders/watchlists to sort/save cases into).
+  getCollections: () => req("/collections"),
+  createCollection: (name, color = "") =>
+    req("/collections", { method: "POST", body: { name, color } }),
+  deleteCollection: (cid) => req(`/collections/${cid}`, { method: "DELETE" }),
+  setCaseCollections: (caseId, collection_ids) =>
+    req(`/cases/${caseId}/collections`, { method: "PUT", body: { collection_ids } }),
   // Grounded case chat — answers strictly from this case's data.
   caseChat: (id, question, history = []) =>
     req(`/cases/${id}/chat`, { method: "POST", body: { question, history } }),

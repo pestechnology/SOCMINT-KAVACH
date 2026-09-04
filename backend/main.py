@@ -59,6 +59,12 @@ except Exception as e:
     print(f"[main] WARNING: case routes failed to load: {e}")
 
 try:
+    from backend.cases.collections_routes import router as collections_router
+    app.include_router(collections_router)
+except Exception as e:
+    print(f"[main] WARNING: collections routes failed to load: {e}")
+
+try:
     from backend.agentic_browser.api import router as agentic_router
     app.include_router(agentic_router)
 except Exception as e:

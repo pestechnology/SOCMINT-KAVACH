@@ -64,16 +64,61 @@ export default function Cases() {
   const [search, setSearch] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [username, setUsername] = useState("");
+  // Collections (named folders/watchlists) + membership map {case_id: [collection_id]}.
+  const [collections, setCollections] = useState([]);
+  const [memberships, setMemberships] = useState({});
+  const [activeCollection, setActiveCollection] = useState("all"); // "all" | "none" | id
+  const [pickerCase, setPickerCase] = useState(null); // case_id whose folder picker is open
 
   useEffect(() => {
     if (!getToken()) { router.replace("/login"); return; }
     try { setUsername(localStorage.getItem("vertex_user") || "investigator"); } catch (_) {}
     refresh();
+    refreshCollections();
   }, [router]);
 
   async function refresh() {
     try { setCases((await api.listCases()).cases); }
     catch (e) { if (e.status === 401) { clearToken(); router.replace("/login"); } }
+  }
+
+  async function refreshCollections() {
+    try {
+      const d = await api.getCollections();
+      setCollections(d.collections || []);
+      setMemberships(d.memberships || {});
+    } catch (_) { /* non-fatal overlay */ }
+  }
+
+  async function createCollection(name) {
+    const n = (name || "").trim();
+    if (!n) return null;
+    try {
+      const col = await api.createCollection(n);
+      await refreshCollections();
+      return col;
+    } catch (_) { return null; }
+  }
+
+  async function toggleCaseCollection(caseId, collectionId) {
+    const current = memberships[caseId] || [];
+    const next = current.includes(collectionId)
+      ? current.filter((c) => c !== collectionId)
+      : [...current, collectionId];
+    // optimistic
+    setMemberships((m) => ({ ...m, [caseId]: next }));
+    try {
+      await api.setCaseCollections(caseId, next);
+      await refreshCollections();
+    } catch (_) { refreshCollections(); }
+  }
+
+  async function removeCollection(collectionId) {
+    try {
+      await api.deleteCollection(collectionId);
+      if (activeCollection === collectionId) setActiveCollection("all");
+      await refreshCollections();
+    } catch (_) {}
   }
 
   function signOut() {
@@ -82,9 +127,13 @@ export default function Cases() {
     router.replace("/login");
   }
 
-  const filtered = cases.filter((c) =>
-    (c.title || "").toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = cases.filter((c) => {
+    if (!(c.title || "").toLowerCase().includes(search.toLowerCase())) return false;
+    if (activeCollection === "all") return true;
+    const mine = memberships[c.case_id] || [];
+    if (activeCollection === "none") return mine.length === 0;   // "Unfiled"
+    return mine.includes(activeCollection);
+  });
   const nTotal = cases.length;
   const nRunning = cases.filter((c) => c.status === "running" || c.status === "pending").length;
   const nComplete = cases.filter((c) => c.status === "complete").length;
@@ -140,6 +189,18 @@ export default function Cases() {
           />
         </div>
 
+        {/* COLLECTION FILTER CHIPS — sort/browse cases by saved folder */}
+        {nTotal > 0 && (
+          <CollectionBar
+            collections={collections}
+            active={activeCollection}
+            onPick={setActiveCollection}
+            onCreate={createCollection}
+            onDelete={removeCollection}
+            unfiledCount={cases.filter((c) => !(memberships[c.case_id] || []).length).length}
+          />
+        )}
+
         {/* CASE GRID / EMPTY STATE */}
         {nTotal === 0 ? (
           <div className="mt-10">
@@ -179,8 +240,41 @@ export default function Cases() {
                       </span>
                     )}
                   </div>
-                  <StatusPill status={c.status} className="shrink-0" />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <CasePicker
+                      caseId={c.case_id}
+                      collections={collections}
+                      memberIds={memberships[c.case_id] || []}
+                      open={pickerCase === c.case_id}
+                      onOpen={(e) => { e.stopPropagation(); setPickerCase(pickerCase === c.case_id ? null : c.case_id); }}
+                      onClose={() => setPickerCase(null)}
+                      onToggle={(cid) => toggleCaseCollection(c.case_id, cid)}
+                      onCreate={async (name) => { const col = await createCollection(name); if (col) toggleCaseCollection(c.case_id, col.collection_id); }}
+                    />
+                    <StatusPill status={c.status} className="shrink-0" />
+                  </div>
                 </div>
+
+                {/* Collection chips this case is filed under */}
+                {(memberships[c.case_id] || []).length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {(memberships[c.case_id] || []).map((cid) => {
+                      const col = collections.find((x) => x.collection_id === cid);
+                      if (!col) return null;
+                      return (
+                        <span key={cid}
+                          className="inline-flex items-center gap-1 text-[10px] font-mono rounded px-1.5 py-0.5 border"
+                          style={{
+                            color: col.color || "var(--tone-cyan-bright, #00f2fe)",
+                            borderColor: (col.color || "#00f2fe") + "66",
+                            background: (col.color || "#00f2fe") + "14",
+                          }}>
+                          🗂 {col.name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* Officer-supplied case type/context, when given */}
                 {!!(c.case_context || "").trim() && (
@@ -219,6 +313,126 @@ export default function Cases() {
         />
       )}
     </div>
+  );
+}
+
+// Row of collection filter chips: All / each collection (with count) / Unfiled, plus an
+// inline "new collection" control. Clicking a chip filters the case grid to that folder.
+function CollectionBar({ collections, active, onPick, onCreate, onDelete, unfiledCount }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const chip = (key, label, on, extra = null) => (
+    <button
+      key={key}
+      onClick={() => onPick(key)}
+      className={`group inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-mono border transition-all ${
+        on ? "border-cyan-400 bg-cyan-400/10 text-cyan-300"
+           : "border-slate-700 bg-slate-900/50 text-slate-400 hover:border-slate-500"}`}
+    >
+      {label}
+      {extra}
+    </button>
+  );
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      {chip("all", "All cases", active === "all")}
+      {collections.map((c) =>
+        chip(
+          c.collection_id,
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full" style={{ background: c.color || "#00f2fe" }} />
+            {c.name}
+            <span className="text-slate-500">({c.case_count})</span>
+          </span>,
+          active === c.collection_id,
+          <span
+            role="button"
+            title="Delete collection"
+            onClick={(e) => { e.stopPropagation(); if (confirm(`Delete collection "${c.name}"? Cases are not deleted.`)) onDelete(c.collection_id); }}
+            className="ml-0.5 text-slate-600 hover:text-rose-400 opacity-0 group-hover:opacity-100"
+          >×</span>
+        )
+      )}
+      {unfiledCount > 0 && chip("none",
+        <span>Unfiled <span className="text-slate-500">({unfiledCount})</span></span>,
+        active === "none")}
+
+      {adding ? (
+        <span className="inline-flex items-center gap-1">
+          <input
+            autoFocus value={name} onChange={(e) => setName(e.target.value)}
+            onKeyDown={async (e) => {
+              if (e.key === "Enter") { await onCreate(name); setName(""); setAdding(false); }
+              if (e.key === "Escape") { setName(""); setAdding(false); }
+            }}
+            placeholder="Collection name…"
+            className="w-40 rounded-full bg-slate-900 border border-cyan-500/50 px-3 py-1 text-xs text-slate-100 outline-none"
+          />
+          <button onClick={async () => { await onCreate(name); setName(""); setAdding(false); }}
+            className="text-xs text-cyan-400 hover:text-cyan-300">add</button>
+        </span>
+      ) : (
+        <button onClick={() => setAdding(true)}
+          className="rounded-full px-3 py-1 text-xs font-mono border border-dashed border-slate-600 text-slate-400 hover:border-cyan-400 hover:text-cyan-300">
+          + New collection
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Small folder button on a case card that opens a checkbox picker of collections
+// (plus inline create). Stops click propagation so it never opens the case.
+function CasePicker({ caseId, collections, memberIds, open, onOpen, onClose, onToggle, onCreate }) {
+  const [name, setName] = useState("");
+  const filed = memberIds.length;
+  return (
+    <span className="relative" onClick={(e) => e.stopPropagation()}>
+      <button
+        onClick={onOpen}
+        title="Save to collection"
+        className={`text-[15px] leading-none transition-transform hover:scale-110 ${
+          filed ? "text-cyan-300" : "text-slate-500 hover:text-slate-300"}`}
+      >
+        🗂{filed > 0 ? "" : "︎"}
+      </button>
+      {open && (
+        <>
+          {/* click-away backdrop */}
+          <span className="fixed inset-0 z-20" onClick={onClose} />
+          <div className="absolute right-0 top-6 z-30 w-56 rounded-lg border border-slate-700 bg-slate-900 shadow-xl p-2">
+            <div className="text-[10px] font-mono uppercase tracking-wide text-slate-500 px-1 pb-1">
+              Save to collection
+            </div>
+            <div className="max-h-48 overflow-y-auto">
+              {collections.length === 0 && (
+                <div className="text-xs text-slate-500 px-1 py-2">No collections yet.</div>
+              )}
+              {collections.map((c) => {
+                const on = memberIds.includes(c.collection_id);
+                return (
+                  <label key={c.collection_id}
+                    className="flex items-center gap-2 px-1 py-1 rounded hover:bg-slate-800 cursor-pointer">
+                    <input type="checkbox" checked={on}
+                      onChange={() => onToggle(c.collection_id)} className="accent-cyan-400" />
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: c.color || "#00f2fe" }} />
+                    <span className="text-xs text-slate-200 truncate">{c.name}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="border-t border-slate-800 mt-1 pt-1.5 flex items-center gap-1">
+              <input value={name} onChange={(e) => setName(e.target.value)}
+                onKeyDown={async (e) => { if (e.key === "Enter" && name.trim()) { await onCreate(name); setName(""); } }}
+                placeholder="New collection…"
+                className="flex-1 min-w-0 rounded bg-slate-950 border border-slate-700 px-2 py-1 text-xs text-slate-100 outline-none focus:border-cyan-500" />
+              <button onClick={async () => { if (name.trim()) { await onCreate(name); setName(""); } }}
+                className="text-xs text-cyan-400 hover:text-cyan-300 px-1">+</button>
+            </div>
+          </div>
+        </>
+      )}
+    </span>
   );
 }
 

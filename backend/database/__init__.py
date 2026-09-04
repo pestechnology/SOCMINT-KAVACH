@@ -113,11 +113,32 @@ CREATE TABLE IF NOT EXISTS annotations (
     UNIQUE(user_id, case_id, target_key)
 );
 
+-- Case collections: named folders/watchlists an investigator files cases into (like
+-- saving stocks into categories). Per-user; a case may belong to many collections.
+CREATE TABLE IF NOT EXISTS collections (
+    collection_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    color TEXT DEFAULT '',
+    created_at TEXT,
+    UNIQUE(user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS case_collections (
+    user_id TEXT NOT NULL,
+    case_id TEXT NOT NULL,
+    collection_id TEXT NOT NULL,
+    added_at TEXT,
+    UNIQUE(user_id, case_id, collection_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_entities_case ON entities(case_id);
 CREATE INDEX IF NOT EXISTS idx_entities_value ON entities(value);
 CREATE INDEX IF NOT EXISTS idx_clusters_case ON clusters(case_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_case ON audit_ledger(case_id);
 CREATE INDEX IF NOT EXISTS idx_annotations_lookup ON annotations(user_id, case_id);
+CREATE INDEX IF NOT EXISTS idx_collections_user ON collections(user_id);
+CREATE INDEX IF NOT EXISTS idx_case_collections_user ON case_collections(user_id, collection_id);
 """
 
 
