@@ -31,7 +31,15 @@ import httpx
 if TYPE_CHECKING:
     from backend.ingestion.base_module import RawProfile
 
-MAX_FETCH = 20
+# MAX_FETCH was 20, which silently starved enrichment: on a real 87-entity case only 16
+# of 86 fetchable URLs were ever fetched, so 85% of discovered accounts carried no name,
+# bio or photo at all. That matters beyond display — profile_photo_phash, face_match and
+# exact_name_match are among the strongest correlation signals and ALL of them require a
+# fetched field, so an unfetched account is structurally incapable of linking.
+# Measured cost: 2 profiles took 1.1s against a 5s timeout at concurrency 8, so ~90 URLs
+# is ~12 rounds ≈ 15-25s on a run that already takes ~2 minutes. Still bounded and still
+# fail-safe (any individual fetch that errors is skipped silently).
+MAX_FETCH = 100
 _TIMEOUT = 5.0
 _CONCURRENCY = 8
 _UA = "Mozilla/5.0 (compatible; VERTEX-OSINT/1.0)"
