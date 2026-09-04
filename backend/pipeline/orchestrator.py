@@ -48,6 +48,7 @@ from backend.ingestion.reddit_scraper import RedditScraper
 from backend.ingestion.telethon_scraper import TelethonScraper
 from backend.ingestion.newleaks_scraper import NewLeaksScraper
 from backend.ingestion.xposedornot_scraper import XposedOrNotScraper
+from backend.ingestion.hudsonrock_scraper import HudsonRockScraper
 from backend.ingestion.holehe_scraper import HoleheScraper
 from backend.ingestion.sherlock_scraper import SherlockScraper
 from backend.ingestion.variants import username_variants
@@ -93,7 +94,8 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         # coverage at a fifth of the added query cost.
         "email":    [HIBPScraper(), XposedOrNotScraper(), DehashedScraper(), LeakcheckScraper(),
                      HoleheScraper(), BlackbirdEmailScraper(), GitHubScraper(), GravatarScraper(),
-                     EmailRepScraper(), NewLeaksScraper(), SerperScraper('"{q}"'), BraveScraper('"{q}"')],
+                     EmailRepScraper(), NewLeaksScraper(), HudsonRockScraper(),
+                     SerperScraper('"{q}"'), BraveScraper('"{q}"')],
         # NumVerify (carrier/line-type/country) works with the configured key; a PLAIN
         # Serper search returns real web mentions, whereas the old site:truecaller.com
         # dork returned nothing (Truecaller blocks indexing). PhoneInfoga/ignorant stay
@@ -110,6 +112,7 @@ def _seed_tool_map(maigret: MaigretScraper | None = None,
         # LinkedIn vanity URL (those are name-based), so it needs the recovered-name/
         # discovered-name candidates linkedin_search() tries, not just the raw value.
         "username": [_maigret, _sherlock, _blackbird, SocialscanScraper(), RedditScraper(), TelethonScraper(), NewLeaksScraper(), GitHubScraper(),
+                     HudsonRockScraper(),
                      SerperScraper('"{q}"'), BraveScraper('"{q}"')],
         "upi":      [UPIScraper(), SerperScraper('"{q}"'), BraveScraper('"{q}"')],
         # LinkedIn coverage for a name seed also comes from the dedicated linkedin_search()
