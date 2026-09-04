@@ -27,6 +27,10 @@ const SEED_TYPES = [
   { value: "phone", label: "Phone", placeholder: "e.g. +91 98765 43210" },
   { value: "username", label: "Username", placeholder: "e.g. ghost_rider99" },
   { value: "upi", label: "UPI", placeholder: "e.g. subject@oksbi" },
+  // Profile URL: the backend's URLScraper pulls the handle, the platform's own id
+  // (Facebook numeric / YouTube channel / X numeric) and any name in the URL slug,
+  // then cascades those back through the normal pipeline. See url_scraper.py.
+  { value: "url", label: "Profile URL", placeholder: "e.g. https://instagram.com/ghost_rider99" },
   { value: "face", label: "Face URL", placeholder: "e.g. https://…/photo.jpg" },
 ];
 

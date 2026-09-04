@@ -179,6 +179,44 @@ def derive_seeds(seed_type: str, value: str) -> list[dict]:
                     if _valid_handle(handle):
                         emit("username", handle, "email_local_variant", 0.5)
 
+    elif seed_type == "url":
+        # A profile URL is the one case where the identifiers are OBSERVED, not guessed:
+        # the handle/name are literally in the URL, so they get high confidence, and then
+        # chain into the username strategies above exactly as a typed handle would.
+        # A non-profile URL (post/video/group) yields nothing — see url_scraper.py for
+        # why a reserved path must never become a username seed.
+        from backend.ingestion.url_scraper import extract_profile_url
+
+        info = extract_profile_url(value)
+        if info and info.get("kind") == "profile":
+            handle = info.get("handle")
+            name_hint = info.get("name_hint")
+
+            if handle and _valid_handle(handle):
+                emit("username", handle, "url_handle", 0.9)
+                # Chain: everything derive_seeds() already knows how to do with a handle.
+                for email in emails_from_handle(handle):
+                    emit("email", email, "url_handle_to_email_guess", 0.3)
+                for name in names_from_handle(handle):
+                    emit("name", name, "url_handle_to_name_guess", 0.5)
+                    for variant in handles_from_name(name):
+                        if _valid_handle(variant):
+                            emit("username", variant, "url_handle_variant", 0.6)
+
+            if name_hint:
+                # Observed in the URL slug, so more trustworthy than a name GUESSED
+                # from an opaque handle (0.5 above).
+                emit("name", name_hint, "url_slug_name", 0.8)
+                for variant in handles_from_name(name_hint):
+                    if _valid_handle(variant):
+                        emit("username", variant, "url_name_to_handle_variant", 0.6)
+
+            # platform_id (Facebook numeric / YouTube channel / Twitter numeric) is a
+            # real identifier and is recorded in the URL profile's metadata by
+            # URLScraper, but it is deliberately NOT emitted as a seed: there is no
+            # scraper keyed on a platform-native id, and it is not a username (it would
+            # be rejected by _valid_handle anyway).
+
     return out[:MAX_DERIVED_SEEDS]
 
 
