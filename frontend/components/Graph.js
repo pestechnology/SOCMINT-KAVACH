@@ -265,13 +265,18 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover, se
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const onPointerMove = (e) => {
-    if (!drag.current) return;
-    const s = drag.current.scale || 1;
-    setView((v) => ({
-      ...v,
-      x: drag.current.ox + (e.clientX - drag.current.sx) / s,
-      y: drag.current.oy + (e.clientY - drag.current.sy) / s,
-    }));
+    // Read the ref into locals BEFORE setView. The `if (!drag.current)` guard runs
+    // synchronously, but the updater below is invoked LATER by React — if the pointer is
+    // released in between, onPointerUp has already set drag.current = null and
+    // dereferencing it inside the updater throws
+    // "Cannot read properties of null (reading 'ox')". Closing over plain numbers makes
+    // the updater independent of the ref's later state.
+    const d = drag.current;
+    if (!d) return;
+    const s = d.scale || 1;
+    const nx = d.ox + (e.clientX - d.sx) / s;
+    const ny = d.oy + (e.clientY - d.sy) / s;
+    setView((v) => ({ ...v, x: nx, y: ny }));
   };
   const onPointerUp = () => { drag.current = null; };
 
