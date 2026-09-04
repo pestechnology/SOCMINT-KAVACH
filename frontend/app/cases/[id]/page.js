@@ -71,6 +71,30 @@ export default function CaseView() {
   }, []);
   const clearStaged = useCallback(() => setStagedSeeds(new Map()), []);
 
+  // ---------- ANNOTATIONS (bookmarks + severity flags) ----------
+  // by_entity map: { entity_id: {bookmarked, flag, note} }. Keyed on entity_id for the
+  // UI, but the backend stores them against a stable content key so they survive the
+  // entity_id churn a re-scrape/pivot causes (see annotations_service.py).
+  const [annById, setAnnById] = useState({});
+  const loadAnnotations = useCallback(async () => {
+    try {
+      const a = await api.getAnnotations(id);
+      setAnnById(a.by_entity || {});
+    } catch { /* non-fatal: annotations are an overlay, never block results */ }
+  }, [id]);
+  // Optimistic update: apply locally, persist, reconcile with the server's echo; on
+  // failure reload the authoritative state so the UI never lies about what was saved.
+  const handleAnnotate = useCallback(async (entityId, patch) => {
+    if (!entityId) return;
+    setAnnById((prev) => ({ ...prev, [entityId]: { ...(prev[entityId] || {}), ...patch } }));
+    try {
+      const saved = await api.setAnnotation(id, entityId, patch);
+      setAnnById((prev) => ({ ...prev, [entityId]: saved }));
+    } catch {
+      loadAnnotations();
+    }
+  }, [id, loadAnnotations]);
+
   // ---------- POLLING (UNCHANGED) ----------
   const load = useCallback(async () => {
     try { setData(await api.getResults(id)); }
@@ -80,7 +104,8 @@ export default function CaseView() {
   useEffect(() => {
     if (!getToken()) { router.replace("/login"); return; }
     load();
-  }, [load, router]);
+    loadAnnotations();
+  }, [load, loadAnnotations, router]);
 
   useEffect(() => {
     const status = data?.status;
@@ -486,6 +511,8 @@ export default function CaseView() {
               signalAccountCount={signalAccountCount}
               reiterateSet={reiterateSet}
               onToggleReiterate={toggleAccountStaged}
+              annById={annById}
+              onAnnotate={handleAnnotate}
             />
           </GlassPanel>
         </div>
@@ -777,6 +804,7 @@ function IdentityList({
   anyFilter = false, onClearFilters,
   signalFilter = null, signalLabel = "", signalClusters = [], signalAccountCount = 0,
   reiterateSet = new Set(), onToggleReiterate = null,
+  annById = {}, onAnnotate = null,
 }) {
   const [openNotLinked, setOpenNotLinked] = useState(autoExpandNotLinked);
   useEffect(() => { setOpenNotLinked(autoExpandNotLinked); }, [autoExpandNotLinked]);
@@ -807,6 +835,8 @@ function IdentityList({
             onSelectCluster={onSelectCluster}
             reiterateSet={reiterateSet}
             onToggleReiterate={onToggleReiterate}
+            annById={annById}
+            onAnnotate={onAnnotate}
           />
         ))}
       </div>
@@ -842,6 +872,8 @@ function IdentityList({
                 onClick={() => onSelectEntity(e.entity_id)}
                 reiterateChecked={reiterateSet.has(e.entity_id)}
                 onToggleReiterate={onToggleReiterate}
+                annotation={annById[e.entity_id]}
+                onAnnotate={onAnnotate}
               />
             ))}
           </div>
@@ -863,6 +895,8 @@ function IdentityList({
           onSelectCluster={onSelectCluster}
           reiterateSet={reiterateSet}
           onToggleReiterate={onToggleReiterate}
+          annById={annById}
+          onAnnotate={onAnnotate}
         />
       ))}
 
@@ -881,6 +915,8 @@ function IdentityList({
           onSelectCluster={onSelectCluster}
           reiterateSet={reiterateSet}
           onToggleReiterate={onToggleReiterate}
+          annById={annById}
+          onAnnotate={onAnnotate}
         />
       ))}
 
@@ -903,6 +939,8 @@ function IdentityList({
                 exactMatch={((infoByEntity[e.entity_id]?.cluster?.relevance?.score) || 0) >= 100}
                 reiterateChecked={reiterateSet.has(e.entity_id)}
                 onToggleReiterate={onToggleReiterate}
+                annotation={annById[e.entity_id]}
+                onAnnotate={onAnnotate}
               />
             ))}
             {notLinkedEntities.length === 0 && (
@@ -919,6 +957,7 @@ function IdentityList({
 function ClusterGroup({
   cluster, letter, members, selectedEntityId, onSelectEntity, onSelectCluster,
   reiterateSet = new Set(), onToggleReiterate = null,
+  annById = {}, onAnnotate = null,
 }) {
   const exact = (cluster.relevance?.score || 0) >= 100;
   return (
@@ -951,6 +990,8 @@ function ClusterGroup({
             onClick={() => onSelectEntity(e.entity_id)}
             reiterateChecked={reiterateSet.has(e.entity_id)}
             onToggleReiterate={onToggleReiterate}
+            annotation={annById[e.entity_id]}
+            onAnnotate={onAnnotate}
           />
         ))}
       </div>

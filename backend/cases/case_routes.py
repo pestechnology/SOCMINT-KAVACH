@@ -23,6 +23,9 @@ from backend.auth.auth_middleware import get_current_user
 from backend.cases.case_service import (
     create_case, get_case, get_results, list_cases,
 )
+from backend.cases.annotations_service import (
+    get_annotations, set_annotation, VALID_FLAGS,
+)
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
@@ -95,6 +98,39 @@ def results(case_id: str, user_id: str = Depends(get_current_user)):
     if res is None:
         raise HTTPException(status_code=404, detail="Not found")
     return res
+
+
+class AnnotationBody(BaseModel):
+    # All optional: send only what changes. bookmarked toggles the saved flag; flag is
+    # the red/orange/yellow severity ('' clears it); note is free text.
+    bookmarked: bool | None = None
+    flag: str | None = None
+    note: str | None = None
+
+
+@router.get("/{case_id}/annotations")
+def list_annotations(case_id: str, user_id: str = Depends(get_current_user)):
+    """This user's bookmarks + flags for the case, keyed by current entity_id."""
+    ann = get_annotations(case_id, user_id)
+    if ann is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return ann
+
+
+@router.put("/{case_id}/annotations/{entity_id}")
+def upsert_annotation(case_id: str, entity_id: str, body: AnnotationBody,
+                      user_id: str = Depends(get_current_user)):
+    """Set/clear an account's bookmark, severity flag, and/or note."""
+    try:
+        result = set_annotation(
+            case_id, user_id, entity_id,
+            bookmarked=body.bookmarked, flag=body.flag, note=body.note,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Case or account not found")
+    return result
 
 
 @router.get("/{case_id}/report")

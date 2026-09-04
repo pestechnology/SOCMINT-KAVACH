@@ -95,10 +95,29 @@ CREATE TABLE IF NOT EXISTS artifacts (
     tsr_path TEXT
 );
 
+-- Per-user annotations on discovered accounts: bookmarks + red/orange/yellow severity
+-- flags + a free-text note. Keyed on a STABLE content signature (target_key =
+-- "type:platform:value", normalized), NOT entity_id: entity_id is a random uuid
+-- regenerated on every re-scrape/pivot (orchestrator DELETEs + re-INSERTs entities),
+-- so an entity_id key would orphan every annotation on the next pivot. The content
+-- signature is stable because the same account re-discovered yields the same triple.
+CREATE TABLE IF NOT EXISTS annotations (
+    annotation_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    case_id TEXT NOT NULL,
+    target_key TEXT NOT NULL,
+    bookmarked INTEGER DEFAULT 0,
+    flag TEXT DEFAULT '',            -- '' | 'red' | 'orange' | 'yellow'
+    note TEXT DEFAULT '',
+    updated_at TEXT,
+    UNIQUE(user_id, case_id, target_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_entities_case ON entities(case_id);
 CREATE INDEX IF NOT EXISTS idx_entities_value ON entities(value);
 CREATE INDEX IF NOT EXISTS idx_clusters_case ON clusters(case_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_case ON audit_ledger(case_id);
+CREATE INDEX IF NOT EXISTS idx_annotations_lookup ON annotations(user_id, case_id);
 """
 
 

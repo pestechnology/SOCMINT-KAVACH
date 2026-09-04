@@ -29,11 +29,32 @@ function safeUrl(url) {
   } catch { return null; }
 }
 
+// Severity flags — red = high concern, orange = medium/suspicious, yellow = low/watch.
+// Mirrors backend/cases/annotations_service.py's VALID_FLAGS.
+const FLAGS = [
+  { key: "red", color: "#ff3366", title: "High concern" },
+  { key: "orange", color: "#ff9f1c", title: "Suspicious" },
+  { key: "yellow", color: "#ffd23f", title: "Watch" },
+];
+
 export default function AccountCard({
   entity = {}, selected = false, onClick, exactMatch = false,
   reiterateChecked = false, onToggleReiterate = null,
+  annotation = null, onAnnotate = null,
 }) {
   const meta = entity.metadata || {};
+  const bookmarked = !!annotation?.bookmarked;
+  const activeFlag = annotation?.flag || "";
+  const stop = (e) => e.stopPropagation();
+  // Toggle semantics: clicking the active flag clears it; a new flag replaces it.
+  const setFlag = (e, key) => {
+    stop(e);
+    if (onAnnotate) onAnnotate(entity.entity_id, { flag: activeFlag === key ? "" : key });
+  };
+  const toggleBookmark = (e) => {
+    stop(e);
+    if (onAnnotate) onAnnotate(entity.entity_id, { bookmarked: !bookmarked });
+  };
   const platform = entity.platform || entity.type || "account";
   const rawTier = entity._tier || tierFromConfidence(entity.confidence);
 
@@ -90,6 +111,18 @@ export default function AccountCard({
           </span>
         </span>
         <span className="inline-flex items-center gap-1.5 shrink-0">
+          {onAnnotate && (
+            <button
+              type="button"
+              onClick={toggleBookmark}
+              title={bookmarked ? "Remove bookmark" : "Bookmark this account"}
+              aria-pressed={bookmarked}
+              className="text-[13px] leading-none shrink-0 transition-transform hover:scale-110"
+              style={{ color: bookmarked ? "var(--tone-cyan-bright, #00f2fe)" : "#64748b" }}
+            >
+              {bookmarked ? "★" : "☆"}
+            </button>
+          )}
           {isExact && (
             <span className="text-[10px] font-mono uppercase tracking-wide text-cyan-300 border border-cyan-400/40 bg-cyan-400/10 rounded px-1.5 py-0.5">
               ★ Exact
@@ -164,6 +197,30 @@ export default function AccountCard({
             title="A page exists at this handle, but no profile data (name, bio or photo) was retrieved from it, so nothing corroborates that it belongs to the subject."
           >
             handle only — no profile data retrieved
+          </span>
+        )}
+        {/* Severity flags — investigator-set, red/orange/yellow. */}
+        {onAnnotate && (
+          <span className="inline-flex items-center gap-1 ml-auto shrink-0" onClick={stop}>
+            {FLAGS.map((f) => {
+              const on = activeFlag === f.key;
+              return (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={(e) => setFlag(e, f.key)}
+                  title={`${f.title}${on ? " (click to clear)" : ""}`}
+                  aria-pressed={on}
+                  className="w-3.5 h-3.5 rounded-full transition-all"
+                  style={{
+                    background: on ? f.color : "transparent",
+                    border: `1.5px solid ${f.color}`,
+                    boxShadow: on ? `0 0 6px ${f.color}` : "none",
+                    opacity: on ? 1 : 0.55,
+                  }}
+                />
+              );
+            })}
           </span>
         )}
       </div>

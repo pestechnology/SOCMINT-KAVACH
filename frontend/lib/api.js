@@ -43,6 +43,10 @@ export const api = {
     req("/cases", { method: "POST", body: { title, seeds, minor_involved, country_filter, case_context, capture_evidence } }),
   getCase: (id) => req(`/cases/${id}`),
   getResults: (id) => req(`/cases/${id}/results`),
+  // Per-user bookmarks + severity flags on discovered accounts.
+  getAnnotations: (id) => req(`/cases/${id}/annotations`),
+  setAnnotation: (id, entityId, patch) =>
+    req(`/cases/${id}/annotations/${entityId}`, { method: "PUT", body: patch }),
   // Grounded case chat — answers strictly from this case's data.
   caseChat: (id, question, history = []) =>
     req(`/cases/${id}/chat`, { method: "POST", body: { question, history } }),
