@@ -11,7 +11,7 @@ export default function PivotPill({ icon = null, children, onClick, active = fal
         border transition-all duration-200
         ${active
           ? "text-black border-transparent bg-gradient-to-r from-cyan-400 to-purple-400"
-          : "text-cyan-400 border-[rgba(0,242,254,0.35)] bg-[rgba(0,242,254,0.08)] hover:text-black hover:border-transparent hover:bg-gradient-to-r hover:from-cyan-400 hover:to-purple-400"}
+          : "text-cyan-400 border-[rgba(107,169,189,0.35)] bg-[rgba(107,169,189,0.08)] hover:text-black hover:border-transparent hover:bg-gradient-to-r hover:from-cyan-400 hover:to-purple-400"}
         ${onClick ? "cursor-pointer" : ""}
         ${className}
       `}

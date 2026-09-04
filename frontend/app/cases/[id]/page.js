@@ -410,7 +410,7 @@ export default function CaseView() {
                 <div
                   className="h-full w-1/3 rounded-full"
                   style={{
-                    background: "linear-gradient(90deg, transparent, #00f2fe, transparent)",
+                    background: "linear-gradient(90deg, transparent, #6ba9bd, transparent)",
                     animation: "vertex-scan 1.3s ease-in-out infinite",
                   }}
                 />
@@ -563,7 +563,7 @@ export default function CaseView() {
                           type="checkbox"
                           checked={showAllNodes}
                           onChange={(e) => setShowAllNodes(e.target.checked)}
-                          style={{ accentColor: "#00f2fe" }}
+                          style={{ accentColor: "#6ba9bd" }}
                         />
                         Show all {total} nodes
                       </label>
@@ -605,10 +605,10 @@ export default function CaseView() {
                   )}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-4 text-[11px] font-mono text-slate-500">
-                  <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full" style={{ background: "#00ff88" }} /> strong</span>
-                  <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full" style={{ background: "#ffb703" }} /> possible</span>
-                  <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full" style={{ background: "#ff3366" }} /> not linked</span>
-                  <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full" style={{ background: "#00f2fe" }} /> selected</span>
+                  <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full" style={{ background: "#6fae86" }} /> strong</span>
+                  <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full" style={{ background: "#cba96a" }} /> possible</span>
+                  <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full" style={{ background: "#cf8080" }} /> not linked</span>
+                  <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full" style={{ background: "#6ba9bd" }} /> selected</span>
                 </div>
               </div>
             )}
@@ -627,7 +627,7 @@ export default function CaseView() {
                         type="checkbox"
                         checked={showAllNodes}
                         onChange={(e) => setShowAllNodes(e.target.checked)}
-                        style={{ accentColor: "#00f2fe" }}
+                        style={{ accentColor: "#6ba9bd" }}
                       />
                       Show all {total} nodes
                     </label>
@@ -1013,9 +1013,9 @@ const ACTION_ICON = {
   expand_seeds: "🌱", manual_review: "✅", agentic_lookup: "🤖", legal_request: "📨",
 };
 const PRIORITY_STYLE = {
-  high: { color: "var(--tone-rose)", bg: "rgba(255,51,102,0.10)", border: "rgba(255,51,102,0.30)", label: "HIGH" },
-  medium: { color: "var(--tone-amber)", bg: "rgba(255,183,3,0.10)", border: "rgba(255,183,3,0.30)", label: "MED" },
-  low: { color: "var(--tone-cyan-bright)", bg: "rgba(0,242,254,0.08)", border: "rgba(0,242,254,0.25)", label: "LOW" },
+  high: { color: "var(--tone-rose)", bg: "rgba(207,128,128,0.10)", border: "rgba(207,128,128,0.30)", label: "HIGH" },
+  medium: { color: "var(--tone-amber)", bg: "rgba(203,169,106,0.10)", border: "rgba(203,169,106,0.30)", label: "MED" },
+  low: { color: "var(--tone-cyan-bright)", bg: "rgba(107,169,189,0.08)", border: "rgba(107,169,189,0.25)", label: "LOW" },
 };
 
 function NextActions({ actions = [] }) {
@@ -1754,7 +1754,7 @@ function SummaryTab({ entities, clusters, identity, signalFilter, onToggleSignal
           {EVIDENCE_TIERS.map(({ key, label, hint }) => {
             const rows = sigByTier[key];
             if (!rows.length) return null;
-            const accent = key === "hard" ? "#00ff88" : key === "identity" ? "#38bdf8" : "#94a3b8";
+            const accent = key === "hard" ? "#6fae86" : key === "identity" ? "#38bdf8" : "#94a3b8";
             return (
               <div key={key} className="mb-3 last:mb-0">
                 <div className="flex items-baseline gap-2 mb-1.5">
@@ -1894,8 +1894,8 @@ function WritingActivity({ fx }) {
   const rawTone = (fx.tone?.label || "").toString().toUpperCase();
   // `color` = themed text/dot (darkens in light mode); `tint` = a fixed hex used only for
   // the translucent bg/border (alpha is appended, which a var() can't do).
-  const tone = rawTone.includes("POS") ? { word: "Positive", color: "var(--tone-emerald)", tint: "#00ff88" }
-    : rawTone.includes("NEG") ? { word: "Negative", color: "var(--tone-rose)", tint: "#ff3366" }
+  const tone = rawTone.includes("POS") ? { word: "Positive", color: "var(--tone-emerald)", tint: "#6fae86" }
+    : rawTone.includes("NEG") ? { word: "Negative", color: "var(--tone-rose)", tint: "#cf8080" }
     : rawTone ? { word: "Neutral", color: "#94a3b8", tint: "#94a3b8" }
     : null;
 
@@ -1942,7 +1942,7 @@ function WritingActivity({ fx }) {
                 key={h}
                 className="flex-1 rounded-sm"
                 title={`${String(h).padStart(2, "0")}:00 — ${c}`}
-                style={{ height: `${Math.max(4, (c / maxC) * 100)}%`, background: c > 0 ? "#00f2fe" : "#1e293b" }}
+                style={{ height: `${Math.max(4, (c / maxC) * 100)}%`, background: c > 0 ? "#6ba9bd" : "#1e293b" }}
               />
             ))}
           </div>

@@ -24,37 +24,41 @@
   --slate-900: 15 23 42;
   --slate-950: 2 6 23;
 
-  /* --- Redesign design system (§2.1) --- */
-  --bg-primary: #070a12;
-  --bg-secondary: #0f172a;
-  --bg-glass: rgba(15, 23, 42, 0.75);
+  /* --- Design system (§2.1) — CALM PASS ---
+     Was pure-black bg + neon-cyan borders/glow. Softened to a deep calm navy (not a
+     harsh #000 void), NEUTRAL panel edges instead of glowing cyan, and muted accents.
+     Pure black + neon is the most fatiguing combination; this is quiet to sit in front
+     of for a long investigation. */
+  --bg-primary: #0e131c;
+  --bg-secondary: #141b28;
+  --bg-glass: rgba(20, 27, 40, 0.78);
   --bg-glass-hover: rgba(30, 41, 59, 0.85);
-  --border-glass: rgba(0, 242, 254, 0.25);
-  --border-glow: rgba(0, 242, 254, 0.6);
+  --border-glass: rgba(148, 163, 184, 0.14);   /* neutral hairline, not cyan glow */
+  --border-glow: rgba(107, 169, 189, 0.40);    /* soft teal, was electric cyan */
 
-  --accent-cyan: #00f2fe;
-  --accent-purple: #4facfe;
-  --accent-emerald: #00ff88;
-  --accent-amber: #ffb703;
-  --accent-crimson: #ff3366;
+  --accent-cyan: #6ba9bd;
+  --accent-purple: #8ea6cf;
+  --accent-emerald: #6fae86;
+  --accent-amber: #cba96a;
+  --accent-crimson: #cf8080;
 
-  --text-main: #f8fafc;
-  --text-muted: #94a3b8;
-  --text-dim: #64748b;
+  --text-main: #e8edf3;    /* was #f8fafc — a hair softer, less glare on dark */
+  --text-muted: #9aa7b8;
+  --text-dim: #74839a;     /* lifted from #64748b so IDs/timestamps are readable */
 
-  --scrollbar-track: #0E1117;
-  --scrollbar-thumb: #2A3148;
-  --scrollbar-thumb-hover: #4A5568;
+  --scrollbar-track: #0e131c;
+  --scrollbar-thumb: #2a3448;
+  --scrollbar-thumb-hover: #3d4a63;
 
-  /* Semantic TEXT tones (dark = the original bright accents). Light overrides above. */
-  --tone-emerald: #00ff88;
-  --tone-amber: #ffb703;
-  --tone-rose: #ff3366;
-  --tone-cyan: #00f2fe;
-  --tone-cyan-bright: #22d3ee;
-  --stat-num: #e2e8f0;
-  --stat-num-strong: #f8fafc;
-  --graph-label: #cbd5e0;
+  /* Semantic TEXT tones (dark = muted accents). Light overrides below. */
+  --tone-emerald: #6fae86;
+  --tone-amber: #cba96a;
+  --tone-rose: #cf8080;
+  --tone-cyan: #6ba9bd;
+  --tone-cyan-bright: #84c2d4;
+  --stat-num: #dbe3ec;
+  --stat-num-strong: #f0f4f8;
+  --graph-label: #b8c4d4;
 }
 
 /* ============================ LIGHT THEME ============================
@@ -77,31 +81,30 @@
   --slate-900: 236 240 246;
   --slate-950: 248 250 252;
 
-  --bg-primary: #eef2f7;
+  --bg-primary: #eef1f6;      /* soft warm-neutral, was slightly blue */
   --bg-secondary: #ffffff;
-  --bg-glass: rgba(255, 255, 255, 0.82);
-  --bg-glass-hover: rgba(241, 245, 249, 0.92);
-  --border-glass: rgba(15, 23, 42, 0.12);
-  --border-glow: rgba(0, 160, 200, 0.5);
+  --bg-glass: rgba(255, 255, 255, 0.85);
+  --bg-glass-hover: rgba(244, 247, 251, 0.94);
+  --border-glass: rgba(15, 23, 42, 0.11);
+  --border-glow: rgba(90, 145, 165, 0.42);   /* calm teal, was bright */
 
-  --text-main: #0f172a;
-  --text-muted: #475569;
-  --text-dim: #64748b;
+  --text-main: #1a2432;
+  --text-muted: #51607a;
+  --text-dim: #6b7a91;
 
   --scrollbar-track: #e2e8f0;
   --scrollbar-thumb: #cbd5e1;
   --scrollbar-thumb-hover: #94a3b8;
 
-  /* Semantic TEXT tones for inline-styled colors (stat numbers, tier badges, status
-     pills, graph labels) — darkened so they read on light backgrounds. */
-  --tone-emerald: #047857;
-  --tone-amber: #b45309;
-  --tone-rose: #be123c;
-  --tone-cyan: #0e7490;
-  --tone-cyan-bright: #0891b2;
-  --stat-num: #1e293b;
-  --stat-num-strong: #0f172a;
-  --graph-label: #1e293b;
+  /* Calm accents, darkened for contrast on light surfaces (same hue family as dark). */
+  --tone-emerald: #3f8a63;
+  --tone-amber: #a67c2e;
+  --tone-rose: #b45858;
+  --tone-cyan: #3d7d90;
+  --tone-cyan-bright: #37788c;
+  --stat-num: #26324a;
+  --stat-num-strong: #1a2432;
+  --graph-label: #26324a;
 }
 
 /* Subtle white/low-opacity borders read as invisible on a light bg — flip them to a
@@ -135,7 +138,7 @@
 :root[data-theme="light"] .text-cyan-400,
 :root[data-theme="light"] .hover\:text-cyan-200:hover,
 :root[data-theme="light"] .hover\:text-cyan-300:hover,
-:root[data-theme="light"] .hover\:text-cyan-400:hover { color: #0e7490; }
+:root[data-theme="light"] .hover\:text-cyan-400:hover { color: #3d7d90; }
 
 :root[data-theme="light"] .text-amber-300,
 :root[data-theme="light"] .text-amber-400,
@@ -143,19 +146,19 @@
 :root[data-theme="light"] .text-amber-400\/80,
 :root[data-theme="light"] .text-amber-400\/90,
 :root[data-theme="light"] .hover\:text-amber-200:hover,
-:root[data-theme="light"] .hover\:text-amber-300:hover { color: #b45309; }
+:root[data-theme="light"] .hover\:text-amber-300:hover { color: #a67c2e; }
 
 :root[data-theme="light"] .text-emerald-300,
-:root[data-theme="light"] .text-emerald-400 { color: #047857; }
+:root[data-theme="light"] .text-emerald-400 { color: #3f8a63; }
 
-:root[data-theme="light"] .text-violet-300 { color: #6d28d9; }
+:root[data-theme="light"] .text-violet-300 { color: #6d64c0; }
 :root[data-theme="light"] .text-red-400,
-:root[data-theme="light"] .text-rose-300 { color: #dc2626; }
+:root[data-theme="light"] .text-rose-300 { color: #b45858; }
 :root[data-theme="light"] .text-gray-400 { color: #4b5563; }
 
 /* Arbitrary-value accent text classes used as labels (Minor badge, Agentic chip). */
-:root[data-theme="light"] .text-\[\#ff3366\] { color: #dc2626; }
-:root[data-theme="light"] .text-\[\#00f2fe\] { color: #0e7490; }
+:root[data-theme="light"] .text-\[\#ff3366\] { color: #b45858; }
+:root[data-theme="light"] .text-\[\#00f2fe\] { color: #3d7d90; }
 
 /* Network graph draws SVG label text with near-white fills (fill attributes). A CSS fill
    rule overrides those attributes so labels stay legible on the light graph background. */
@@ -166,6 +169,10 @@ html, body {
   color: var(--text-main);
   font-family: "Outfit", var(--font-display), system-ui, sans-serif;
   font-size: 14px;
+  line-height: 1.5;                     /* calmer default rhythm */
+  -webkit-font-smoothing: antialiased;  /* softer text on dark, less crunchy */
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   transition: background-color 0.25s ease, color 0.25s ease;
 }
 
@@ -178,17 +185,20 @@ html, body {
 .display { font-family: "Outfit", var(--font-display), "Space Grotesk", sans-serif; }
 
 /* --- Ambient background layers (§2.3) --- */
+/* CALM PASS: was a strong cyan top-glow + a bright cyan tech-grid — the core of the
+   "hacker console" vibe. Softened to a whisper of warm-neutral light and a barely-there
+   neutral grid that reads as subtle paper texture, not a HUD. */
 .glow-bg {
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background: radial-gradient(ellipse 60% 40% at 50% 0%,
-    rgba(0, 242, 254, 0.15) 0%, transparent 60%);
+  background: radial-gradient(ellipse 70% 50% at 50% -5%,
+    rgba(107, 169, 189, 0.07) 0%, transparent 65%);
 }
 .grid-overlay {
-  position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.4;
+  position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.5;
   background-image:
-    linear-gradient(rgba(0, 242, 254, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 242, 254, 0.04) 1px, transparent 1px);
-  background-size: 40px 40px;
+    linear-gradient(rgba(148, 163, 184, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
 }
 main { position: relative; z-index: 10; }
 

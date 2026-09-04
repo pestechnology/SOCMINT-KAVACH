@@ -32,9 +32,9 @@ function safeUrl(url) {
 // Severity flags — red = high concern, orange = medium/suspicious, yellow = low/watch.
 // Mirrors backend/cases/annotations_service.py's VALID_FLAGS.
 const FLAGS = [
-  { key: "red", color: "#ff3366", title: "High concern" },
-  { key: "orange", color: "#ff9f1c", title: "Suspicious" },
-  { key: "yellow", color: "#ffd23f", title: "Watch" },
+  { key: "red", color: "#cf8080", title: "High concern" },
+  { key: "orange", color: "#d59a63", title: "Suspicious" },
+  { key: "yellow", color: "#d9c56a", title: "Watch" },
 ];
 
 export default function AccountCard({
@@ -88,8 +88,8 @@ export default function AccountCard({
       className={`
         w-full text-left rounded-lg p-3 border transition-all duration-200
         ${selected
-          ? "border-cyan-400 bg-slate-900/70 shadow-[0_0_0_1px_rgba(0,242,254,0.25),0_4px_16px_-6px_rgba(0,242,254,0.4)] translate-x-1"
-          : "border-white/[0.08] bg-slate-900/50 hover:border-cyan-400 hover:translate-x-1 hover:shadow-[0_4px_16px_-8px_rgba(0,242,254,0.35)]"}
+          ? "border-cyan-400 bg-slate-900/70 shadow-[0_0_0_1px_rgba(107,169,189,0.25),0_4px_16px_-6px_rgba(107,169,189,0.4)] translate-x-1"
+          : "border-white/[0.08] bg-slate-900/50 hover:border-cyan-400 hover:translate-x-1 hover:shadow-[0_4px_16px_-8px_rgba(107,169,189,0.35)]"}
       `}
     >
       {/* Row 1: re-iterate checkbox + platform + Live chip */}
@@ -119,8 +119,8 @@ export default function AccountCard({
               aria-pressed={bookmarked}
               className="shrink-0 text-[18px] leading-none transition-all duration-150 hover:scale-125"
               style={{
-                color: bookmarked ? "var(--tone-cyan-bright, #00f2fe)" : "#5b6472",
-                textShadow: bookmarked ? "0 0 8px rgba(0,242,254,0.6)" : "none",
+                color: bookmarked ? "var(--tone-cyan-bright, #6ba9bd)" : "#5b6472",
+                textShadow: bookmarked ? "0 0 8px rgba(107,169,189,0.6)" : "none",
               }}
             >
               {bookmarked ? "★" : "☆"}
@@ -137,7 +137,7 @@ export default function AccountCard({
             </span>
           )}
           {(entity.data_mode === "agentic_web" || meta.agentic_source) && (
-            <span className="text-[10px] font-mono uppercase tracking-wide text-[#00f2fe] border border-[#00f2fe]/40 bg-[#00f2fe]/10 rounded px-1.5 py-0.5" title="Discovered via autonomous AI browser exploration">
+            <span className="text-[10px] font-mono uppercase tracking-wide text-[#6ba9bd] border border-[#6ba9bd]/40 bg-[#6ba9bd]/10 rounded px-1.5 py-0.5" title="Discovered via autonomous AI browser exploration">
               🤖 Agentic
             </span>
           )}

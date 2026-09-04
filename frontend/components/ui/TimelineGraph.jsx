@@ -230,9 +230,9 @@ export default function TimelineGraph({ model, hideBreaches = false, onSelectAcc
       {/* ── PERSON SUMMARY ── */}
       {summary && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-5">
-          <SummaryPill icon="🕐" accent="#22d3ee" value={summary.hasDates ? summary.span : "no dates"} label={summary.hasDates ? `${summary.earliestYear}–${summary.latestYear}` : "on record"} />
-          <SummaryPill icon="🎂" accent="#00ff88" value={summary.hasDates ? summary.oldestPlatform : "—"} label={summary.hasDates ? `earliest · ${summary.earliestYear}` : "earliest unknown"} />
-          <SummaryPill icon="⚡" accent="#ffb703" value={summary.hasDates ? summary.lastActive : "—"} label="last activity" />
+          <SummaryPill icon="🕐" accent="#84c2d4" value={summary.hasDates ? summary.span : "no dates"} label={summary.hasDates ? `${summary.earliestYear}–${summary.latestYear}` : "on record"} />
+          <SummaryPill icon="🎂" accent="#6fae86" value={summary.hasDates ? summary.oldestPlatform : "—"} label={summary.hasDates ? `earliest · ${summary.earliestYear}` : "earliest unknown"} />
+          <SummaryPill icon="⚡" accent="#cba96a" value={summary.hasDates ? summary.lastActive : "—"} label="last activity" />
           <SummaryPill icon="👤" accent="#a78bfa" value={`${summary.count} account${summary.count === 1 ? "" : "s"}`} label={summary.busiestYear ? `most active ${summary.busiestYear}` : "confirmed identity"} />
         </div>
       )}
@@ -263,9 +263,9 @@ export default function TimelineGraph({ model, hideBreaches = false, onSelectAcc
 
       {/* ── LANE SECTIONS (scrolls if tall) ── */}
       <div className="mt-1 max-h-[48vh] overflow-y-auto custom-scrollbar pr-1">
-        <Section title="Strong matches" color="#00ff88" accounts={groups.strong} undated={undatedGroups.strong}
+        <Section title="Strong matches" color="#6fae86" accounts={groups.strong} undated={undatedGroups.strong}
           open collapsible={false} ticks={ticks} nowPct={nowPct} {...laneProps} />
-        <Section title="Possible matches" color="#ffb703" accounts={groups.possible} undated={undatedGroups.possible}
+        <Section title="Possible matches" color="#cba96a" accounts={groups.possible} undated={undatedGroups.possible}
           open={possibleOpen} onToggle={() => setPossibleOpen((v) => !v)} collapsible ticks={ticks} nowPct={nowPct} {...laneProps} />
         <Section title="Not linked" color="#64748b" accounts={groups.notLinked} undated={undatedGroups.notLinked}
           open={notLinkedOpen} onToggle={() => setNotLinkedOpen((v) => !v)} collapsible ticks={ticks} nowPct={nowPct} {...laneProps} />
@@ -314,7 +314,7 @@ export default function TimelineGraph({ model, hideBreaches = false, onSelectAcc
       {tip && typeof document !== "undefined" && createPortal((() => {
         const strong = tip.account.exactMatch || tip.account.tier === "HIGH";
         const tc = tip.account.isBreach ? BREACH_COLOR
-          : strong ? "#00ff88" : tip.account.tier === "MEDIUM" ? "#ffb703" : "#64748b";
+          : strong ? "#6fae86" : tip.account.tier === "MEDIUM" ? "#cba96a" : "#64748b";
         const W = 288, H = 172, GAP = 12;
         const vw = window.innerWidth, vh = window.innerHeight;
         let left = Math.max(8, Math.min(tip.cx - W / 2, vw - W - 8));

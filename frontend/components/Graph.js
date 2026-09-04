@@ -23,13 +23,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 // tier -> ring color (matches the legend under the graph in page.js)
 const RING = {
-  HIGH: "#00ff88", MEDIUM: "#ffb703", LOW: "#ff3366", REJECT: "#ff3366",
-  ANCHOR: "#00f2fe", ROOT: "#00f2fe", CATEGORY: "#8892b0",
+  HIGH: "#6fae86", MEDIUM: "#cba96a", LOW: "#cf8080", REJECT: "#cf8080",
+  ANCHOR: "#6ba9bd", ROOT: "#6ba9bd", CATEGORY: "#8892b0",
 };
 const TEXT = "#cbd5e0";
 const TEXT_DIM = "#64748b";
-const SELECTED = "#00f2fe";
-const HL_LINK = "#00ff88";
+const SELECTED = "#6ba9bd";
+const HL_LINK = "#6fae86";
 
 const COL = 210;   // horizontal spacing per depth
 const ROW = 30;    // vertical spacing per leaf
@@ -343,7 +343,7 @@ export default function NetworkGraph({ entities, clusters, onSelect, onHover, se
                 key={`${s.id}->${t.id}`}
                 d={linkPath(s, t)}
                 fill="none"
-                stroke={on ? HL_LINK : "rgba(0,242,254,0.35)"}
+                stroke={on ? HL_LINK : "rgba(107,169,189,0.35)"}
                 strokeWidth={on ? 1.8 : 1}
                 opacity={dim ? 0.12 : 1}
               />

@@ -274,7 +274,7 @@ export default function ReiterateBar({ caseId, stagedSeeds, onDropSeed, onRemove
           fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 rounded-full px-5 py-3
           text-sm font-semibold shadow-lg transition-all duration-200
           ${hasSelection
-            ? "text-black bg-gradient-to-r from-cyan-400 to-purple-400 shadow-[0_4px_24px_-4px_rgba(0,242,254,0.6)] hover:-translate-y-0.5 cursor-pointer"
+            ? "text-black bg-gradient-to-r from-cyan-400 to-purple-400 shadow-[0_4px_24px_-4px_rgba(107,169,189,0.6)] hover:-translate-y-0.5 cursor-pointer"
             : "text-slate-500 bg-slate-800/70 border border-slate-700 cursor-not-allowed opacity-70"}
         `}
       >
