@@ -84,6 +84,7 @@ export default function AccountCard({
   return (
     <button
       type="button"
+      id={entity.entity_id ? `account-card-${entity.entity_id}` : undefined}
       onClick={onClick}
       className={`
         w-full text-left rounded-lg p-3 border transition-all duration-200

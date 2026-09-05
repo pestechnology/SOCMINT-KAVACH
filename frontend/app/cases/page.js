@@ -45,6 +45,17 @@ const REGIONS = [
   { value: "ALL", label: "Global (unfiltered)" },
 ];
 
+// Case-level triage priority — a single fixed-color classification per case (distinct
+// from the per-account red/orange/yellow annotation flags used inside a case's results).
+// Click a dot on a card to set/clear it; click a chip in the bar to filter the grid to
+// just that bucket. Order is severity-descending, matching how they read left-to-right.
+const PRIORITY = [
+  { value: "red", label: "High priority", dot: "#ff3366" },
+  { value: "orange", label: "Medium priority", dot: "#ffb703" },
+  { value: "green", label: "Normal priority", dot: "#00ff88" },
+];
+const PRIORITY_BY_VALUE = Object.fromEntries(PRIORITY.map((p) => [p.value, p]));
+
 const SELECT_CLS =
   "w-full rounded-lg bg-slate-900/80 border border-slate-700 px-3 py-2 " +
   "text-sm text-slate-100 outline-none transition-colors duration-200 " +
@@ -69,6 +80,8 @@ export default function Cases() {
   const [memberships, setMemberships] = useState({});
   const [activeCollection, setActiveCollection] = useState("all"); // "all" | "none" | id
   const [pickerCase, setPickerCase] = useState(null); // case_id whose folder picker is open
+  // Case triage priority: "all" | "unflagged" | "red" | "orange" | "green".
+  const [activePriority, setActivePriority] = useState("all");
 
   useEffect(() => {
     if (!getToken()) { router.replace("/login"); return; }
@@ -113,6 +126,19 @@ export default function Cases() {
     } catch (_) { refreshCollections(); }
   }
 
+  async function setPriority(caseId, flag) {
+    const prev = cases.find((c) => c.case_id === caseId)?.priority_flag || "";
+    const next = prev === flag ? "" : flag; // clicking the active colour again clears it
+    // optimistic
+    setCases((cs) => cs.map((c) => (c.case_id === caseId ? { ...c, priority_flag: next } : c)));
+    try {
+      await api.setCasePriority(caseId, next);
+    } catch (_) {
+      // revert on failure
+      setCases((cs) => cs.map((c) => (c.case_id === caseId ? { ...c, priority_flag: prev } : c)));
+    }
+  }
+
   async function removeCollection(collectionId) {
     try {
       await api.deleteCollection(collectionId);
@@ -129,14 +155,25 @@ export default function Cases() {
 
   const filtered = cases.filter((c) => {
     if (!(c.title || "").toLowerCase().includes(search.toLowerCase())) return false;
-    if (activeCollection === "all") return true;
-    const mine = memberships[c.case_id] || [];
-    if (activeCollection === "none") return mine.length === 0;   // "Unfiled"
-    return mine.includes(activeCollection);
+    if (activeCollection !== "all") {
+      const mine = memberships[c.case_id] || [];
+      if (activeCollection === "none") { if (mine.length !== 0) return false; }   // "Unfiled"
+      else if (!mine.includes(activeCollection)) return false;
+    }
+    if (activePriority !== "all") {
+      const p = c.priority_flag || "";
+      if (activePriority === "unflagged") { if (p !== "") return false; }
+      else if (p !== activePriority) return false;
+    }
+    return true;
   });
   const nTotal = cases.length;
   const nRunning = cases.filter((c) => c.status === "running" || c.status === "pending").length;
   const nComplete = cases.filter((c) => c.status === "complete").length;
+  const priorityCounts = Object.fromEntries(
+    PRIORITY.map((p) => [p.value, cases.filter((c) => (c.priority_flag || "") === p.value).length])
+  );
+  const nUnflagged = cases.filter((c) => !(c.priority_flag || "")).length;
 
   return (
     <div className="min-h-screen">
@@ -164,7 +201,22 @@ export default function Cases() {
         </div>
       </nav>
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
+      {/* BODY — Finder-style layout: a left sidebar (Priority buckets + shortcuts,
+          always visible/sticky like Finder's Favourites pane) beside the scrolling
+          case grid. Sidebar only FILTERS/NAVIGATES — same activePriority state and
+          same api calls as before, nothing about what it does has changed. */}
+      <div className="flex items-start">
+        <Sidebar
+          activePriority={activePriority}
+          onPickPriority={setActivePriority}
+          priorityCounts={priorityCounts}
+          unflaggedCount={nUnflagged}
+          nTotal={nTotal}
+          router={router}
+        />
+
+        <main className="flex-1 min-w-0 px-6 py-8">
+        <div className="mx-auto max-w-6xl">
         {/* PAGE TITLE */}
         <h1 className="text-2xl font-semibold text-slate-100">Investigations</h1>
         <p className="mt-1 text-sm text-slate-500">Your active and completed profiling cases.</p>
@@ -189,7 +241,8 @@ export default function Cases() {
           />
         </div>
 
-        {/* COLLECTION FILTER CHIPS — sort/browse cases by saved folder */}
+        {/* COLLECTION FILTER CHIPS — sort/browse cases by saved folder. (Priority
+            filtering moved to the left sidebar — see <Sidebar> above.) */}
         {nTotal > 0 && (
           <CollectionBar
             collections={collections}
@@ -229,6 +282,11 @@ export default function Cases() {
                 key={c.case_id}
                 onClick={() => router.push(`/cases/${c.case_id}`)}
                 className="p-4 cursor-pointer hover:border-cyan-400"
+                style={
+                  c.priority_flag
+                    ? { borderLeft: `3px solid ${PRIORITY_BY_VALUE[c.priority_flag]?.dot || "transparent"}` }
+                    : undefined
+                }
               >
                 {/* Top row: title + status */}
                 <div className="flex items-start justify-between gap-3">
@@ -241,6 +299,10 @@ export default function Cases() {
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <PriorityPicker
+                      value={c.priority_flag || ""}
+                      onPick={(flag) => setPriority(c.case_id, flag)}
+                    />
                     <CasePicker
                       caseId={c.case_id}
                       collections={collections}
@@ -304,7 +366,9 @@ export default function Cases() {
             ))}
           </div>
         )}
-      </main>
+        </div>
+        </main>
+      </div>
 
       {showNew && (
         <NewInvestigation
@@ -313,6 +377,100 @@ export default function Cases() {
         />
       )}
     </div>
+  );
+}
+
+// Finder-style left sidebar — a "Favourites"-like pane that never scrolls away, sat
+// beside the case grid the way Finder's sidebar sits beside a folder's contents.
+// Pure UI relocation: same activePriority state, same onPickPriority(setActivePriority)
+// call, same toggle-off-on-repeat-click semantics the old chip bar used — just laid out
+// as clickable rows instead of a horizontal chip row, and grouped with a "Flagged
+// accounts" shortcut (a plain navigation, not a filter — no state of its own here).
+function Sidebar({ activePriority, onPickPriority, priorityCounts, unflaggedCount, nTotal, router }) {
+  const Row = ({ selected, dot, icon, label, count, onClick }) => (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] text-left transition-colors hover:bg-white/5 ${
+        selected ? "" : "text-slate-400 hover:text-slate-200"}`}
+      style={selected ? { background: `${dot}1f`, color: dot } : undefined}
+    >
+      {dot ? (
+        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: dot }} />
+      ) : (
+        <span className="text-[13px] leading-none shrink-0 w-2.5 text-center">{icon}</span>
+      )}
+      <span className="flex-1 truncate">{label}</span>
+      {count != null && <span className="text-[11px] font-mono opacity-60 shrink-0">{count}</span>}
+    </button>
+  );
+
+  return (
+    <aside className="hidden md:flex md:flex-col w-56 shrink-0 border-r border-slate-800 bg-slate-950/30 px-3 py-6 self-stretch">
+      <div className="text-[10px] font-mono uppercase tracking-wide text-slate-600 px-2.5 mb-1.5">
+        Priority
+      </div>
+      <div className="space-y-0.5">
+        <Row
+          selected={activePriority === "all"} dot="#22d3ee" icon="🗂"
+          label="All cases" count={nTotal}
+          onClick={() => onPickPriority("all")}
+        />
+        {PRIORITY.map((p) => (
+          <Row
+            key={p.value}
+            selected={activePriority === p.value} dot={p.dot}
+            label={p.label} count={priorityCounts[p.value] || 0}
+            onClick={() => onPickPriority(activePriority === p.value ? "all" : p.value)}
+          />
+        ))}
+        {unflaggedCount > 0 && (
+          <Row
+            selected={activePriority === "unflagged"} dot="#64748b"
+            label="Unflagged" count={unflaggedCount}
+            onClick={() => onPickPriority(activePriority === "unflagged" ? "all" : "unflagged")}
+          />
+        )}
+      </div>
+
+      <div className="text-[10px] font-mono uppercase tracking-wide text-slate-600 px-2.5 mb-1.5 mt-6">
+        Shortcuts
+      </div>
+      <div className="space-y-0.5">
+        <Row
+          selected={false} dot={null} icon="🚩"
+          label="Flagged accounts"
+          onClick={() => router.push("/flagged")}
+        />
+      </div>
+    </aside>
+  );
+}
+
+// Small traffic-light dot picker on a case card: click a dot to set that priority,
+// click the already-active dot again to clear it. Stops click propagation so it never
+// opens the case underneath. Sized up from the original 12px — these are a real click
+// target, not just a status indicator, and were fiddly to hit at the old size.
+function PriorityPicker({ value, onPick }) {
+  return (
+    <span className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} title="Set priority">
+      {PRIORITY.map((p) => {
+        const on = value === p.value;
+        return (
+          <button
+            key={p.value}
+            onClick={() => onPick(p.value)}
+            title={p.label}
+            aria-label={p.label}
+            className="w-5 h-5 rounded-full transition-transform hover:scale-125"
+            style={{
+              background: on ? p.dot : "transparent",
+              border: `2px solid ${p.dot}`,
+              boxShadow: on ? `0 0 6px ${p.dot}` : "none",
+            }}
+          />
+        );
+      })}
+    </span>
   );
 }
 

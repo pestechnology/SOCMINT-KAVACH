@@ -6,7 +6,7 @@
    stays disabled until status==='complete'; chain integrity derives from completion. */
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { api, getToken } from "@/lib/api";
 import GlassPanel from "@/components/ui/GlassPanel";
@@ -37,6 +37,7 @@ function platformShort(p) {
 export default function CaseView() {
   const router = useRouter();
   const { id } = useParams();
+  const searchParams = useSearchParams();
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState(null);
   const [selectedClusterId, setSelectedClusterId] = useState(null);
@@ -124,6 +125,29 @@ export default function CaseView() {
   const onPivotStarted = useCallback(() => {
     setData((d) => (d ? { ...d, status: "running" } : d));
   }, []);
+
+  // Deep-link from the cross-case Flagged dashboard: /cases/{id}?entity=<entity_id>
+  // selects and scrolls to that specific account once its data has loaded. Declared
+  // before the early "loading" return below (hooks must run unconditionally every
+  // render) — it can't reference onSelectEntity/entities (defined further down,
+  // after that return), so it duplicates onSelectEntity's small bit of state logic
+  // and reads straight off `data` instead.
+  const didDeepLinkRef = useRef(false);
+  useEffect(() => {
+    if (didDeepLinkRef.current || !data) return;
+    const eid = searchParams.get("entity");
+    if (!eid) return;
+    if (!(data.entities || []).some((e) => e.entity_id === eid)) return;
+    didDeepLinkRef.current = true;
+    setHovered(null);
+    setSelected(eid);
+    setSelectedClusterId(null);
+    // give the identity list a tick to render before scrolling to the highlighted card
+    requestAnimationFrame(() => {
+      document.getElementById(`account-card-${eid}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [data, searchParams]);
 
   if (!data) {
     return <div className="flex items-center justify-center h-screen text-sm text-slate-500">Loading…</div>;
