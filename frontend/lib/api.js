@@ -33,14 +33,36 @@ async function req(path, { method = "GET", body, auth = true } = {}) {
   return res.json();
 }
 
+// Multipart upload — the browser MUST set Content-Type itself so the multipart
+// boundary is included, so this can't go through req() (which forces JSON).
+async function upload(path, file) {
+  const form = new FormData();
+  form.append("file", file);
+  const headers = {};
+  const t = getToken();
+  if (t) headers["Authorization"] = `Bearer ${t}`;
+  const res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: form });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    const err = new Error(detail.detail || `${res.status} ${res.statusText}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 export const api = {
   register: (username, password) =>
     req("/auth/register", { method: "POST", body: { username, password }, auth: false }),
   login: (username, password) =>
     req("/auth/login", { method: "POST", body: { username, password }, auth: false }),
   listCases: () => req("/cases"),
-  createCase: (title, seeds, minor_involved = false, country_filter = "ALL", case_context = "", capture_evidence = false) =>
-    req("/cases", { method: "POST", body: { title, seeds, minor_involved, country_filter, case_context, capture_evidence } }),
+  createCase: (title, seeds, country_filter = "ALL", case_context = "", capture_evidence = false) =>
+    req("/cases", { method: "POST", body: { title, seeds, country_filter, case_context, capture_evidence } }),
+  // Bulk intake — one .docx of subject details becomes one case per subject.
+  // Preview parses only (creates nothing, spends no query); create runs the batch.
+  bulkPreview: (file) => upload("/cases/bulk/preview", file),
+  bulkCreate: (file) => upload("/cases/bulk", file),
   getCase: (id) => req(`/cases/${id}`),
   getResults: (id) => req(`/cases/${id}/results`),
   // Case-level triage priority ('' | 'red' | 'orange' | 'green') — distinct from the

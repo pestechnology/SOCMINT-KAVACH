@@ -57,14 +57,6 @@ def test_report_survives_xml_special_chars():
     assert os.path.getsize(pdf) > 2000
 
 
-def test_report_redaction_for_minor():
-    uid = _new_user()
-    cid = create_case(uid, "Minor case", [{"type": "username", "value": "arjun"}], minor_involved=True)
-    run_investigation_sync(cid)
-    pdf = generate_report(cid)
-    assert os.path.exists(pdf)  # generates with redaction path active
-
-
 def test_upi_cascade_identifies_bank():
     uid = _new_user()
     cid = create_case(uid, "UPI", [{"type": "upi", "value": "arjun.trades@oksbi"}])

@@ -1,7 +1,7 @@
 """
 backend/cases/case_service.py — case CRUD with owner access control.
 
-    create_case(user_id, title, seeds, minor_involved=False) -> case_id
+    create_case(user_id, title, seeds) -> case_id
     get_case(case_id, user_id) -> dict | None     # None if not owned by user_id
     list_cases(user_id) -> list[dict]
     set_status(case_id, status) -> None
@@ -36,8 +36,8 @@ def _now() -> str:
 
 
 def create_case(user_id: str, title: str, seeds: list[dict],
-                minor_involved: bool = False, country_filter: str = "ALL",
-                case_context: str = "", capture_evidence: bool = False) -> str:
+                country_filter: str = "ALL", case_context: str = "",
+                capture_evidence: bool = False) -> str:
     for s in seeds:
         if s.get("type") not in VALID_SEED_TYPES:
             raise ValueError(f"invalid seed type: {s.get('type')!r}")
@@ -47,10 +47,13 @@ def create_case(user_id: str, title: str, seeds: list[dict],
     conn = get_db()
     try:
         conn.execute(
+            # minor_involved is still a NOT-NULL-defaulted column on existing databases,
+            # so it is written as 0 rather than dropped — removing the column would need a
+            # table rebuild for every deployed DB, and 0 is exactly what "unset" meant.
             """INSERT INTO cases (case_id, user_id, title, seeds_json, minor_involved,
                status, country_filter, case_context, capture_evidence, created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (case_id, user_id, title, json.dumps(seeds), int(minor_involved),
+            (case_id, user_id, title, json.dumps(seeds), 0,
              "pending", country_filter or "ALL",
              (case_context or "").strip()[:500], int(bool(capture_evidence)), _now(), _now()),
         )

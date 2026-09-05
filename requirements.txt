@@ -8,6 +8,7 @@
 fastapi==0.115.6
 truststore>=0.10.0           # use the OS cert store (corporate TLS proxies / partial chains)
 uvicorn[standard]==0.34.0
+python-multipart==0.0.32     # multipart/form-data — the bulk .docx upload (POST /cases/bulk)
 httpx==0.28.1
 pydantic==2.12.5             # aligned with browser-use==0.13.3's exact pin (was 2.10.4); fastapi 0.115.6 + pydantic-settings 2.7.1 both accept it
 pydantic-settings==2.7.1
@@ -30,6 +31,12 @@ pillow==12.2.0                # pinned to match browser-use==0.13.3's exact requ
 # Run `python backend/scripts/download_face_models.py` once after install to fetch
 # the two small model files (not committed to git — see SETUP.md).
 opencv-python-headless==4.13.0.92
+
+# ---- Evidence capture (RFC-3161 external timestamp) ----
+# Imported directly by backend/evidence/capturer.py. It used to arrive only as a
+# transitive dependency, so on a clean install request_timestamp() failed and every
+# evidence bundle was sealed internally but left anchored:false. Declared explicitly.
+asn1crypto>=1.5.1
 
 # ---- Report (BSA-63 PDF) ----
 reportlab>=4.4.3,<5.0.0

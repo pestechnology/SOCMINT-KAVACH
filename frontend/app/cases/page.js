@@ -3,13 +3,14 @@
    plain-English copy) + "New investigation" modal. Killed: "REGISTRY", "OPERATION
    TITLE", "SEEDS", "INITIATE INVESTIGATION", the all-zero stats strip.
    PRESERVED: auth guard, api.listCases().cases, 401->login, signOut, vertex_user,
-   and api.createCase(title, seeds, minor, country_filter) -> res.case_id (§1.1, §0.4).
+   and api.createCase(title, seeds, country_filter) -> res.case_id (§1.1, §0.4).
    ADDED: "Agentic web" mode — an AI agent browses a chosen no-API OSINT site, extracts
    real data (never fabricated), and the result flows through the correlation pipeline. */
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getToken, clearToken } from "@/lib/api";
+import { notify, permission, requestPermission } from "@/lib/notify";
 import GlassPanel from "@/components/ui/GlassPanel";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
@@ -82,6 +83,10 @@ export default function Cases() {
   const [pickerCase, setPickerCase] = useState(null); // case_id whose folder picker is open
   // Case triage priority: "all" | "unflagged" | "red" | "orange" | "green".
   const [activePriority, setActivePriority] = useState("all");
+  // Completion notifications (bulk + single runs).
+  const [banner, setBanner] = useState("");     // in-page fallback when desktop toasts are off
+  const statusRef = useRef(new Map());          // case_id -> last seen status
+  const seededRef = useRef(false);              // first load only records, never notifies
 
   useEffect(() => {
     if (!getToken()) { router.replace("/login"); return; }
@@ -90,9 +95,46 @@ export default function Cases() {
     refreshCollections();
   }, [router]);
 
+  // Live refresh while anything is running. /cases already returns each case's status,
+  // so completion needs no new endpoint — poll, diff, announce. The interval clears
+  // itself once nothing is in flight, so an idle tab does no work.
+  useEffect(() => {
+    const busy = cases.some((c) => c.status === "running" || c.status === "pending");
+    if (!busy) return;
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
+  }, [cases]);
+
+  function announceCompletions(list) {
+    const prev = statusRef.current;
+    const done = seededRef.current
+      ? list.filter((c) => c.status === "complete" && prev.get(c.case_id)
+                           && prev.get(c.case_id) !== "complete")
+      : [];
+    statusRef.current = new Map(list.map((c) => [c.case_id, c.status]));
+    seededRef.current = true;
+    if (!done.length) return;
+
+    const shown = done.every((c) =>
+      notify("Investigation complete", {
+        body: `${c.title} \u00b7 ${c.account_count ?? 0} accounts`,
+        tag: c.case_id,
+        onClick: () => router.push(`/cases/${c.case_id}`),
+      })
+    );
+    if (!shown) {
+      setBanner(done.length === 1
+        ? `Investigation complete: ${done[0].title}`
+        : `${done.length} investigations complete.`);
+    }
+  }
+
   async function refresh() {
-    try { setCases((await api.listCases()).cases); }
-    catch (e) { if (e.status === 401) { clearToken(); router.replace("/login"); } }
+    try {
+      const list = (await api.listCases()).cases;
+      setCases(list);
+      announceCompletions(list);
+    } catch (e) { if (e.status === 401) { clearToken(); router.replace("/login"); } }
   }
 
   async function refreshCollections() {
@@ -221,6 +263,25 @@ export default function Cases() {
         <h1 className="text-2xl font-semibold text-slate-100">Investigations</h1>
         <p className="mt-1 text-sm text-slate-500">Your active and completed profiling cases.</p>
 
+        {/* Completion banner — the fallback when desktop notifications are unavailable
+            or the officer declined them. Same information, in the page. */}
+        {!!banner && (
+          <div
+            role="status"
+            className="mt-6 flex items-center justify-between gap-3 rounded-lg border border-[rgba(0,255,136,0.35)] bg-[rgba(0,255,136,0.07)] px-4 py-2.5 text-sm text-slate-200"
+          >
+            <span>{banner}</span>
+            <button
+              type="button"
+              onClick={() => setBanner("")}
+              className="text-slate-400 hover:text-slate-200 text-lg leading-none"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* STATS STRIP — only when there is at least one case (§4.2) */}
         {nTotal > 0 && (
           <GlassPanel className="p-4 mt-6">
@@ -292,11 +353,6 @@ export default function Cases() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="font-semibold text-slate-100 truncate">{c.title}</div>
-                    {!!c.minor_involved && (
-                      <span className="mt-1 inline-block text-[10px] font-mono uppercase tracking-wide text-[#ff3366] border border-[rgba(255,51,102,0.35)] rounded px-1.5 py-0.5">
-                        Minor
-                      </span>
-                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <PriorityPicker
@@ -357,7 +413,13 @@ export default function Cases() {
 
                 {/* Bottom row: created_at + Open case */}
                 <div className="mt-3 flex items-center justify-between">
-                  <span className="text-xs font-mono text-slate-500">{fmtTime(c.created_at)}</span>
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[12.5px] font-mono text-slate-200"
+                    title={`Opened ${fmtTime(c.created_at)}`}
+                  >
+                    <span aria-hidden="true" className="text-slate-400">🗓</span>
+                    {fmtTime(c.created_at)}
+                  </span>
                   <Button variant="secondary" className="text-xs px-3 py-1.5">
                     Open case →
                   </Button>
@@ -374,6 +436,12 @@ export default function Cases() {
         <NewInvestigation
           onClose={() => setShowNew(false)}
           onCreated={(id) => router.push(`/cases/${id}`)}
+          onBulkCreated={(n) => {
+            setShowNew(false);
+            setBanner(`${n} investigation${n === 1 ? "" : "s"} started. `
+                      + "You'll be notified as each one finishes.");
+            refresh();
+          }}
         />
       )}
     </div>
@@ -610,8 +678,8 @@ const STEP_COLOR = {
   info: "#94a3b8", success: "#00ff88", warning: "#ffb703", error: "#ff3366",
 };
 
-function NewInvestigation({ onClose, onCreated }) {
-  const [mode, setMode] = useState("standard"); // "standard" | "agentic"
+function NewInvestigation({ onClose, onCreated, onBulkCreated }) {
+  const [mode, setMode] = useState("standard"); // "standard" | "bulk" | "agentic"
   const [title, setTitle] = useState("");
   const [caseContext, setCaseContext] = useState(""); // optional "what kind of case is this?"
   const [region, setRegion] = useState("INDIA");
@@ -619,10 +687,65 @@ function NewInvestigation({ onClose, onCreated }) {
   // Default to "username" — best-tested, highest-recall path (see prior note).
   const [draftType, setDraftType] = useState("username");
   const [draftValue, setDraftValue] = useState("");
-  const [minor, setMinor] = useState(false);
   const [captureEvidence, setCaptureEvidence] = useState(false); // court-grade evidence capture
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // ── Bulk .docx mode ──
+  // Preview first, run second: parsing costs nothing, but confirming spawns one full
+  // investigation per subject. Mirrors the pivot flow's suggest-then-run split.
+  const [bulkFile, setBulkFile] = useState(null);
+  const [bulkPreview, setBulkPreview] = useState(null);   // {subjects, total_seeds}
+  const [dragging, setDragging] = useState(false);
+  const fileRef = useRef(null);
+  // dragenter/dragleave also fire when the pointer crosses CHILD elements, so a plain
+  // boolean flickers the highlight off while still inside the zone. Counting enters
+  // minus leaves is the standard fix.
+  const dragDepth = useRef(0);
+
+  const ACCEPT = ".xlsx,.csv,.docx";
+
+  function isAccepted(f) {
+    return !!f && ACCEPT.split(",").some((ext) => f.name.toLowerCase().endsWith(ext));
+  }
+
+  function onDrop(e) {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    const f = e.dataTransfer?.files?.[0];
+    if (!f) return;
+    // Reject by extension here so a wrong file never costs a round-trip; the server
+    // validates again on upload (never trust the client).
+    if (!isAccepted(f)) {
+      setBulkFile(null); setBulkPreview(null);
+      setError(`"${f.name}" is not a supported sheet — use .xlsx, .csv or .docx.`);
+      return;
+    }
+    chooseFile(f);
+  }
+
+  async function chooseFile(f) {
+    setError(""); setBulkPreview(null); setBulkFile(f || null);
+    if (!f) return;
+    setBusy(true);
+    try {
+      setBulkPreview(await api.bulkPreview(f));
+    } catch (e) { setError(e.message); setBulkFile(null); }
+    finally { setBusy(false); }
+  }
+
+  async function beginBulk() {
+    if (!bulkFile) { setError("Choose a subject sheet first."); return; }
+    setError(""); setBusy(true);
+    // Ask for notification permission here: this click is the user gesture browsers
+    // require, and it is the moment the officer actually wants to be told when it ends.
+    await requestPermission();
+    try {
+      const res = await api.bulkCreate(bulkFile);
+      onBulkCreated(res.created);
+    } catch (e) { setError(e.message); setBusy(false); }
+  }
 
   // ── Agentic web mode ──
   const [agTools, setAgTools] = useState([]);
@@ -651,7 +774,7 @@ function NewInvestigation({ onClose, onCreated }) {
     setError(""); setBusy(true);
     try {
       if (!seeds.length) throw new Error("Add at least one identifier to continue.");
-      const res = await api.createCase(title || "Untitled investigation", seeds, minor, region,
+      const res = await api.createCase(title || "Untitled investigation", seeds, region,
                                        caseContext.trim(), captureEvidence);
       onCreated(res.case_id);
     } catch (e) { setError(e.message); setBusy(false); }
@@ -708,10 +831,33 @@ function NewInvestigation({ onClose, onCreated }) {
 
         <h2 className="text-lg font-semibold text-slate-100">New investigation</h2>
         <p className="mt-1 text-xs text-slate-500">
-          Enter identifiers to profile a subject, or let an AI agent browse a web tool for you.
+          Enter identifiers for one subject, or upload a sheet to profile several at once.
         </p>
 
-        {/* Agentic-web mode disabled for now (browser-agent path unreliable). Standard only. */}
+        {/* Agentic-web mode disabled for now (browser-agent path unreliable). */}
+        <div className="mt-4 flex gap-2">
+          {[
+            { id: "standard", label: "Manual entry" },
+            { id: "bulk", label: "Bulk upload" },
+          ].map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => {
+                setMode(m.id); setError("");
+                dragDepth.current = 0; setDragging(false);
+              }}
+              aria-pressed={mode === m.id}
+              className={`flex-1 rounded-lg border px-3 py-2 text-[13px] transition-colors ${
+                mode === m.id
+                  ? "border-cyan-400 text-slate-100 bg-cyan-400/10"
+                  : "border-white/10 text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
 
         {error && (
           <div
@@ -722,8 +868,8 @@ function NewInvestigation({ onClose, onCreated }) {
           </div>
         )}
 
-        {/* Case title (both modes) */}
-        <div className="mt-5">
+        {/* Case title — manual entry only; bulk takes each case's title from the document. */}
+        <div className={`mt-5 ${mode === "bulk" ? "hidden" : ""}`}>
           <Label>Case title</Label>
           <Input
             value={title}
@@ -800,19 +946,6 @@ function NewInvestigation({ onClose, onCreated }) {
                   ))}
                 </div>
               )}
-            </div>
-
-            <div className="mt-5">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={minor}
-                  onChange={(e) => setMinor(e.target.checked)}
-                  style={{ accentColor: "#00f2fe" }}
-                />
-                <span className="text-sm text-slate-200">Subject is a minor</span>
-                <Tooltip content="Enables POCSO Act protections. Identifying details will be redacted in the evidence report." />
-              </label>
             </div>
 
             <div className="mt-3">
@@ -924,6 +1057,171 @@ function NewInvestigation({ onClose, onCreated }) {
           </div>
         )}
 
+        {/* ─────────── BULK MODE ─────────── */}
+        {mode === "bulk" && (
+          <div className="mt-5">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.csv,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              onChange={(e) => chooseFile(e.target.files?.[0])}
+              className="hidden"
+            />
+
+            {/* Drop zone. A <button> rather than a <div onClick> so it is reachable by
+                keyboard and announced properly; the real <input type="file"> above stays
+                in the DOM (hidden) and is what actually opens the picker. */}
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              onDragEnter={(e) => { e.preventDefault(); dragDepth.current += 1; setDragging(true); }}
+              onDragOver={(e) => e.preventDefault()}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                dragDepth.current = Math.max(0, dragDepth.current - 1);
+                if (dragDepth.current === 0) setDragging(false);
+              }}
+              onDrop={onDrop}
+              aria-label="Drop a subject sheet here, or choose a file"
+              className={`w-full rounded-xl border-2 border-dashed px-6 py-9 text-center transition-colors duration-150 ${
+                dragging
+                  ? "border-cyan-400 bg-cyan-400/10"
+                  : bulkFile
+                    ? "border-cyan-500/40 bg-cyan-500/[0.06] hover:border-cyan-400/60"
+                    : "border-white/15 bg-white/[0.02] hover:border-cyan-400/50 hover:bg-white/[0.04]"
+              }`}
+            >
+              <svg
+                className={`mx-auto h-9 w-9 ${dragging || bulkFile ? "text-cyan-300" : "text-slate-500"}`}
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+              >
+                <path d="M12 16V4" />
+                <path d="M7 9l5-5 5 5" />
+                <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+              </svg>
+
+              {bulkFile ? (
+                <>
+                  <div className="mt-3 text-[15px] font-semibold text-slate-100 break-all px-2">
+                    {bulkFile.name}
+                  </div>
+                  <div className="mt-1 text-[13px] text-slate-400">
+                    {(bulkFile.size / 1024).toFixed(1)} KB · tap to choose a different file
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mt-3 text-[15px] font-semibold text-slate-100">
+                    {dragging ? "Release to load the sheet" : "Drop a .xlsx, .csv or .docx here"}
+                  </div>
+                  <div className="mt-1 text-[13px] text-slate-400">or tap to choose a file</div>
+                </>
+              )}
+            </button>
+
+            {/* Format card — the rules, then the templates that already satisfy them.
+                Sample files are served straight out of frontend/public, so these are
+                plain static downloads with no API round-trip. Regenerate both with
+                `python -m scripts.make_bulk_template`. */}
+            <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="text-[13px] leading-relaxed text-slate-400">
+                One subject per row, with a header row naming the columns:{" "}
+                <span className="text-slate-200">Name</span>,{" "}
+                <span className="text-slate-200">Phone</span>,{" "}
+                <span className="text-slate-200">Email</span>,{" "}
+                <span className="text-slate-200">Username</span>,{" "}
+                <span className="text-slate-200">UPI</span>,{" "}
+                <span className="text-slate-200">Profile URLs</span>,{" "}
+                <span className="text-slate-200">Photo URL</span>. No column is required —
+                fill in what you have. Several profile links (Facebook, Instagram, YouTube,
+                X…) can share the one <span className="text-slate-200">Profile URLs</span> cell.
+              </p>
+              <p className="mt-2 text-[13px] leading-relaxed text-slate-400">
+                Each row becomes its own case — identifiers are never merged across rows —
+                and runs are queued one at a time. Files up to{" "}
+                <span className="text-slate-200">5 MB</span>; there is no limit on the
+                number of subjects, so you will see the exact count to confirm before
+                anything runs.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                {[
+                  { href: "/bulk_template.xlsx", label: "Download Excel template" },
+                  { href: "/bulk_template.csv", label: "Download CSV template" },
+                ].map((t) => (
+                  <a
+                    key={t.href}
+                    href={t.href}
+                    download
+                    className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-cyan-300 hover:text-cyan-200 transition-colors"
+                  >
+                    <span aria-hidden="true">↓</span>
+                    {t.label}
+                  </a>
+                ))}
+              </div>
+            </div>
+
+            {busy && !bulkPreview && (
+              <p className="mt-3 text-sm text-slate-400">Reading document…</p>
+            )}
+
+            {bulkPreview && (
+              <div className="mt-4">
+                <div className="text-sm text-slate-300">
+                  Found <span className="text-slate-100 font-semibold">{bulkPreview.subjects.length}</span>
+                  {" "}subject{bulkPreview.subjects.length === 1 ? "" : "s"} and{" "}
+                  <span className="text-slate-100 font-semibold">{bulkPreview.total_seeds}</span> identifiers.
+                  Nothing has run yet.
+                </div>
+                {/* With no row cap, this confirmation IS the guard — a large sheet is a
+                    long job, so state the cost before the button is pressed. ~7 min per
+                    case is the measured median of live runs. */}
+                <div className="mt-1 text-xs text-slate-500">
+                  Queued one at a time — roughly{" "}
+                  <span className="text-slate-400">
+                    {bulkPreview.subjects.length < 9
+                      ? `${Math.max(1, Math.round(bulkPreview.subjects.length * 7))} min`
+                      : `${(bulkPreview.subjects.length * 7 / 60).toFixed(1)} hours`}
+                  </span>{" "}
+                  in total at ~7 min per case.
+                </div>
+                <div className="mt-3 max-h-56 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/5">
+                  {bulkPreview.subjects.map((sub, i) => (
+                    <div key={i} className="px-3 py-2">
+                      <div className="text-[13px] font-medium text-slate-200 truncate">
+                        {sub.title}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {sub.seeds.map((sd, j) => (
+                          <span
+                            key={j}
+                            className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[11px] font-mono text-slate-400"
+                            title={typeLabel(sd.type)}
+                          >
+                            {sd.value}
+                          </span>
+                        ))}
+                      </div>
+                      {!!sub.dropped_seeds && (
+                        <div className="mt-1 text-[11px]" style={{ color: "var(--tone-amber, #ffb703)" }}>
+                          {sub.dropped_seeds} further identifier(s) dropped — 25 per row max.
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {permission() === "denied" && (
+                  <p className="mt-3 text-xs text-slate-500">
+                    Desktop notifications are blocked for this site — completions will show
+                    on the Investigations page instead.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Footer */}
         <div className="mt-6 flex items-center justify-end gap-3">
           {!agTask && (
@@ -932,6 +1230,14 @@ function NewInvestigation({ onClose, onCreated }) {
               {mode === "standard" ? (
                 <Button variant="primary" onClick={begin} disabled={busy}>
                   {busy ? "Starting..." : "Start investigation"}
+                </Button>
+              ) : mode === "bulk" ? (
+                <Button variant="primary" onClick={beginBulk} disabled={busy || !bulkPreview}>
+                  {busy
+                    ? "Starting..."
+                    : bulkPreview
+                      ? `Start ${bulkPreview.subjects.length} investigation${bulkPreview.subjects.length === 1 ? "" : "s"}`
+                      : "Start investigations"}
                 </Button>
               ) : (
                 <Button variant="primary" onClick={beginAgentic} disabled={busy}>

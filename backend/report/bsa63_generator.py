@@ -10,8 +10,7 @@ Sections (Master Architecture 10.2):
 
 LEGAL POSTURE: every legal string is a TEMPLATE. Citations were checked in
 LEGAL_VERIFICATION.md, but Part B is left for a certified expert to sign — VERTEX
-never fabricates a signature. If case.minor_involved is set, identifying particulars
-are redacted (POCSO Act 2012 s.23 / JJ Act 2015 s.74).
+never fabricates a signature.
 """
 from __future__ import annotations
 
@@ -34,8 +33,6 @@ from reportlab.platypus import (
 from backend import config
 from backend.database import get_db
 from backend.ledger.audit_ledger import get_artifacts, get_ledger, verify_chain
-
-REDACTED = "[REDACTED - minor protected under POCSO s.23 / JJ Act s.74]"
 
 # Conservative palette — near-black ink, a single navy accent, grey rules.
 NAVY = colors.HexColor("#1f2d3d")
@@ -205,10 +202,6 @@ def _esc(s) -> str:
     return _xml_escape(str(s))
 
 
-def _redact(text, redact: bool) -> str:
-    return REDACTED if redact else _esc(text)
-
-
 # --------------------------------------------------------------------------- #
 #  The report
 # --------------------------------------------------------------------------- #
@@ -216,8 +209,7 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
     ss = _styles()
     data = _load_case(case_id)
     case = data["case"] or {"case_id": case_id, "title": "(unknown case)",
-                            "minor_involved": 0, "created_at": "", "seeds_json": "[]"}
-    redact = bool(case.get("minor_involved"))
+                            "created_at": "", "seeds_json": "[]"}
     officer = (data["user"] or {}).get("username", "____________________")
     now_dt = datetime.datetime.now(datetime.timezone.utc)
     generated = now_dt.strftime("Generated %Y-%m-%d %H:%M UTC")
@@ -256,7 +248,7 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
     cover_rows = [
         [Paragraph("<b>Case reference</b>", ss["CellWrap"]), Paragraph(_esc(str(case.get("case_id") or case_id)), ss["Mono"])],
         [Paragraph("<b>Case title</b>", ss["CellWrap"]), Paragraph(_esc(case.get("title", "-")), ss["CellWrap"])],
-        [Paragraph("<b>Seed identifier(s)</b>", ss["CellWrap"]), Paragraph(_redact(seed_str, redact), ss["CellWrap"])],
+        [Paragraph("<b>Seed identifier(s)</b>", ss["CellWrap"]), Paragraph(_esc(seed_str), ss["CellWrap"])],
         [Paragraph("<b>Investigating officer</b>", ss["CellWrap"]), Paragraph(_esc(officer), ss["CellWrap"])],
         [Paragraph("<b>Jurisdiction</b>", ss["CellWrap"]), Paragraph("____________________ (to be completed)", ss["CellWrap"])],
         [Paragraph("<b>Report generated</b>", ss["CellWrap"]), Paragraph(now_dt.strftime("%Y-%m-%d %H:%M UTC"), ss["CellWrap"])],
@@ -271,13 +263,6 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
                      "correlation findings. Confidence ratings are decision-support indicators, "
                      "not determinations of fact. Linkage assertions are to be corroborated by "
                      "the investigating officer.", ss["Small"])]
-    if redact:
-        el += [Spacer(1, 4 * mm),
-               Paragraph("NOTICE: This case is flagged as involving a minor. Identifying "
-                         "particulars are redacted in accordance with Section 23 of the POCSO "
-                         "Act, 2012 and Section 74 of the Juvenile Justice Act, 2015. [VERIFY-LEGAL]",
-                         ss["Legal"])]
-    el += [PageBreak()]
 
     # ===================== 1. SEARCH MANIFEST =====================
     ledger = get_ledger(case_id)
@@ -316,7 +301,7 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
             for eid in ids:
                 e = ent_by_id.get(eid)
                 if e:
-                    members.append(f"{_esc(e.get('platform','?'))}: {_redact(e.get('value',''), redact)}")
+                    members.append(f"{_esc(e.get('platform','?'))}: {_esc(e.get('value',''))}")
             tier = cl.get("tier", "-")
             conf = cl.get("confidence_score", 0)
             tc = TIER_COLOR.get(tier, MUTED)
@@ -397,8 +382,8 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
                 status_txt = "Unconfirmed"
             rows.append([str(n),
                          Paragraph(_esc(e.get("platform")), ss["CellWrap"]),
-                         Paragraph(_redact(e.get("value", ""), redact), ss["CellWrap"]),
-                         Paragraph(_redact(name, redact) if name else "-", ss["CellWrap"]),
+                         Paragraph(_esc(e.get("value", "")), ss["CellWrap"]),
+                         Paragraph(_esc(name) if name else "-", ss["CellWrap"]),
                          Paragraph(_esc(status_txt), ss["CellWrap"]),
                          Paragraph(_esc(act) if act else "-", ss["CellWrap"])])
         el += [_table(rows, [8 * mm, 24 * mm, 44 * mm, 40 * mm, 22 * mm, 36 * mm]),
@@ -421,7 +406,7 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
         rows = [["Email", "Registered on"]]
         for email, svcs in by_email.items():
             svc_list = ", ".join(sorted({str(s) for s in svcs if s}))
-            rows.append([Paragraph(_redact(email, redact), ss["CellWrap"]),
+            rows.append([Paragraph(_esc(email), ss["CellWrap"]),
                          Paragraph(_esc(svc_list), ss["CellWrap"])])
         el += [_table(rows, [50 * mm, 124 * mm]), Spacer(1, 4 * mm)]
 
@@ -435,7 +420,7 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
             m = _m(e)
             names = m.get("breaches") or []
             sample = ", ".join(str(x) for x in names[:12]) + ("…" if len(names) > 12 else "")
-            rows.append([Paragraph(_redact(e.get("value", ""), redact), ss["CellWrap"]),
+            rows.append([Paragraph(_esc(e.get("value", "")), ss["CellWrap"]),
                          Paragraph(_esc(m.get("breach_count") or len(names)), ss["CellWrap"]),
                          Paragraph(_esc(sample) if sample else "-", ss["CellWrap"])])
         el += [_table(rows, [44 * mm, 18 * mm, 112 * mm]), Spacer(1, 4 * mm)]
@@ -447,7 +432,7 @@ def generate_report(case_id: str, output_path: str | None = None) -> str:
         rows = [["Number", "Carrier", "Country", "Line type"]]
         for e in phone_intel:
             m = _m(e)
-            rows.append([Paragraph(_redact(e.get("value", ""), redact), ss["CellWrap"]),
+            rows.append([Paragraph(_esc(e.get("value", "")), ss["CellWrap"]),
                          Paragraph(_esc(m.get("carrier") or "-"), ss["CellWrap"]),
                          Paragraph(_esc(m.get("country") or "-"), ss["CellWrap"]),
                          Paragraph(_esc(m.get("line_type") or "-"), ss["CellWrap"])])

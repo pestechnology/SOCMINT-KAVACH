@@ -11,6 +11,13 @@ Runs a random control username in parallel; any site that fires for the control
 is excluded from the real results.  See fp_filter.py.
 
 Parses `[+] Site: url` lines.  Fail-safe: [] if sherlock isn't installed/errors.
+
+Sherlock ALSO writes a `<username>.txt` results file into its working directory, which
+is not asked for and is never read (we parse stdout). Launched from the repo root that
+littered the project with one file per handle — and a bulk upload of many subjects, each
+probed with a control username too, turns that into dozens of stray files per run. It
+runs with cwd=<REPORT_OUTPUT_DIR>/sherlock so those land in the scratch area. Same reason
+blackbird_scraper.py passes cwd=, and maigret_scraper.py passes --folderoutput.
 """
 from __future__ import annotations
 
@@ -53,6 +60,9 @@ class SherlockScraper(BaseDataSource):
         proc = await asyncio.create_subprocess_exec(
             exe, username, "--print-found", "--no-color", "--timeout", "5",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            # cwd rather than --folderoutput: sherlock has renamed that flag across
+            # versions, and an unknown flag makes it exit non-zero — which the fail-safe
+            # contract would swallow, silently disabling a whole enumerator.
             cwd=outdir,
         )
         try:

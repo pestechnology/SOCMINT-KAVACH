@@ -28,6 +28,20 @@ const NetworkGraph = dynamic(() => import("@/components/Graph"), { ssr: false })
 const Timeline = dynamic(() => import("@/components/Timeline"), { ssr: false });
 
 // ---------- helpers ----------
+// Seed types as the investigator picked them in the New-investigation form.
+const SEED_LABEL = {
+  name: "Name", email: "Email", phone: "Phone", username: "Username",
+  upi: "UPI", url: "Profile URL", face: "Photo",
+};
+
+function fmtWhen(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function platformShort(p) {
   const m = { github: "GH", instagram: "IG", hibp: "HIBP", telegram: "TG", reddit: "RD", linkedin: "LI", twitter: "TW", upi: "UPI", serper: "WEB", derived: "DRV" };
   const k = (p || "").toLowerCase();
@@ -405,6 +419,41 @@ export default function CaseView() {
               <ReportButton id={id} disabled={status !== "complete"} />
             </div>
           </div>
+
+          {/* Row 1b — WHAT WAS SEARCHED. The case title is free text an officer typed;
+              this is the actual identifier(s) the investigation ran on, which is what
+              anyone opening the case needs to see first. Pivot seeds appear here too,
+              because the orchestrator appends them to the case on re-iteration. */}
+          {(!!(kase.seeds || []).length || !!kase.created_at) && (
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              {!!(kase.seeds || []).length && (
+                <span className="text-[10px] font-mono uppercase tracking-wide text-slate-500 mr-0.5">
+                  Searched for
+                </span>
+              )}
+              {(kase.seeds || []).map((sd, i) => (
+                <span
+                  key={`${sd.type}-${sd.value}-${i}`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/25 bg-cyan-500/10 px-2 py-1 max-w-[320px]"
+                  title={`${SEED_LABEL[sd.type] || sd.type}: ${sd.value}`}
+                >
+                  <span className="text-[10px] font-mono uppercase tracking-wide text-cyan-300/70 shrink-0">
+                    {SEED_LABEL[sd.type] || sd.type}
+                  </span>
+                  <span className="text-[13px] font-mono text-slate-100 truncate">{sd.value}</span>
+                </span>
+              ))}
+              {!!kase.created_at && (
+                <span
+                  className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[12.5px] font-mono text-slate-200 ml-auto"
+                  title={`Case opened ${fmtWhen(kase.created_at)}`}
+                >
+                  <span aria-hidden="true" className="text-slate-400">🗓</span>
+                  {fmtWhen(kase.created_at)}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Row 2 — verdict line (the single most important row) */}
           <div className="mt-3">

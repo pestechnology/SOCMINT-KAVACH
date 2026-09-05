@@ -2,6 +2,8 @@
 backend/cases/case_routes.py — case + results + report endpoints.
 
     POST /cases                     create a case (and kick off the investigation)
+    POST /cases/bulk/preview        parse an uploaded subject sheet (creates nothing)
+    POST /cases/bulk                create + start ONE case per subject in that sheet
     GET  /cases                     list my cases
     GET  /cases/flagged             every red/orange/yellow-flagged account across
                                      ALL my cases, grouped by colour (cross-case view)
@@ -17,7 +19,7 @@ backend/cases/case_routes.py — case + results + report endpoints.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -40,7 +42,6 @@ class Seed(BaseModel):
 class NewCase(BaseModel):
     title: str
     seeds: list[Seed]
-    minor_involved: bool = False
     country_filter: str = "ALL"
     # Optional free-text "what kind of case is this?" (e.g. "investment fraud through
     # Telegram"). Never used to filter/steer the SEARCH itself — only to sharpen the
@@ -66,7 +67,7 @@ class ChatBody(BaseModel):
 def create(body: NewCase, background: BackgroundTasks, user_id: str = Depends(get_current_user)):
     try:
         case_id = create_case(user_id, body.title,
-                              [s.model_dump() for s in body.seeds], body.minor_involved,
+                              [s.model_dump() for s in body.seeds],
                               body.country_filter, body.case_context, body.capture_evidence)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -79,6 +80,90 @@ def create(body: NewCase, background: BackgroundTasks, user_id: str = Depends(ge
         pass  # orchestrator not built yet — case is created either way
 
     return {"case_id": case_id}
+
+
+# ---- bulk intake: one .docx of subject details -> one case per subject ---------------
+# Split into preview + create on purpose, the same "spend nothing until the investigator
+# commits" shape /cases/{id}/pivot/suggest already uses: parsing is free, but every row is
+# a full investigation, so the officer confirms the exact count before any run starts.
+# That confirmation is why there is no arbitrary row cap - the FILE SIZE is the bound.
+
+BULK_EXTENSIONS = (".xlsx", ".csv", ".docx")
+
+
+def _parse_upload(file: UploadFile) -> list[dict]:
+    """Read + parse the uploaded subject sheet, or raise HTTP 400 with a readable reason.
+
+    Extension routing (not content sniffing) picks the reader — the three formats are
+    unambiguous by name, and an officer who renames a file should be told so plainly
+    rather than have the server guess."""
+    name = (file.filename or "").lower()
+    if not name.endswith(BULK_EXTENSIONS):
+        raise HTTPException(
+            status_code=400,
+            detail="Upload an .xlsx, .csv or .docx subject sheet. (.xls and .doc are the "
+                   "older binary formats - re-save as .xlsx / .docx.)")
+    from backend.ingestion.bulk_subjects import MAX_FILE_BYTES, parse_subjects
+    # Read one byte past the cap so an oversized upload is refused without buffering it all.
+    data = file.file.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise HTTPException(status_code=400,
+                            detail=f"File is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB.")
+    try:
+        return parse_subjects(file.filename or "", data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/bulk/preview")
+def bulk_preview(file: UploadFile = File(...), user_id: str = Depends(get_current_user)):
+    """Parse an uploaded subject sheet (.xlsx / .csv / .docx) and return the subjects
+    VERTEX read out of it. Creates no case and spends no query — this is what the UI
+    shows for confirmation before anything runs."""
+    subjects = _parse_upload(file)
+    return {"subjects": subjects, "total_seeds": sum(len(s["seeds"]) for s in subjects)}
+
+
+@router.post("/bulk")
+def bulk_create(background: BackgroundTasks, file: UploadFile = File(...),
+                user_id: str = Depends(get_current_user)):
+    """Create ONE case per subject in the uploaded sheet and start each investigation.
+
+    Never one case holding every subject's identifiers: the correlation engine links
+    accounts that share signals, so merging different people into a single case would
+    fabricate cross-subject clusters. Each case then runs the ordinary pipeline, writes
+    the ordinary ledger, and yields the ordinary BSA-63 report.
+
+    Runs are queued SEQUENTIALLY (FastAPI BackgroundTasks): one live investigation fans
+    out dozens of scrapers, so starting them all at once would exhaust the Serper/LLM
+    per-minute budget and degrade every case's results. Each finishes in turn and
+    notifies. A large sheet is therefore a long job - the preview reports the count
+    up front so that is a deliberate choice, not a surprise."""
+    subjects = _parse_upload(file)
+    from backend.ingestion.bulk_subjects import MAX_SEEDS_PER_SUBJECT
+    from backend.pipeline.orchestrator import run_investigation_sync
+
+    created, warnings = [], []
+    for n, subj in enumerate(subjects, start=1):
+        try:
+            case_id = create_case(user_id, subj["title"], subj["seeds"],
+                                  subj["country_filter"], subj["case_context"])
+        except ValueError as e:
+            # One unusable subject must not sink the whole batch — report and continue.
+            warnings.append(f"Subject {n} ({subj['title']}): skipped - {e}")
+            continue
+        background.add_task(run_investigation_sync, case_id)
+        created.append({"case_id": case_id, "title": subj["title"], "seeds": subj["seeds"]})
+        if subj.get("dropped_seeds"):
+            warnings.append(f"Subject {n} ({subj['title']}): "
+                            f"{subj['dropped_seeds']} identifiers dropped "
+                            f"({MAX_SEEDS_PER_SUBJECT} per subject max).")
+    if not created:
+        raise HTTPException(status_code=400,
+                            detail="No subject in that document could be turned into a case. "
+                                   + (warnings[0] if warnings else ""))
+    return {"created": len(created), "cases": created,
+            "skipped_subjects": len(subjects) - len(created), "warnings": warnings}
 
 
 @router.get("")

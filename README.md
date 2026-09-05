@@ -102,6 +102,12 @@ One identifier flows through a five-stage pipeline:
   pipeline; run it separately per that folder's `docker-compose.yml`.
 
 **Investigator workflow**
+- **Bulk intake** — upload one sheet (`.xlsx` / `.csv` / `.docx`) listing several
+  subjects (Name, Phone, Email, Username, UPI, Profile URLs, Photo URL — no field
+  required, several profile links per cell) and VERTEX opens one case per subject,
+  never merging identifiers across people. Parsed and previewed before anything runs,
+  queued one at a time, and the browser notifies you as each completes. Template:
+  `bulk_template.xlsx`; format: [`BULK_SEARCH.md`](BULK_SEARCH.md).
 - **Re-iteration / cross-pivoting** — select discovered accounts, derived names, or profile
   photos and run one combined follow-up search that folds back into the same case.
 - **Investigative copilot** — ranked next actions plus a law-enforcement data-request directory
@@ -178,7 +184,8 @@ backend/
   auth/              JWT + bcrypt
   cases/             case CRUD, routes, and owner access control
   ingestion/         BaseDataSource + all scrapers, photo/fact enrichment,
-                     browser_fetch, newleaks_scraper, leak_classify, derive (re-iteration)
+                     browser_fetch, newleaks_scraper, leak_classify, derive (re-iteration),
+                     bulk_subjects (.xlsx/.csv/.docx bulk intake)
   agentic_browser/   real-browser OSINT agent (browser-use + Playwright) and service layer
   normalization/     Indic script detection, transliteration, and phonetic keys
   analysis/          forensics, identity_agent, adjudicator, reranker, name_intel,
@@ -192,7 +199,8 @@ backend/
   report/            BSA-63, executive-summary, and evidence-exhibit generators
   main.py            FastAPI entrypoint
 frontend/            Next.js 14 + Tailwind dashboard
-scripts/             create_admin, seed_demo_case, download_face_models, telegram_login
+scripts/             create_admin, seed_demo_case, download_face_models, telegram_login,
+                     make_bulk_template
 tests/               pytest suite
 ```
 
@@ -206,6 +214,8 @@ tests/               pytest suite
 | POST | `/auth/register` | no | create user, returns token |
 | POST | `/auth/login` | no | authenticate, returns token |
 | POST | `/cases` | yes | create case and start investigation |
+| POST | `/cases/bulk/preview` | yes | parse an uploaded subject sheet (creates nothing) |
+| POST | `/cases/bulk` | yes | create + start one case per subject in that sheet |
 | GET | `/cases` | yes | list your cases |
 | GET | `/cases/{id}` | yes | one case (owner only) |
 | GET | `/cases/{id}/results` | yes | entities + clusters + forensics + reiteration count |

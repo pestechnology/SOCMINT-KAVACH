@@ -22,7 +22,14 @@ to understand what's happening.
 
 ## 1. Prerequisites
 
-- Python 3.10 or later (tested on 3.10, 3.13)
+- Python 3.10 or later (tested on 3.10, 3.13); **3.10-3.11 recommended**
+  - On **Python 3.12 or newer**, `aksharamukha` cannot be imported at all: it does
+    `from ast import Str`, and `ast.Str` was removed in 3.12. Version 2.3 (the
+    latest) still has it, and the import is dead code upstream. Nothing crashes —
+    `transliterate.to_latin()` fail-opens and returns the text unchanged — but
+    Indic transliteration is silently DISABLED, so Kannada/Tamil/Telugu/Malayalam
+    names no longer converge on a shared phonetic key. Every other feature is
+    unaffected. Use Python 3.11 if you need Indic name matching.
 - Node 18+ (for the frontend)
 - Git (to clone Blackbird — not on PyPI)
 - Docker (optional, only needed for PhoneInfoga if you don't run it natively)

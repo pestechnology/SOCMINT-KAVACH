@@ -10,7 +10,7 @@ completely untouched. We only IMPORT its shared helpers (styles, _esc, _table, _
 _load_case, colours, the numbered canvas) — no shared code is modified.
 
 Field names verified against _load_case()/schema:
-  case:    title, minor_involved, seeds_json, user_id     (officer = user.username;
+  case:    title, seeds_json, user_id                    (officer = user.username;
                                                             jurisdiction is NOT stored)
   cluster: tier, confidence_score, entity_ids_json, explanation, signals_json
   entity:  platform, value (handle), metadata_json.name
@@ -187,13 +187,13 @@ def _cluster_label(members) -> str:
     return "cluster"
 
 
-def _cluster_summary(cl, ent_by_id, redact) -> str:
+def _cluster_summary(cl, ent_by_id) -> str:
     """ONE point-wise line per cluster: N accounts · handle(s) · platforms — never every name."""
     members = _members(cl, ent_by_id)
     count = len(members)
     plats = sorted({str(m.get("platform") or "?") for m in members})
     dh = list(dict.fromkeys(str(m.get("value") or "").strip() for m in members if m.get("value")))
-    handle_str = base.REDACTED if redact else (
+    handle_str = (
         ", ".join("@" + h for h in dh[:3]) + (f" +{len(dh) - 3} more" if len(dh) > 3 else ""))
     plat_str = ", ".join(plats[:6]) + (f" +{len(plats) - 6} more" if len(plats) > 6 else "")
     return f"{count} account{'s' if count != 1 else ''} · {handle_str} · across {plat_str}"
@@ -309,7 +309,7 @@ def _styles():
     return ss
 
 
-def _member_accounts(cl, ent_by_id, redact):
+def _member_accounts(cl, ent_by_id):
     try:
         ids = json.loads(cl.get("entity_ids_json") or "[]")
     except Exception:
@@ -318,18 +318,17 @@ def _member_accounts(cl, ent_by_id, redact):
     for eid in ids:
         e = ent_by_id.get(eid)
         if e:
-            out.append(f"{base._esc(e.get('platform', '?'))}: {base._redact(e.get('value', ''), redact)}")
+            out.append(f"{base._esc(e.get('platform', '?'))}: {base._esc(e.get('value', ''))}")
     return out
 
 
 def generate_summary_report(case_id: str, output_path: str | None = None) -> str:
     ss = _styles()
     data = base._load_case(case_id)
-    case = data["case"] or {"case_id": case_id, "title": "", "minor_involved": 0, "seeds_json": "[]"}
+    case = data["case"] or {"case_id": case_id, "title": "", "seeds_json": "[]"}
     entities = data["entities"]
     clusters = data["clusters"]
     ent_by_id = {e["entity_id"]: e for e in entities}
-    redact = bool(case.get("minor_involved"))
 
     officer = (data["user"] or {}).get("username") or ""
     title = case.get("title") or ""
@@ -388,7 +387,7 @@ def generate_summary_report(case_id: str, output_path: str | None = None) -> str
     hdr = [
         [Paragraph("<b>Case</b>", ss["CellWrap"]), Paragraph(base._esc(title) if not _is_placeholder(title) else '<font color="#a11111">[title not set]</font>', ss["CellWrap"]),
          Paragraph("<b>Officer</b>", ss["CellWrap"]), Paragraph(base._esc(officer) if not _is_placeholder(officer) else '<font color="#a11111">[officer not set]</font>', ss["CellWrap"])],
-        [Paragraph("<b>Seed(s)</b>", ss["CellWrap"]), Paragraph(base._redact(seed_str, redact), ss["CellWrap"]),
+        [Paragraph("<b>Seed(s)</b>", ss["CellWrap"]), Paragraph(base._esc(seed_str), ss["CellWrap"]),
          Paragraph("<b>Jurisdiction</b>", ss["CellWrap"]), Paragraph("____________ (to be completed)", ss["CellWrap"])],
         [Paragraph("<b>Generated</b>", ss["CellWrap"]), Paragraph(now_dt.strftime("%Y-%m-%d %H:%M UTC"), ss["CellWrap"]),
          Paragraph("<b>Ref</b>", ss["CellWrap"]), Paragraph(base._esc(str(case.get("case_id") or case_id)[:12]), ss["Mono"])],
@@ -480,7 +479,7 @@ def generate_summary_report(case_id: str, output_path: str | None = None) -> str
                 Paragraph(f'<b>{n}. {base._esc(label)}</b> &nbsp;'
                           f'<font color="#{tc.hexval()[2:]}"><b>[{base._esc(tier)}]</b></font> '
                           f'&nbsp;<b>{conf:.0f}%</b> <font color="#5a6470">· {base._esc(basis)}</font>', ss["Body2"]),
-                Paragraph(base._esc(_cluster_summary(cl, ent_by_id, redact)), ss["Small"]),
+                Paragraph(base._esc(_cluster_summary(cl, ent_by_id)), ss["Small"]),
                 Paragraph("<b>Reasoning:</b> " + base._esc(cl.get("explanation") or "-"), ss["Body2"]),
                 HRFlowable(width="100%", thickness=0.3, color=base.LIGHT, spaceBefore=4, spaceAfter=4),
             ]
