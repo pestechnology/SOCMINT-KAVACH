@@ -35,10 +35,13 @@ COVERAGE (what actually enriches a case):
   instagram / twitter+x / youtube / facebook vanity / facebook /people/<slug>/<id>
       -> handle and/or name recovered, cascaded back as new seeds. Works.
   facebook.com/profile.php?id=<numeric>
-      -> id recovered and recorded as evidence, but NO enrichment is possible; every
-         clearnet resolution route was tested and returns nothing. See the long note
-         in _parse_facebook() for the evidence and why the authenticated-browser
-         workaround is deliberately not wired up.
+      -> the profile page itself is unreachable anonymously (HTTP 400 on every
+         clearnet host, incl. m./mbasic. — see _parse_facebook()'s long note), but
+         URLScraper._run_live() recovers the real name a different way: a targeted
+         Serper search for the numeric id, which frequently surfaces the id's own
+         indexed Facebook posts/videos titled "Real Name (@<id>) - ...". Works when
+         the id has any indexed public activity; still yields nothing for an id with
+         none (a genuine "nothing findable", not a bug — see _facebook_id_name_lookup).
 """
 from __future__ import annotations
 
@@ -166,25 +169,34 @@ def _parse_facebook(segs: list[str], qs: dict) -> dict:
 
     # facebook.com/profile.php?id=<numeric>  — the ID is the identity; there is no handle.
     #
-    # KNOWN LIMITATION — this URL form yields NO search enrichment, by necessity.
     # The numeric id is recovered and recorded as evidence (it is actually a STRONGER
     # identifier than a handle: Facebook ids are immutable, vanity handles are not), but
-    # nothing downstream can turn it into a searchable name. Every clearnet route was
-    # tested against a live id on 2026-09-01 and all four returned nothing:
-    #   * direct HTTPS fetch of the profile page  -> HTTP 400 (Facebook serves
-    #     profile.php to logged-out clients no longer; no <title>, no og: tags)
+    # this parser has no way to turn it into a name from the URL alone — that's handled
+    # one layer up, in URLScraper._run_live() / _facebook_id_name_lookup().
+    #
+    # EVIDENCE TRAIL (first investigated 2026-09-01, reconfirmed live 2026-09-05 after a
+    # user report that ID-only Facebook URLs enriched nothing):
+    #   * direct HTTPS fetch of the profile page  -> HTTP 400 on www./m./mbasic. alike
+    #     (reconfirmed 2026-09-05: identical "Error Facebook" body on all three hosts —
+    #     genuinely unreachable anonymously, not a stale claim)
     #   * socid_extractor (socid_enrich.py)       -> no Facebook scheme exists at all
     #   * Wayback (already in the "url" tool map) -> no archived snapshot
-    #   * Serper exact-match on the numeric id    -> 0 results (not indexed anywhere)
-    # The only mechanism that could work is an AUTHENTICATED real browser
-    # (agentic_browser/authed_browser.py's dedicated Chrome profile). That is
-    # deliberately NOT wired up here: it requires logging a real Facebook account into
-    # the scraper profile, which carries ToS/ban and attribution risk (see that module's
-    # own docstring), and changes the evidentiary posture from anonymous public
-    # collection to authenticated access. As of this writing that module's Chromium
-    # runtime is not installed either, and its live_available() does not detect that.
-    # If this form ever must be supported, use a dedicated burner account, never a
-    # personal one, and record the authenticated capture as such in the evidence trail.
+    #   * Serper exact-match on the FULL URL string -> 0 results (not indexed as text)
+    #   * Serper site:facebook.com search on the BARE id -> ACTUALLY WORKS. The
+    #     2026-09-01 note tested the URL-string form above and stopped there; the bare
+    #     numeric id is a different, narrower query that Google frequently has indexed
+    #     via the id's own posts/videos (their auto-generated titles read
+    #     "Real Name (@<id>) - ..."). A live probe of a real id returned 10 hits, several
+    #     independently carrying the same real name. This is what
+    #     _facebook_id_name_lookup() now does — see URLScraper._run_live().
+    #   * An AUTHENTICATED real browser (agentic_browser/authed_browser.py's dedicated
+    #     Chrome profile) could still do better (full profile fetch, not just whatever
+    #     got indexed) but stays deliberately NOT wired up here: logging a real Facebook
+    #     account into the scraper profile carries ToS/ban and attribution risk (see that
+    #     module's own docstring), and changes the evidentiary posture from anonymous
+    #     public collection to authenticated access. Its Chromium runtime also isn't
+    #     installed. If ever needed, use a dedicated burner account, never a personal
+    #     one, and record the authenticated capture as such in the evidence trail.
     #
     # A vanity URL (facebook.com/<handle>) or a /people/<Name-Slug>/<id> URL DOES enrich
     # normally — the handle / name slug cascade like any other seed.
@@ -368,11 +380,86 @@ def _is_known_host(url: str) -> bool:
     return extract_profile_url(url) is not None
 
 
+# facebook.com/profile.php?id=<numeric> — the one profile form with NO handle and NO
+# name_hint recoverable from the URL itself. See _parse_facebook()'s long note: the
+# profile page itself is unreachable anonymously (HTTP 400 on www/m/mbasic — reconfirmed
+# live 2026-09-05, same result on every clearnet host).
+#
+# What DOES work, verified live the same day: Facebook's own post/video/reel pages under
+# that numeric id are frequently indexed by Google, titled "Real Name (@<id>) - ..." for
+# the id's own video-listing page (and similar shapes for individual posts). A real probe
+# (site:facebook.com "<id>") returned 10 organic hits, several independently titled with
+# the same real name. Only the "(@<exact id>)" shape is trusted here — never a bare page
+# title — so a title that happens to carry a DIFFERENT id in its parens (e.g. someone
+# else's post/comment surfaced by the same query) is correctly ignored rather than
+# misattributed to this profile.
+async def _facebook_id_name_lookup(platform_id: str) -> str | None:
+    """One Serper query for a Facebook numeric-id profile's real name — the only
+    enrichment route that survives Facebook blocking every anonymous page fetch.
+    Fail-safe: returns None (never raises) if SERPER_API_KEY is unset, the query
+    errors, or nothing matches the exact-id "(@<id>)" title shape."""
+    try:
+        from backend.ingestion.serper_scraper import SerperScraper
+    except Exception:
+        return None
+    try:
+        results = await SerperScraper('site:facebook.com "{q}"').resolve(platform_id, "live")
+    except Exception:
+        return None
+    pat = re.compile(r'^(.*?)\s*\(@' + re.escape(platform_id) + r'\)')
+    for r in results or []:
+        # SerperScraper only populates metadata["title"] when it also extracted a
+        # platform username (_extract_social_username) — which has no Facebook case,
+        # so for every Facebook hit the title lands in .value instead (see its
+        # `value = username if username else item.get("title", identifier)`). Check
+        # both so this doesn't silently break if that ever changes.
+        title = (r.metadata or {}).get("title") or (r.value if isinstance(r.value, str) else "") or ""
+        m = pat.match(title)
+        if not m:
+            continue
+        name = m.group(1).strip().strip("·•|/–-@").strip()
+        if not name or len(name) > 60:
+            continue
+        try:
+            from backend.analysis.name_intel import is_plausible_name
+            if not is_plausible_name(name):
+                continue
+        except Exception:
+            pass
+        return name
+    return None
+
+
 class URLScraper(BaseDataSource):
     name = "url_scraper"
 
     async def _run_live(self, url: str) -> list[RawProfile]:
-        return self._build(url)
+        out = self._build(url)
+        info = extract_profile_url(url)
+        # Only for the one gap this closes: a Facebook profile recovered ONLY as a
+        # numeric id (no handle, no URL-slug name) — every other profile shape already
+        # cascades normally via _build()'s handle/name_hint seeds below.
+        if (info and info.get("kind") == "profile" and info.get("platform") == "facebook"
+                and info.get("id_kind") == "facebook_numeric_id" and info.get("platform_id")
+                and not info.get("handle") and not info.get("name_hint")):
+            name = await _facebook_id_name_lookup(info["platform_id"])
+            if name:
+                for p in out:
+                    if p.type == "url":
+                        p.metadata["name_hint"] = name
+                        p.metadata["name"] = name
+                        p.metadata["fullname"] = name
+                        p.metadata["note"] = (
+                            f"{p.metadata.get('note', '')}; name recovered via indexed "
+                            f"Facebook posts under this id"
+                        ).strip("; ")
+                out.append(make_profile(
+                    "name", name, "derived", "",
+                    metadata={"derived_from": url, "cascade": True,
+                              "derived_platform": "facebook",
+                              "derived_strategy": "facebook_id_search"},
+                ))
+        return out
 
     def _run_mock(self, url: str) -> list[RawProfile]:
         return self._build(url)

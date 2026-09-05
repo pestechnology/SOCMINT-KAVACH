@@ -10,9 +10,41 @@ import asyncio
 
 import pytest
 
+import backend.ingestion.serper_scraper as serper_mod
+from backend.ingestion.base_module import make_profile
 from backend.ingestion.derive import derive_seeds
 from backend.ingestion.url_scraper import (URLScraper, extract_handle,
                                            extract_profile_url)
+
+
+class _FakeSerper:
+    """Stand-in for SerperScraper so URLScraper's Facebook-id name lookup
+    (_facebook_id_name_lookup) never touches the network in a test. Same pattern as
+    test_name_cross_platform_search.py's _FakeSerper — canned RawProfiles per call,
+    monkeypatched onto the module _facebook_id_name_lookup lazily imports from."""
+    responses: list = []
+
+    def __init__(self, query_template='"{q}"', sensitive=False):
+        self.query_template = query_template
+
+    async def resolve(self, identifier, mode):
+        return list(_FakeSerper.responses)
+
+
+def _fb_title_hit(title: str) -> "make_profile":
+    # Mirrors the REAL SerperScraper output shape for a Facebook hit: no Facebook case
+    # in _extract_social_username() means metadata["title"] is never set for facebook —
+    # the title lands in .value instead. Setting metadata["title"] here too would let a
+    # bug that only reads .metadata (and not .value) pass unnoticed — deliberately not
+    # done, so this fixture is a true regression guard for exactly the value/title bug
+    # this fix hit initially.
+    return make_profile("web_mention", title, "facebook", "https://www.facebook.com/x",
+                        metadata={"snippet": None})
+
+
+def _patch_serper(monkeypatch, responses):
+    _FakeSerper.responses = responses
+    monkeypatch.setattr(serper_mod, "SerperScraper", _FakeSerper)
 
 
 # --------------------------------------------------------------------------------------
@@ -141,27 +173,66 @@ def test_scraper_records_but_never_seeds_a_non_profile_url():
     assert not [p for p in out if p.metadata.get("cascade")]   # ...but seeds nothing
 
 
-def test_scraper_records_id_only_profile_without_a_username_seed():
+def test_scraper_records_id_only_profile_without_a_username_seed(monkeypatch):
+    _patch_serper(monkeypatch, [])   # no indexed hit for this id -> no name recovered
     out = asyncio.run(URLScraper().resolve(
         "https://www.facebook.com/profile.php?id=100012345678901", "live"))
     assert [p for p in out if p.type == "url"][0].metadata["platform_id"] == "100012345678901"
-    assert not [p for p in out if p.type == "username"]
+    assert not [p for p in out if p.type == "username"]   # never a username — it's not one
 
 
-def test_facebook_id_only_url_is_a_documented_dead_end():
-    """Pins the KNOWN LIMITATION in _parse_facebook(): an id-only Facebook URL records
-    the id as evidence but produces NO cascade seed and NO derived seed, because no
-    clearnet route can resolve the id to a name. If someone later wires up an
-    authenticated-browser resolver, this test is the one that should change."""
+def test_facebook_id_only_url_with_no_indexed_match_still_yields_no_cascade(monkeypatch):
+    """_parse_facebook() itself never resolves an id-only URL to a name — that's by
+    design (see its long note). URLScraper._run_live() tries one further route (a
+    Serper search for the bare id, matching indexed post/video titles shaped
+    "Name (@<id>)" — see _facebook_id_name_lookup); when THAT also finds nothing, this
+    genuinely is a dead end, and the URL correctly seeds nothing rather than guessing."""
+    _patch_serper(monkeypatch, [])   # simulates an id with no indexed public activity
     url = "https://www.facebook.com/profile.php?id=100012345678901"
     info = extract_profile_url(url)
     assert info["kind"] == "profile"          # it IS a real person's profile...
     assert info["platform_id"] == "100012345678901"
-    assert info["handle"] is None and info["name_hint"] is None   # ...with nothing searchable
+    assert info["handle"] is None and info["name_hint"] is None   # ...nothing IN the URL
 
     out = asyncio.run(URLScraper().resolve(url, "live"))
     assert not [p for p in out if p.metadata.get("cascade")]      # nothing fed back
     assert derive_seeds("url", url) == []                         # and nothing to pivot on
+    # derive_seeds() must stay free/offline (the pivot/suggest endpoint's whole contract
+    # is "spends nothing") — it can never itself call out to Serper for a platform_id.
+
+
+def test_facebook_id_only_url_recovers_name_from_indexed_posts(monkeypatch):
+    """The fix: when the numeric id DOES have indexed public activity, URLScraper
+    recovers the real name from a "Name (@<id>)" title and feeds it back as a name
+    seed — exactly like a URL-slug name_hint would. Regression guard for the reported
+    bug: an id-only Facebook URL used to enrich nothing at all."""
+    pid = "100043681425575"
+    _patch_serper(monkeypatch, [
+        _fb_title_hit(f"Kumar Kumar (@{pid}) - Videos | Facebook"),
+        _fb_title_hit("My struggle Time 😔😢 #struggeltime #nonfollowers"),  # no (@id) shape
+    ])
+    url = f"https://www.facebook.com/profile.php?id={pid}"
+    out = asyncio.run(URLScraper().resolve(url, "live"))
+
+    url_p = [p for p in out if p.type == "url"][0]
+    assert url_p.metadata["name"] == "Kumar Kumar"
+    assert url_p.metadata["fullname"] == "Kumar Kumar"
+    name_seed = [p for p in out if p.type == "name" and p.metadata.get("cascade")]
+    assert len(name_seed) == 1
+    assert name_seed[0].value == "Kumar Kumar"
+    assert name_seed[0].metadata["derived_strategy"] == "facebook_id_search"
+
+
+def test_facebook_id_name_lookup_ignores_a_title_carrying_a_different_id(monkeypatch):
+    """A title matching "(@<some other id>)" must never be attributed to THIS profile —
+    that would misattribute a stranger's name (e.g. from an unrelated comment/share
+    surfaced by the same broad search) to the id being investigated."""
+    pid = "100043681425575"
+    _patch_serper(monkeypatch, [_fb_title_hit("Someone Else (@999999999999999) - Videos")])
+    url = f"https://www.facebook.com/profile.php?id={pid}"
+    out = asyncio.run(URLScraper().resolve(url, "live"))
+    assert not [p for p in out if p.metadata.get("cascade")]
+    assert "name" not in [p for p in out if p.type == "url"][0].metadata
 
 
 # --------------------------------------------------------------------------------------

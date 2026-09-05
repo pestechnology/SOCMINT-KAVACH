@@ -213,9 +213,17 @@ def derive_seeds(seed_type: str, value: str) -> list[dict]:
 
             # platform_id (Facebook numeric / YouTube channel / Twitter numeric) is a
             # real identifier and is recorded in the URL profile's metadata by
-            # URLScraper, but it is deliberately NOT emitted as a seed: there is no
-            # scraper keyed on a platform-native id, and it is not a username (it would
-            # be rejected by _valid_handle anyway).
+            # URLScraper, but it is deliberately NOT turned into a seed HERE: it is not
+            # a username (would be rejected by _valid_handle anyway), and this function
+            # must stay free/offline — derive_seeds() is what the pivot/suggest endpoint
+            # calls to preview candidates "spends nothing (no scrape, no query)".
+            # For the one platform_id this is worth resolving anyway (a Facebook
+            # profile.php?id=<numeric> URL, which otherwise enriches nothing at all),
+            # URLScraper._run_live() does spend one Serper query at actual SCRAPE time
+            # (not preview time) to recover a name — see _facebook_id_name_lookup() in
+            # url_scraper.py. That happens outside derive_seeds() entirely, so a case
+            # created from such a URL still enriches; only the free pivot-preview here
+            # stays blind to it.
 
     return out[:MAX_DERIVED_SEEDS]
 
