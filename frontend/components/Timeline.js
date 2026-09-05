@@ -10,7 +10,7 @@ import { DataSet } from "vis-data";
 import "vis-timeline/styles/vis-timeline-graph2d.css";
 
 // §1.7 semantic mapping: HIGH=emerald, MEDIUM=amber, LOW/REJECT=crimson.
-const TIER_BG = { HIGH: "#6fae86", MEDIUM: "#cba96a", LOW: "#cf8080", REJECT: "#cf8080" };
+const TIER_BG = { HIGH: "#00ff88", MEDIUM: "#ffb703", LOW: "#ff3366", REJECT: "#ff3366" };
 
 export default function Timeline({ entities, clusters }) {
   const ref = useRef(null);

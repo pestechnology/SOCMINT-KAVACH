@@ -8,7 +8,7 @@ export default function GlassPanel({ className = "", children, ...rest }) {
         bg-[var(--bg-glass)] border border-[var(--border-glass)]
         shadow-[0_8px_32px_0_rgba(0,0,0,0.37)]
         transition-colors duration-300
-        hover:border-[rgba(107,169,189,0.4)]
+        hover:border-[rgba(0,242,254,0.4)]
         ${className}
       `}
       {...rest}

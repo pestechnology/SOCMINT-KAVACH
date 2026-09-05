@@ -235,7 +235,7 @@ export default function Cases() {
                   <div className="min-w-0">
                     <div className="font-semibold text-slate-100 truncate">{c.title}</div>
                     {!!c.minor_involved && (
-                      <span className="mt-1 inline-block text-[10px] font-mono uppercase tracking-wide text-[#cf8080] border border-[rgba(207,128,128,0.35)] rounded px-1.5 py-0.5">
+                      <span className="mt-1 inline-block text-[10px] font-mono uppercase tracking-wide text-[#ff3366] border border-[rgba(255,51,102,0.35)] rounded px-1.5 py-0.5">
                         Minor
                       </span>
                     )}
@@ -265,9 +265,9 @@ export default function Cases() {
                         <span key={cid}
                           className="inline-flex items-center gap-1 text-[10px] font-mono rounded px-1.5 py-0.5 border"
                           style={{
-                            color: col.color || "var(--tone-cyan-bright, #6ba9bd)",
-                            borderColor: (col.color || "#6ba9bd") + "66",
-                            background: (col.color || "#6ba9bd") + "14",
+                            color: col.color || "var(--tone-cyan-bright, #00f2fe)",
+                            borderColor: (col.color || "#00f2fe") + "66",
+                            background: (col.color || "#00f2fe") + "14",
                           }}>
                           🗂 {col.name}
                         </span>
@@ -340,7 +340,7 @@ function CollectionBar({ collections, active, onPick, onCreate, onDelete, unfile
         chip(
           c.collection_id,
           <span className="inline-flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full" style={{ background: c.color || "#6ba9bd" }} />
+            <span className="w-2 h-2 rounded-full" style={{ background: c.color || "#00f2fe" }} />
             {c.name}
             <span className="text-slate-500">({c.case_count})</span>
           </span>,
@@ -415,7 +415,7 @@ function CasePicker({ caseId, collections, memberIds, open, onOpen, onClose, onT
                     className="flex items-center gap-2 px-1 py-1 rounded hover:bg-slate-800 cursor-pointer">
                     <input type="checkbox" checked={on}
                       onChange={() => onToggle(c.collection_id)} className="accent-cyan-400" />
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: c.color || "#6ba9bd" }} />
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ background: c.color || "#00f2fe" }} />
                     <span className="text-xs text-slate-200 truncate">{c.name}</span>
                   </label>
                 );
@@ -449,7 +449,7 @@ function StatCard({ n, label, color = "var(--stat-num-strong)", pulse = false })
 }
 
 const STEP_COLOR = {
-  info: "#94a3b8", success: "#6fae86", warning: "#cba96a", error: "#cf8080",
+  info: "#94a3b8", success: "#00ff88", warning: "#ffb703", error: "#ff3366",
 };
 
 function NewInvestigation({ onClose, onCreated }) {
@@ -558,7 +558,7 @@ function NewInvestigation({ onClose, onCreated }) {
         {error && (
           <div
             className="mt-4 rounded-lg px-3 py-2 text-[13px]"
-            style={{ color: "var(--tone-rose)", background: "rgba(207,128,128,0.12)", border: "1px solid rgba(207,128,128,0.35)" }}
+            style={{ color: "var(--tone-rose)", background: "rgba(255,51,102,0.12)", border: "1px solid rgba(255,51,102,0.35)" }}
           >
             {error}
           </div>
@@ -650,7 +650,7 @@ function NewInvestigation({ onClose, onCreated }) {
                   type="checkbox"
                   checked={minor}
                   onChange={(e) => setMinor(e.target.checked)}
-                  style={{ accentColor: "#6ba9bd" }}
+                  style={{ accentColor: "#00f2fe" }}
                 />
                 <span className="text-sm text-slate-200">Subject is a minor</span>
                 <Tooltip content="Enables POCSO Act protections. Identifying details will be redacted in the evidence report." />
@@ -663,7 +663,7 @@ function NewInvestigation({ onClose, onCreated }) {
                   type="checkbox"
                   checked={captureEvidence}
                   onChange={(e) => setCaptureEvidence(e.target.checked)}
-                  style={{ accentColor: "#6ba9bd" }}
+                  style={{ accentColor: "#00f2fe" }}
                 />
                 <span className="text-sm text-slate-200">Capture court-grade evidence</span>
                 <Tooltip content="Captures each source page at the moment of viewing — screenshot + MHTML + DOM — SHA-256 hashed, written to the tamper-evident ledger and externally timestamped (RFC-3161). Exhibits appear in the downloadable report. Sources are dynamic; this preserves what was seen." />

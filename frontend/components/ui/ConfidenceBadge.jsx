@@ -4,10 +4,10 @@
 // Text colors use theme-aware CSS vars (globals.css) so the label darkens in light mode;
 // the translucent bg/border tints read fine on both themes.
 const CONFIG = {
-  HIGH:   { label: "Strong match",   color: "var(--tone-emerald)", bg: "rgba(111,174,134,0.12)",  border: "rgba(111,174,134,0.35)" },
-  MEDIUM: { label: "Possible match", color: "var(--tone-amber)",   bg: "rgba(203,169,106,0.12)",  border: "rgba(203,169,106,0.35)" },
-  LOW:    { label: "Not linked",     color: "var(--tone-rose)",    bg: "rgba(207,128,128,0.12)", border: "rgba(207,128,128,0.35)" },
-  REJECT: { label: "Not linked",     color: "var(--tone-rose)",    bg: "rgba(207,128,128,0.12)", border: "rgba(207,128,128,0.35)" },
+  HIGH:   { label: "Strong match",   color: "var(--tone-emerald)", bg: "rgba(0,255,136,0.12)",  border: "rgba(0,255,136,0.35)" },
+  MEDIUM: { label: "Possible match", color: "var(--tone-amber)",   bg: "rgba(255,183,3,0.12)",  border: "rgba(255,183,3,0.35)" },
+  LOW:    { label: "Not linked",     color: "var(--tone-rose)",    bg: "rgba(255,51,102,0.12)", border: "rgba(255,51,102,0.35)" },
+  REJECT: { label: "Not linked",     color: "var(--tone-rose)",    bg: "rgba(255,51,102,0.12)", border: "rgba(255,51,102,0.35)" },
   // UNVERIFIED: the account exists under a matching handle, but NOTHING was ever
   // retrieved from its page (no name, bio, photo or title). It contributed no evidence
   // of its own, so it must not wear the cluster's "Strong match" badge — claiming a

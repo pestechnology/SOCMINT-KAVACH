@@ -3,13 +3,13 @@
 const VARIANTS = {
   primary:
     "text-black font-semibold bg-gradient-to-r from-cyan-400 to-purple-400 " +
-    "shadow-[0_4px_20px_-4px_rgba(107,169,189,0.5)] hover:-translate-y-0.5",
+    "shadow-[0_4px_20px_-4px_rgba(0,242,254,0.5)] hover:-translate-y-0.5",
   secondary:
     "bg-slate-800/80 text-slate-100 border border-white/15 " +
     "hover:border-cyan-400 hover:-translate-y-px",
   success:
     "text-black font-semibold bg-gradient-to-r from-emerald-400 to-cyan-400 " +
-    "shadow-[0_4px_20px_-4px_rgba(111,174,134,0.5)] hover:-translate-y-0.5",
+    "shadow-[0_4px_20px_-4px_rgba(0,255,136,0.5)] hover:-translate-y-0.5",
 };
 
 export default function Button({

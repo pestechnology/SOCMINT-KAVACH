@@ -35,16 +35,11 @@ module.exports = {
         panel: "#0f172a",   // secondary panel bg (--bg-secondary)
         // amber/crimson/emerald keep their DEFAULT (still used by un-rebuilt pages)
         // and gain a -400 shade matching the redesign semantic palette.
-        // CALM PASS: the tier/accent hues were fully-saturated neon (#00f2fe, #00ff88,
-        // #ff3366, #ffb703) — an alarming "SOC dashboard" look. Desaturated to muted,
-        // mid-lightness tones that stay clearly distinguishable (green/amber/red/teal)
-        // but read as quiet rather than shouting. One-file change: cascades to every
-        // text-/bg-/border-{cyan,emerald,amber,crimson,purple}-400 across the app.
-        amber: { DEFAULT: "#c79a52", 400: "#cba96a" },   // MEDIUM / possible
-        crimson: { DEFAULT: "#c06868", 400: "#cf8080" }, // REJECT / not linked / error
-        emerald: { DEFAULT: "#4f9e75", 400: "#6fae86" }, // HIGH / strong
-        cyan: { 400: "#6ba9bd" },                        // active / selected / running
-        purple: { 400: "#8ea6cf" },                      // gradient partner for cyan
+        amber: { DEFAULT: "#D4900A", 400: "#ffb703" },   // MEDIUM / possible
+        crimson: { DEFAULT: "#C0392B", 400: "#ff3366" }, // REJECT / not linked / error
+        emerald: { DEFAULT: "#27AE60", 400: "#00ff88" }, // HIGH / strong
+        cyan: { 400: "#00f2fe" },                        // active / selected / running
+        purple: { 400: "#4facfe" },                      // gradient partner for cyan
         // --- Legacy "Case Room" tokens kept working until pages are rebuilt ---
         surface: "#161B27", // panel bg — cards, sidebars
         lifted: "#1E2235",  // raised element bg — inputs, inner cards

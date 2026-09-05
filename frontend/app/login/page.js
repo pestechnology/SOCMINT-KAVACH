@@ -97,8 +97,8 @@ export default function Login() {
               className="mb-5 rounded-lg px-3 py-2 text-[13px]"
               style={{
                 color: "var(--tone-rose)",
-                background: "rgba(207,128,128,0.12)",
-                border: "1px solid rgba(207,128,128,0.35)",
+                background: "rgba(255,51,102,0.12)",
+                border: "1px solid rgba(255,51,102,0.35)",
               }}
             >
               {error}

@@ -7,7 +7,7 @@ export default function Input({ className = "", ...rest }) {
         w-full rounded-lg bg-slate-900/80 border border-slate-700
         px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500
         outline-none transition-colors duration-200
-        focus:border-cyan-400 focus:shadow-[0_0_0_3px_rgba(107,169,189,0.15)]
+        focus:border-cyan-400 focus:shadow-[0_0_0_3px_rgba(0,242,254,0.15)]
         ${className}
       `}
       {...rest}
