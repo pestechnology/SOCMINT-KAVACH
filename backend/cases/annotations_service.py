@@ -25,6 +25,7 @@ private per user even on the same case.
 from __future__ import annotations
 
 import datetime
+import json
 import uuid
 
 from backend.cases.case_service import get_case
@@ -155,3 +156,73 @@ def set_annotation(case_id: str, user_id: str, entity_id: str,
     finally:
         conn.close()
     return {"bookmarked": new_bm, "flag": new_flag, "note": new_note}
+
+
+def list_flagged(user_id: str) -> dict:
+    """Every red/orange/yellow-flagged ACCOUNT across ALL of this user's cases, grouped
+    by colour — powers the cross-case "Flagged" dashboard (three columns, one per
+    severity, click an item to jump to its case).
+
+    Single query for the annotation rows, then one batched lookup of the owning cases'
+    titles and their current entities (rather than N+1 per-case round trips). An
+    annotation is only included once it resolves to a CURRENTLY EXISTING entity_id —
+    same rule get_annotations() uses — so a flagged account dropped by a later re-scrape
+    doesn't show up as a dead link with no photo/name to render.
+
+    Returns {"red": [...], "orange": [...], "yellow": [...]}, each entry newest-first:
+        {case_id, case_title, entity_id, type, platform, value, name, photo_url, bio,
+         source_url, note, bookmarked, updated_at}
+    """
+    out = {k: [] for k in VALID_FLAGS if k}  # {"red": [], "orange": [], "yellow": []}
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT case_id, target_key, flag, bookmarked, note, updated_at FROM annotations "
+            "WHERE user_id = ? AND flag != '' ORDER BY updated_at DESC",
+            (user_id,),
+        ).fetchall()
+        if not rows:
+            return out
+        case_ids = sorted({r["case_id"] for r in rows})
+        placeholders = ",".join("?" * len(case_ids))
+        cases = {
+            r["case_id"]: r["title"]
+            for r in conn.execute(
+                f"SELECT case_id, title FROM cases WHERE user_id = ? AND case_id IN ({placeholders})",
+                (user_id, *case_ids),
+            ).fetchall()
+        }
+        entities = conn.execute(
+            f"SELECT case_id, entity_id, type, value, platform, metadata_json, source_url "
+            f"FROM entities WHERE case_id IN ({placeholders})",
+            case_ids,
+        ).fetchall()
+    finally:
+        conn.close()
+
+    # (case_id, target_key) -> live entity row, so each annotation resolves to whatever
+    # account currently carries that content signature (see module docstring).
+    by_case_key = {(e["case_id"], _key_from_entity_row(e)): e for e in entities}
+
+    for r in rows:
+        case_title = cases.get(r["case_id"])
+        ent = by_case_key.get((r["case_id"], r["target_key"]))
+        if case_title is None or ent is None:
+            continue  # case not owned by this user, or account dropped by a re-run
+        meta = json.loads(ent["metadata_json"] or "{}")
+        out.setdefault(r["flag"], []).append({
+            "case_id": r["case_id"],
+            "case_title": case_title,
+            "entity_id": ent["entity_id"],
+            "type": ent["type"],
+            "platform": ent["platform"],
+            "value": ent["value"],
+            "name": meta.get("fullname") or meta.get("name") or "",
+            "photo_url": meta.get("photo_url") or "",
+            "bio": meta.get("bio") or meta.get("title") or "",
+            "source_url": ent["source_url"] or "",
+            "note": r["note"] or "",
+            "bookmarked": bool(r["bookmarked"]),
+            "updated_at": r["updated_at"],
+        })
+    return out

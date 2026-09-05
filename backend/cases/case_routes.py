@@ -3,6 +3,8 @@ backend/cases/case_routes.py — case + results + report endpoints.
 
     POST /cases                     create a case (and kick off the investigation)
     GET  /cases                     list my cases
+    GET  /cases/flagged             every red/orange/yellow-flagged account across
+                                     ALL my cases, grouped by colour (cross-case view)
     GET  /cases/{id}                one case (access-controlled)
     GET  /cases/{id}/results        entities + clusters for the dashboard
     GET  /cases/{id}/report         generate + download the BSA-63 PDF
@@ -21,10 +23,10 @@ from pydantic import BaseModel
 
 from backend.auth.auth_middleware import get_current_user
 from backend.cases.case_service import (
-    create_case, get_case, get_results, list_cases,
+    create_case, get_case, get_results, list_cases, set_priority,
 )
 from backend.cases.annotations_service import (
-    get_annotations, set_annotation, VALID_FLAGS,
+    get_annotations, list_flagged, set_annotation, VALID_FLAGS,
 )
 
 router = APIRouter(prefix="/cases", tags=["cases"])
@@ -84,6 +86,16 @@ def list_mine(user_id: str = Depends(get_current_user)):
     return {"cases": list_cases(user_id)}
 
 
+# NOTE: registered ahead of the "/{case_id}" catch-all below on purpose — Starlette
+# matches routes in registration order, and "/cases/flagged" would otherwise be
+# swallowed by "/cases/{case_id}" (case_id="flagged") and 404 as a bogus case lookup.
+@router.get("/flagged")
+def flagged(user_id: str = Depends(get_current_user)):
+    """Every red/orange/yellow-flagged account across ALL of this user's cases,
+    grouped by colour — powers the cross-case "Flagged" dashboard."""
+    return list_flagged(user_id)
+
+
 @router.get("/{case_id}")
 def one(case_id: str, user_id: str = Depends(get_current_user)):
     case = get_case(case_id, user_id)
@@ -130,6 +142,24 @@ def upsert_annotation(case_id: str, entity_id: str, body: AnnotationBody,
         raise HTTPException(status_code=422, detail=str(e))
     if result is None:
         raise HTTPException(status_code=404, detail="Case or account not found")
+    return result
+
+
+class PriorityBody(BaseModel):
+    # '' clears the flag. Anything else must be one of VALID_PRIORITY_FLAGS.
+    flag: str = ""
+
+
+@router.put("/{case_id}/flag")
+def set_case_priority(case_id: str, body: PriorityBody, user_id: str = Depends(get_current_user)):
+    """Set/clear this case's red/orange/green triage priority (case-level, distinct
+    from the per-account annotation flags above)."""
+    try:
+        result = set_priority(case_id, user_id, body.flag)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Not found")
     return result
 
 

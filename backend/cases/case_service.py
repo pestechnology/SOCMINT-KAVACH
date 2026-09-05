@@ -20,6 +20,16 @@ from backend.database import get_db
 
 VALID_SEED_TYPES = {"name", "email", "phone", "username", "upi", "face", "url"}
 
+# Case-level triage priority — a single-value classification per case (distinct from
+# the per-account red/orange/yellow flags in annotations_service.py, which mark
+# individual discovered accounts *within* a case). This flags the CASE itself so the
+# case list can be sorted/filtered into "buckets" at a glance:
+#   red    = very high priority / urgent
+#   orange = medium priority
+#   green  = normal / low priority
+#   ''     = unflagged
+VALID_PRIORITY_FLAGS = {"", "red", "orange", "green"}
+
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -85,6 +95,31 @@ def list_cases(user_id: str) -> list[dict]:
         d["seeds"] = json.loads(d.get("seeds_json") or "[]")
         out.append(d)
     return out
+
+
+def set_priority(case_id: str, user_id: str, flag: str) -> dict | None:
+    """Set (or clear, with '') this case's triage priority flag.
+
+    Access-controlled like every other case_service write: returns None if the case
+    doesn't exist or isn't owned by user_id. Raises ValueError on an invalid flag so
+    the route can turn it into a 422 rather than silently accepting garbage.
+    """
+    flag = flag or ""
+    if flag not in VALID_PRIORITY_FLAGS:
+        raise ValueError(f"invalid priority flag {flag!r}; allowed: {sorted(VALID_PRIORITY_FLAGS)}")
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT user_id FROM cases WHERE case_id = ?", (case_id,)).fetchone()
+        if not row or row["user_id"] != user_id:
+            return None
+        conn.execute(
+            "UPDATE cases SET priority_flag = ?, updated_at = ? WHERE case_id = ?",
+            (flag, _now(), case_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"priority_flag": flag}
 
 
 def set_status(case_id: str, status: str) -> None:

@@ -43,10 +43,17 @@ export const api = {
     req("/cases", { method: "POST", body: { title, seeds, minor_involved, country_filter, case_context, capture_evidence } }),
   getCase: (id) => req(`/cases/${id}`),
   getResults: (id) => req(`/cases/${id}/results`),
+  // Case-level triage priority ('' | 'red' | 'orange' | 'green') — distinct from the
+  // per-account annotation flags below; this flags the whole case for the case-list
+  // "buckets" (click a colour chip to filter to that priority).
+  setCasePriority: (id, flag) => req(`/cases/${id}/flag`, { method: "PUT", body: { flag } }),
   // Per-user bookmarks + severity flags on discovered accounts.
   getAnnotations: (id) => req(`/cases/${id}/annotations`),
   setAnnotation: (id, entityId, patch) =>
     req(`/cases/${id}/annotations/${entityId}`, { method: "PUT", body: patch }),
+  // Cross-case "Flagged" dashboard — every red/orange/yellow-flagged account across
+  // ALL my cases, grouped by colour.
+  getFlaggedAccounts: () => req("/cases/flagged"),
   // Case collections (named folders/watchlists to sort/save cases into).
   getCollections: () => req("/collections"),
   createCollection: (name, color = "") =>

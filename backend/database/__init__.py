@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS cases (
     country_filter TEXT DEFAULT 'ALL',
     case_context TEXT DEFAULT '',
     capture_evidence INTEGER DEFAULT 0,
+    priority_flag TEXT DEFAULT '',    -- '' | 'red' | 'orange' | 'green' — case triage priority
     created_at TEXT,
     updated_at TEXT,
     FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -177,6 +178,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE cases ADD COLUMN case_context TEXT DEFAULT ''")
         if "capture_evidence" not in cols_cases:
             conn.execute("ALTER TABLE cases ADD COLUMN capture_evidence INTEGER DEFAULT 0")
+        if "priority_flag" not in cols_cases:
+            conn.execute("ALTER TABLE cases ADD COLUMN priority_flag TEXT DEFAULT ''")
         # Evidence-capture provenance columns on artifacts (court-grade exhibit metadata).
         cols_art = [r[1] for r in conn.execute("PRAGMA table_info(artifacts)").fetchall()]
         for col, ddl in (
